@@ -1,0 +1,3 @@
+[submodule "refactor/litellm"]
+    path = refactor/litellm
+    url = https://github.com/BerriAI/litellm.git
