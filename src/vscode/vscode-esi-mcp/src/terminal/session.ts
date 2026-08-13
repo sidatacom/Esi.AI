@@ -12,7 +12,7 @@ import {
   getBufferLineCount,
 } from "./output-capture.js";
 import { generateSessionId, generateCommandId } from "../utils/id-generator.js";
-import { log, logError } from "../utils/logger.js";
+import { log } from "../utils/logger.js";
 
 export class TerminalSession {
   readonly sessionId: string;
@@ -25,14 +25,15 @@ export class TerminalSession {
   private outputBuffer: OutputBuffer;
   private commandHistory: CommandExecution[] = [];
   private currentCommand: CommandExecution | null = null;
-  private shellExecutionDisposable: vscode.Disposable | null = null;
   private isActive = true;
   private lastCommandAt?: number;
   private shellReady: Promise<void>;
+  private readonly timing: { completionPollIntervalMs: number; completionSettleMs: number };
 
   constructor(
     config: TerminalSessionConfig,
     maxOutputLines: number,
+    timing: { completionPollIntervalMs: number; completionSettleMs: number },
     existingTerminal?: vscode.Terminal,
   ) {
     this.sessionId = generateSessionId();
@@ -41,6 +42,7 @@ export class TerminalSession {
       config.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
     this.agentId = config.agentId;
     this.createdAt = Date.now();
+    this.timing = timing;
     this.outputBuffer = createOutputBuffer(maxOutputLines);
 
     if (existingTerminal) {
@@ -71,30 +73,8 @@ export class TerminalSession {
   }
 
   private setupShellIntegrationCapture(): void {
-    if (vscode.window.onDidStartTerminalShellExecution) {
-      this.shellExecutionDisposable =
-        vscode.window.onDidStartTerminalShellExecution(async (event) => {
-          if (event.terminal !== this.terminal) return;
-
-          log(
-            `Shell execution started in session ${this.sessionId}: ${event.execution.commandLine?.value ?? "unknown"}`,
-          );
-
-          try {
-            const stream = event.execution.read();
-            for await (const chunk of stream) {
-              appendToBuffer(this.outputBuffer, chunk);
-            }
-          } catch (err) {
-            logError(
-              `Error reading shell execution output in session ${this.sessionId}`,
-              err,
-            );
-          }
-        });
-
-      if (vscode.window.onDidEndTerminalShellExecution) {
-        vscode.window.onDidEndTerminalShellExecution((event) => {
+    if (vscode.window.onDidEndTerminalShellExecution) {
+      vscode.window.onDidEndTerminalShellExecution((event) => {
           if (event.terminal !== this.terminal) return;
 
           if (this.currentCommand) {
@@ -110,9 +90,12 @@ export class TerminalSession {
           log(
             `Shell execution ended in session ${this.sessionId} with exit code: ${event.exitCode}`,
           );
-        });
-      }
+      });
     }
+  }
+
+  appendOutput(chunk: string): void {
+    appendToBuffer(this.outputBuffer, chunk);
   }
 
   async execute(
@@ -232,8 +215,8 @@ export class TerminalSession {
                 durationMs: Date.now() - startedAt,
               });
             }
-          }, 2000);
-        }, 1000);
+          }, this.timing.completionSettleMs);
+        }, this.timing.completionPollIntervalMs);
       }
     });
   }
@@ -258,6 +241,10 @@ export class TerminalSession {
     isComplete: boolean;
   } {
     return readFromBuffer(this.outputBuffer, offset, maxLines);
+  }
+
+  peekOutput(maxLines: number = 500): string[] {
+    return this.outputBuffer.lines.slice(-maxLines);
   }
 
   get isBusy(): boolean {
@@ -289,7 +276,6 @@ export class TerminalSession {
 
   dispose(): void {
     this.isActive = false;
-    this.shellExecutionDisposable?.dispose();
     this.terminal.dispose();
     log(`Session ${this.sessionId} disposed`);
   }

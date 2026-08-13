@@ -25,6 +25,7 @@ describe("direct MCP HTTP server", () => {
       throw new Error(`Unexpected method: ${method}`);
     } });
     try {
+      expect(server.servers[0].timeout).toBe(0);
       const missingSessionGet = await request(port, "GET");
       expect(missingSessionGet.status).toBe(400);
       const unknownSession = await request(port, "POST", { jsonrpc: "2.0", id: 1, method: "initialize", params: {} }, { "mcp-session-id": "unknown" });

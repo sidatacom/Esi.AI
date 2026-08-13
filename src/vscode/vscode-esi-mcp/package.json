@@ -2,7 +2,7 @@
   "name": "vscode-esi-mcp",
   "displayName": "EsiMCP",
   "description": "Direct local HTTP MCP server for visible VS Code terminals and Debug MCP controls.",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
@@ -49,6 +49,53 @@
           "type": "number",
           "default": 30,
           "description": "MCP request timeout in seconds"
+        },
+        "esimcp.debugAdapterTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "description": "Timeout for debug adapter requests in milliseconds",
+          "minimum": 1
+        },
+        "esimcp.debugStateTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "description": "Timeout for debug state changes in milliseconds",
+          "minimum": 1
+        },
+        "esimcp.debugReadyString": {
+          "type": "string",
+          "default": "Now ready on:",
+          "description": "Text that must appear in a terminal before debug_start completes"
+        },
+        "esimcp.debugReadyTimeoutMs": {
+          "type": "number",
+          "default": 120000,
+          "description": "Timeout for waiting for the debug ready string in milliseconds",
+          "minimum": 1
+        },
+        "esimcp.terminalPollIntervalMs": {
+          "type": "number",
+          "default": 1000,
+          "description": "Interval for polling terminal completion in milliseconds",
+          "minimum": 50
+        },
+        "esimcp.terminalCompletionSettleMs": {
+          "type": "number",
+          "default": 2000,
+          "description": "Quiet period used to settle terminal completion in milliseconds",
+          "minimum": 50
+        },
+        "esimcp.terminalStartupDelayMs": {
+          "type": "number",
+          "default": 500,
+          "description": "Delay before sending the first command to a newly created terminal in milliseconds",
+          "minimum": 0
+        },
+        "esimcp.idleReaperIntervalMs": {
+          "type": "number",
+          "default": 60000,
+          "description": "Interval for checking idle terminal sessions in milliseconds",
+          "minimum": 50
         },
         "esimcp.bindHost": {
           "type": "array",

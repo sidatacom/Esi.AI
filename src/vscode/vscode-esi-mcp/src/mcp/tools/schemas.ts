@@ -35,8 +35,7 @@ export const terminalExecuteSchema = z.object({
     .min(1000)
     .max(300000)
     .optional()
-    .default(30000)
-    .describe("Timeout in milliseconds (default: 30000, max: 300000)"),
+    .describe("Timeout in milliseconds (workspace setting is used when omitted, max: 300000)"),
   waitForCompletion: coerceBoolean
     .optional()
     .default(true)
@@ -94,8 +93,7 @@ export const terminalRunSchema = z.object({
     .min(1000)
     .max(300000)
     .optional()
-    .default(30000)
-    .describe("Timeout in milliseconds (default: 30000, max: 300000)"),
+    .describe("Timeout in milliseconds (workspace setting is used when omitted, max: 300000)"),
   waitForCompletion: coerceBoolean
     .optional()
     .default(true)

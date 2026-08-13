@@ -19,6 +19,7 @@ describe("EsiMCP tool catalog", () => {
       "terminal_list",
       "terminal_close",
       "terminal_input",
+      "debug_active_session",
       "debug_start",
       "debug_stop",
       "debug_step_over",

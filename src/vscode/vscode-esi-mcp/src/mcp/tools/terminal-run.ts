@@ -43,7 +43,7 @@ export async function handleTerminalRun(
       setTimeout(async () => {
         const result = await executeCommand(sessionId!, input, sessionManager);
         resolve(result);
-      }, 500);
+      }, sessionManager.getTerminalStartupDelayMs());
     });
   }
 

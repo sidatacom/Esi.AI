@@ -11,6 +11,10 @@ function createConfig(overrides: Partial<SecurityConfig> = {}): SecurityConfig {
     includeAllTerminals: false,
     maxOutputLines: 10000,
     idleTimeoutMs: 300000,
+    terminalStartupDelayMs: 500,
+    idleReaperIntervalMs: 60000,
+    completionPollIntervalMs: 1000,
+    completionSettleMs: 2000,
     ...overrides,
   };
 }

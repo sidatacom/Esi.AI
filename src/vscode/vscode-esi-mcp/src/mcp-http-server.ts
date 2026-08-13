@@ -44,7 +44,7 @@ async function readBody(request: http.IncomingMessage): Promise<unknown> {
 }
 
 function createMcpSdkServer(requestHandler: RequestHandler): Server {
-  const server = new Server({ name: "EsiMCP", version: "1.0.1" }, { capabilities: { tools: {} } });
+  const server = new Server({ name: "EsiMCP", version: "1.0.3" }, { capabilities: { tools: {} } });
   server.setRequestHandler(InitializeRequestSchema, (request) => requestHandler("initialize", request.params) as never);
   server.setRequestHandler(ListToolsRequestSchema, () => requestHandler("tools/list") as never);
   server.setRequestHandler(CallToolRequestSchema, (request) => requestHandler("tools/call", request.params) as never);
@@ -103,7 +103,7 @@ export async function startMcpHttpServer(options: McpHttpServerOptions = {}): Pr
   };
   const servers = hosts.map((host) => {
     const server = http.createServer((request, response) => { void handleRequest(request, response).catch((error) => respondError(response, 400, error instanceof Error ? error.message : String(error))); });
-    server.timeout = Math.max(1, (options.timeoutInSeconds ?? 30) * 1000);
+    server.timeout = 0;
     return server;
   });
   await Promise.all(servers.map((server, index) => new Promise<void>((resolve, reject) => {

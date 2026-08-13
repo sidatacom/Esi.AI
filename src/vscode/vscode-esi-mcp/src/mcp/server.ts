@@ -1,3 +1,4 @@
+  handler: (params: unknown, sessionManager: SessionManager, debugManager?: DebugManager) => Promise<McpToolResponse>;
 import { zodToJsonSchema } from "zod-to-json-schema";
 import { log, logError } from "../utils/logger.js";
 import type { SessionManager } from "../terminal/session-manager.js";
@@ -92,9 +93,9 @@ TOOLS.push(...DEBUG_TOOLS.map((tool) => ({
   name: tool.name,
   description: tool.description,
   inputSchema: toJsonSchema(tool.schema),
-  handler: async (params: unknown, _sessionManager: SessionManager, debugManager?: DebugManager) => {
+  handler: async (params: unknown, sessionManager: SessionManager, debugManager?: DebugManager) => {
     if (!debugManager) throw new Error("Debug manager is unavailable");
-    return tool.handler(params, debugManager);
+    return tool.handler(params, debugManager, sessionManager);
   },
 })));
 
@@ -120,7 +121,7 @@ export function createMcpRequestHandler(
         },
         serverInfo: {
           name: "EsiMCP",
-          version: "1.0.1",
+          version: "1.0.3",
         },
       };
     }

@@ -104,6 +104,10 @@ export interface SecurityConfig {
   includeAllTerminals: boolean;
   maxOutputLines: number;
   idleTimeoutMs: number;
+  terminalStartupDelayMs: number;
+  idleReaperIntervalMs: number;
+  completionPollIntervalMs: number;
+  completionSettleMs: number;
 }
 
 // --- MCP Response Helpers ---

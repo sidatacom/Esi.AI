@@ -259,7 +259,7 @@ This commonly happens with commands that produce heavy TUI output (progress bars
 3. Commands execute in real VS Code terminals using the Shell Integration API
 4. Output is stored in circular buffers with pagination support for efficient reading
 
-## Latest Changes (1.0.1)
+## Latest Changes (1.0.2)
 
 - Screenshots in README for marketplace
 - Clean output format for all tools — no more raw JSON

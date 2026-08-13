@@ -106,4 +106,50 @@ describe("SessionManager terminal recovery", () => {
     expect(created.name).toBe("MCP: created");
     manager.dispose();
   });
+
+  it("resolves when the configured ready string appears in terminal output", async () => {
+    const manager = new SessionManager();
+    const waiter = manager.waitForTerminalOutput("ready", 1000);
+    const listener = mockState.onDidStartTerminalShellExecution.mock.calls[0]?.[0] as ((event: {
+      execution: { read: () => AsyncIterable<string> };
+    }) => Promise<void>);
+
+    await listener({
+      execution: {
+        async *read() {
+          yield "service is ";
+          yield "ready now";
+        },
+      },
+    });
+
+    await expect(waiter.promise).resolves.toBeUndefined();
+    manager.dispose();
+  });
+
+  it("uses the managed terminal buffer instead of competing for its output stream", async () => {
+    mockState.includeAllTerminals = true;
+    const terminal = new MockTerminal("MCP: web");
+    mockState.terminals.push(terminal);
+
+    const manager = new SessionManager();
+    const waiter = manager.waitForTerminalOutput("Now ready on:", 1000);
+    const listener = mockState.onDidStartTerminalShellExecution.mock.calls[0]?.[0] as (event: {
+      terminal: MockTerminal;
+      execution: { read: () => AsyncIterable<string> };
+    }) => Promise<void>;
+
+    await listener({
+      terminal,
+      execution: {
+        async *read() {
+          yield "Now ready on: https://localhost:5012";
+        },
+      },
+    });
+
+    await expect(waiter.promise).resolves.toBeUndefined();
+    manager.dispose();
+  });
+
 });

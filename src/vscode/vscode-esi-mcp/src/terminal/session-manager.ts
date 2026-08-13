@@ -7,8 +7,24 @@ import type {
 } from "../types/index.js";
 import { log, logError } from "../utils/logger.js";
 
+export interface TerminalOutputWaiter {
+  promise: Promise<void>;
+  cancel(): void;
+}
+
+interface OutputWaiterState {
+  expectedText: string;
+  recentOutput: string;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+  settled: boolean;
+}
+
 export class SessionManager {
   private sessions = new Map<string, TerminalSession>();
+  private outputWaiters = new Set<OutputWaiterState>();
+  private terminalOutputDisposable: vscode.Disposable | null = null;
   private onSessionsChangedEmitter = new vscode.EventEmitter<void>();
   readonly onSessionsChanged = this.onSessionsChangedEmitter.event;
   private idleReaperInterval: ReturnType<typeof setInterval> | null = null;
@@ -16,6 +32,7 @@ export class SessionManager {
   constructor() {
     // Idle reaper disabled - user closes sessions manually
     this.recoverExistingSessions();
+    this.captureTerminalOutput();
 
     // Listen for terminals being closed externally
     vscode.window.onDidCloseTerminal((terminal) => {
@@ -29,6 +46,45 @@ export class SessionManager {
         }
       }
     });
+  }
+
+  private captureTerminalOutput(): void {
+    if (!vscode.window.onDidStartTerminalShellExecution) return;
+
+    this.terminalOutputDisposable = vscode.window.onDidStartTerminalShellExecution(async (event) => {
+      try {
+        for await (const chunk of event.execution.read()) {
+          this.findByTerminal(event.terminal)?.appendOutput(chunk);
+          this.notifyOutputWaiters(chunk);
+        }
+      } catch (error) {
+        logError("Error reading terminal output while waiting for the debug ready string", error);
+        this.rejectOutputWaiters(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+
+  private notifyOutputWaiters(chunk: string): void {
+    for (const waiter of this.outputWaiters) {
+      const output = `${waiter.recentOutput}${chunk}`;
+      if (output.includes(waiter.expectedText)) {
+        this.finishOutputWaiter(waiter);
+        continue;
+      }
+      waiter.recentOutput = output.slice(-(waiter.expectedText.length - 1));
+    }
+  }
+
+  private finishOutputWaiter(waiter: OutputWaiterState, error?: Error): void {
+    if (waiter.settled) return;
+    waiter.settled = true;
+    clearTimeout(waiter.timer);
+    this.outputWaiters.delete(waiter);
+    error ? waiter.reject(error) : waiter.resolve();
+  }
+
+  private rejectOutputWaiters(error: Error): void {
+    for (const waiter of [...this.outputWaiters]) this.finishOutputWaiter(waiter, error);
   }
 
   private recoverExistingSessions(): void {
@@ -57,7 +113,10 @@ export class SessionManager {
             ? creationOptions.cwd.fsPath
             : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
 
-      const session = new TerminalSession({ name, cwd }, maxOutputLines, terminal);
+      const session = new TerminalSession({ name, cwd }, maxOutputLines, {
+        completionPollIntervalMs: config.completionPollIntervalMs,
+        completionSettleMs: config.completionSettleMs,
+      }, terminal);
       this.sessions.set(session.sessionId, session);
       log(`Recovered session ${session.sessionId}: ${name} (cwd: ${cwd})`);
     }
@@ -82,11 +141,46 @@ export class SessionManager {
       includeAllTerminals: config.get<boolean>("includeAllTerminals", false),
       maxOutputLines: config.get<number>("maxOutputLines", 10000),
       idleTimeoutMs: config.get<number>("idleTimeoutMs", 300000),
+      terminalStartupDelayMs: config.get<number>("terminalStartupDelayMs", 500),
+      idleReaperIntervalMs: config.get<number>("idleReaperIntervalMs", 60000),
+      completionPollIntervalMs: config.get<number>("terminalPollIntervalMs", 1000),
+      completionSettleMs: config.get<number>("terminalCompletionSettleMs", 2000),
     };
+  }
+  
+  getDebugReadyString(): string {
+    return vscode.workspace.getConfiguration("esimcp").get<string>("debugReadyString", "Now ready on:").trim();
+  }
+
+  getDebugReadyTimeoutMs(): number {
+    const timeoutMs = vscode.workspace.getConfiguration("esimcp").get<number>("debugReadyTimeoutMs", 120000);
+    return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 120000;
+  }
+
+  waitForTerminalOutput(expectedText: string, timeoutMs: number): TerminalOutputWaiter {
+    const normalizedText = expectedText.trim();
+    if (!normalizedText) throw new Error("esimcp.debugReadyString must not be empty");
+    if (!vscode.window.onDidStartTerminalShellExecution) {
+      throw new Error("VS Code terminal shell integration is unavailable; cannot wait for the debug ready string");
+    }
+
+    let waiter: OutputWaiterState;
+    const promise = new Promise<void>((resolve, reject) => {
+      waiter = {
+        expectedText: normalizedText,
+        recentOutput: "",
+        resolve,
+        reject,
+        timer: setTimeout(() => this.finishOutputWaiter(waiter, new Error(`Timed out after ${timeoutMs}ms waiting for debug ready string '${normalizedText}'`)), timeoutMs),
+        settled: false,
+      };
+      this.outputWaiters.add(waiter);
+    });
+
+    return { promise, cancel: () => this.finishOutputWaiter(waiter!) };
   }
 
   private startIdleReaper(): void {
-    // Check every 60 seconds for idle sessions
     this.idleReaperInterval = setInterval(() => {
       const config = this.getConfig();
       if (config.idleTimeoutMs <= 0) return;
@@ -100,7 +194,7 @@ export class SessionManager {
           this.onSessionsChangedEmitter.fire();
         }
       }
-    }, 60000);
+    }, this.getConfig().idleReaperIntervalMs);
   }
 
   /**
@@ -130,7 +224,10 @@ export class SessionManager {
       }
     }
 
-    const session = new TerminalSession(config, secConfig.maxOutputLines);
+    const session = new TerminalSession(config, secConfig.maxOutputLines, {
+      completionPollIntervalMs: secConfig.completionPollIntervalMs,
+      completionSettleMs: secConfig.completionSettleMs,
+    });
     this.sessions.set(session.sessionId, session);
     this.onSessionsChangedEmitter.fire();
 
@@ -197,6 +294,13 @@ export class SessionManager {
   }
 
   /**
+   * Get the delay before sending the first command to a newly created terminal.
+   */
+  getTerminalStartupDelayMs(): number {
+    return this.getConfig().terminalStartupDelayMs;
+  }
+
+  /**
    * Get the number of active sessions.
    */
   getActiveSessionCount(): number {
@@ -228,6 +332,9 @@ export class SessionManager {
       session.dispose();
     }
     this.sessions.clear();
+    this.terminalOutputDisposable?.dispose();
+    this.terminalOutputDisposable = null;
+    this.rejectOutputWaiters(new Error("SessionManager disposed"));
     this.onSessionsChangedEmitter.dispose();
 
     log("SessionManager disposed");

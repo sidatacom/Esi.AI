@@ -48,7 +48,7 @@ describe("Zod Schemas", () => {
       });
       expect(result.success).toBe(true);
       if (result.success) {
-        expect(result.data.timeoutMs).toBe(30000);
+        expect(result.data.timeoutMs).toBeUndefined();
         expect(result.data.waitForCompletion).toBe(true);
       }
     });
@@ -160,4 +160,5 @@ describe("Debug Schemas", () => {
   it("rejects wildcard expressions", () => {
     expect(debugEvaluateSchema.safeParse({ expression: "*" }).success).toBe(false);
   });
+
 });

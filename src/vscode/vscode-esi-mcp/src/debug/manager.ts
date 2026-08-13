@@ -1,6 +1,5 @@
 import * as vscode from "vscode";
 
-const DAP_TIMEOUT_MS = 30000;
 const MAX_VARIABLES = 100;
 const SECRET_NAME = /(password|passwd|secret|token|api[_-]?key|connectionstring|authorization|credential|private[_-]?key)/i;
 const SECRET_VALUE = /(bearer\s+[A-Za-z0-9._~+/=-]+|(?:api[_-]?key|password|secret|token)\s*[:=]\s*\S+|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/i;
@@ -10,9 +9,14 @@ type DapVariable = { name: string; value?: string; evaluateName?: string; variab
 type DapResponse = { scopes?: Array<{ name?: string; variablesReference?: number }>; variables?: DapVariable[]; result?: unknown; value?: unknown };
 
 export class DebugManager {
+  getActiveSessionId(): string | null {
+    return vscode.debug.activeDebugSession?.id ?? null;
+  }
+
   async startDebugging(input: { workingDirectory: string; fileFullPath?: string; testName?: string; configurationName?: string }): Promise<boolean> {
     const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(input.workingDirectory));
     if (input.configurationName?.trim()) {
+      if (this.getDebugSession(input.configurationName.trim())) return false;
       return vscode.debug.startDebugging(folder, input.configurationName.trim());
     }
     if (input.testName?.trim()) {
@@ -141,8 +145,9 @@ export class DebugManager {
   }
 
   private requireSession(): vscode.DebugSession {
-    if (!vscode.debug.activeDebugSession) throw new Error("No active debug session");
-    return vscode.debug.activeDebugSession;
+    const session = this.getDebugSession();
+    if (!session) throw new Error("No active debug session");
+    return session;
   }
 
   private requirePausedSession(): vscode.DebugSession {
@@ -165,19 +170,35 @@ export class DebugManager {
 
   private async waitForState(predicate: () => boolean, description: string): Promise<void> {
     if (predicate()) return;
+    const timeoutMs = this.getTimeoutMs("debugStateTimeoutMs", 30000);
     await new Promise<void>((resolve, reject) => {
       const disposables = [vscode.debug.onDidChangeActiveDebugSession(check), vscode.debug.onDidChangeActiveStackItem(check)];
-      const timer = setTimeout(() => finish(new Error(`Timed out waiting for ${description}`)), DAP_TIMEOUT_MS);
+      const timer = setTimeout(() => finish(new Error(`Timed out after ${timeoutMs}ms waiting for ${description}`)), timeoutMs);
       const finish = (error?: Error) => { clearTimeout(timer); disposables.forEach((disposable) => disposable.dispose()); error ? reject(error) : resolve(); };
       function check(): void { if (predicate()) finish(); }
     });
   }
 
   private async dapRequest(session: vscode.DebugSession, command: string, args: unknown): Promise<DapResponse> {
+    const timeoutMs = this.getTimeoutMs("debugAdapterTimeoutMs", 30000);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error(`Debug adapter timed out during '${command}'`)), DAP_TIMEOUT_MS);
+      const timer = setTimeout(() => reject(new Error(`Debug adapter timed out after ${timeoutMs}ms during '${command}'`)), timeoutMs);
       session.customRequest(command, args).then((result) => { clearTimeout(timer); resolve(result as DapResponse); }, (error) => { clearTimeout(timer); reject(error); });
     });
+  }
+
+  private getTimeoutMs(settingName: string, fallback: number): number {
+    const value = vscode.workspace.getConfiguration("esimcp").get<number>(settingName);
+    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+  }
+
+  private getDebugSession(configurationName?: string): vscode.DebugSession | undefined {
+    const activeSession = vscode.debug.activeDebugSession;
+    if (!configurationName) return activeSession;
+    if (!activeSession) return undefined;
+    return activeSession.name === configurationName || activeSession.name.startsWith(`${configurationName} `)
+      ? activeSession
+      : undefined;
   }
 
   private isSecretName(name: string): boolean { return SECRET_NAME.test(name); }
