@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] - 2026-08-13
+
+### Fixed
+- Consistent package, server, and MCP handshake version reporting
+- Correct README configuration key names and defaults
+
 ## [0.1.6] - 2026-03-19 18:18 PDT
 
 ### Added

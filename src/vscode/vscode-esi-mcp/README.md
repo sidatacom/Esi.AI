@@ -143,10 +143,10 @@ The extension reads configuration from VS Code settings under `esimcp.*`. Use di
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `esimcp.maxSessions` | number | 10 | Maximum concurrent terminal sessions |
-| `esimcp.commandTimeout` | number | 30000 | Default command timeout in ms |
-| `esimcp.maxOutputLines` | number | 5000 | Max lines kept in output buffer per session |
-| `esimcp.idleTimeout` | number | 1800000 | Close idle sessions after this many ms (0 = disabled) |
+| `esimcp.maxConcurrentSessions` | number | 10 | Maximum concurrent terminal sessions |
+| `esimcp.defaultTimeoutMs` | number | 30000 | Default command timeout in ms |
+| `esimcp.maxOutputLines` | number | 10000 | Max lines kept in output buffer per session |
+| `esimcp.idleTimeoutMs` | number | 300000 | Close idle sessions after this many ms (0 = disabled) |
 | `esimcp.blockedCommands` | string[] | `["rm -rf /"]` | Commands that will be rejected |
 
 ## Recommended: Set as Preferred Tool
@@ -259,7 +259,7 @@ This commonly happens with commands that produce heavy TUI output (progress bars
 3. Commands execute in real VS Code terminals using the Shell Integration API
 4. Output is stored in circular buffers with pagination support for efficient reading
 
-## Latest Changes (0.1.6)
+## Latest Changes (1.0.1)
 
 - Screenshots in README for marketplace
 - Clean output format for all tools — no more raw JSON

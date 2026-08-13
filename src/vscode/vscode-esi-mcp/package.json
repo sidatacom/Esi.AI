@@ -2,7 +2,7 @@
   "name": "vscode-esi-mcp",
   "displayName": "EsiMCP",
   "description": "Direct local HTTP MCP server for visible VS Code terminals and Debug MCP controls.",
-  "version": "0.1.6",
+  "version": "1.0.1",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
