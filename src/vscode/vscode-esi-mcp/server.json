@@ -1,0 +1,16 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.sidatacom/vscode-esi-mcp",
+  "version": "0.1.6",
+  "description": "Direct local HTTP MCP server for visible VS Code terminals and debug controls.",
+  "author": "sidatacom",
+  "license": "MIT",
+  "homepage": "https://github.com/sidatacom/Esi.AI",
+  "repository": { "source": "github", "url": "https://github.com/sidatacom/Esi.AI" },
+  "packages": [{
+    "registryType": "npm",
+    "identifier": "vscode-esi-mcp",
+    "version": "0.1.6",
+    "transport": { "type": "streamable-http", "url": "http://127.0.0.1:3002/mcp" }
+  }]
+}

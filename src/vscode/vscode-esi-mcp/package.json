@@ -1,0 +1,142 @@
+{
+  "name": "vscode-esi-mcp",
+  "displayName": "EsiMCP",
+  "description": "Direct local HTTP MCP server for visible VS Code terminals and Debug MCP controls.",
+  "version": "0.1.6",
+  "publisher": "sidatacom",
+  "license": "MIT",
+  "author": "sidatacom",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sidatacom/Esi.AI.git"
+  },
+  "homepage": "https://github.com/sidatacom/Esi.AI#readme",
+  "bugs": {
+    "url": "https://github.com/sidatacom/Esi.AI/issues"
+  },
+  "keywords": [
+    "mcp",
+    "terminal",
+    "vscode",
+    "copilot",
+    "model-context-protocol",
+    "ai-tools",
+    "debug"
+  ],
+  "mcpName": "io.github.sidatacom/vscode-esi-mcp",
+  "icon": "icon.png",
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "EsiMCP",
+      "properties": {
+        "esimcp.serverPort": {
+          "type": "number",
+          "default": 3002,
+          "description": "MCP HTTP server port",
+          "minimum": 1
+        },
+        "esimcp.timeoutInSeconds": {
+          "type": "number",
+          "default": 30,
+          "description": "MCP request timeout in seconds"
+        },
+        "esimcp.bindHost": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "127.0.0.1",
+            "::1"
+          ],
+          "description": "Loopback hosts for the direct EsiMCP HTTP server"
+        },
+        "esimcp.blockedCommands": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "rm -rf /",
+            "mkfs",
+            "dd if=",
+            ":(){ :|:& };:"
+          ],
+          "description": "Commands that are never allowed to execute"
+        },
+        "esimcp.allowedDirectories": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Allowed working directories (empty = unrestricted)"
+        },
+        "esimcp.defaultTimeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "description": "Default timeout for command execution in milliseconds"
+        },
+        "esimcp.maxConcurrentSessions": {
+          "type": "number",
+          "default": 10,
+          "description": "Maximum number of concurrent terminal sessions"
+        },
+        "esimcp.includeAllTerminals": {
+          "type": "boolean",
+          "default": false,
+          "description": "When enabled, expose all currently open VS Code terminals as EsiMCP sessions after activation or reload"
+        },
+        "esimcp.maxOutputLines": {
+          "type": "number",
+          "default": 10000,
+          "description": "Maximum number of output lines to buffer per session"
+        },
+        "esimcp.idleTimeoutMs": {
+          "type": "number",
+          "default": 300000,
+          "description": "Auto-close idle sessions after this many milliseconds (0 = disabled)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "lint": "eslint src/ --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.9.0",
+    "strip-ansi": "^7.1.0",
+    "uuid": "^9.0.0",
+    "zod": "^3.24.0",
+    "zod-to-json-schema": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "@types/uuid": "^9.0.0",
+    "@types/vscode": "^1.99.0",
+    "@vscode/test-electron": "^2.4.0",
+    "@vscode/vsce": "^2.26.0",
+    "esbuild": "^0.21.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.2.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

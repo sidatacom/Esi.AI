@@ -1,0 +1,192 @@
+import * as vscode from "vscode";
+
+const DAP_TIMEOUT_MS = 30000;
+const MAX_VARIABLES = 100;
+const SECRET_NAME = /(password|passwd|secret|token|api[_-]?key|connectionstring|authorization|credential|private[_-]?key)/i;
+const SECRET_VALUE = /(bearer\s+[A-Za-z0-9._~+/=-]+|(?:api[_-]?key|password|secret|token)\s*[:=]\s*\S+|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/i;
+
+type Scope = "local" | "global" | "all";
+type DapVariable = { name: string; value?: string; evaluateName?: string; variablesReference?: number };
+type DapResponse = { scopes?: Array<{ name?: string; variablesReference?: number }>; variables?: DapVariable[]; result?: unknown; value?: unknown };
+
+export class DebugManager {
+  async startDebugging(input: { workingDirectory: string; fileFullPath?: string; testName?: string; configurationName?: string }): Promise<boolean> {
+    const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(input.workingDirectory));
+    if (input.configurationName?.trim()) {
+      return vscode.debug.startDebugging(folder, input.configurationName.trim());
+    }
+    if (input.testName?.trim()) {
+      await vscode.commands.executeCommand("testing.run", { tests: [input.testName.trim()], debug: true });
+      return true;
+    }
+    throw new Error("configurationName or testName is required. fileFullPath alone cannot identify a valid launch configuration; provide launch.json configurationName or testName.");
+  }
+
+  async stopDebugging(): Promise<void> {
+    const session = this.requireSession();
+    await vscode.debug.stopDebugging(session);
+    await this.waitForState(() => vscode.debug.activeDebugSession !== session, "debug session to stop");
+  }
+
+  async stepOver(): Promise<void> { await this.step("workbench.action.debug.stepOver"); }
+  async stepInto(): Promise<void> { await this.step("workbench.action.debug.stepInto"); }
+  async stepOut(): Promise<void> { await this.step("workbench.action.debug.stepOut"); }
+
+  async continueExecution(): Promise<void> {
+    this.requirePausedSession();
+    const session = this.requireSession();
+    await vscode.commands.executeCommand("workbench.action.debug.continue");
+    await this.waitForState(() => vscode.debug.activeDebugSession !== session || !vscode.debug.activeStackItem, "debug session to continue or stop");
+  }
+
+  async pauseExecution(): Promise<void> {
+    const session = this.requireSession();
+    if (vscode.debug.activeStackItem) throw new Error("Debug session is already paused");
+    await vscode.commands.executeCommand("workbench.action.debug.pause");
+    await this.waitForState(() => vscode.debug.activeDebugSession === session && !!vscode.debug.activeStackItem, "debug session to pause");
+  }
+
+  async restartDebugging(): Promise<void> {
+    const session = this.requireSession();
+    await vscode.commands.executeCommand("workbench.action.debug.restart");
+    await this.waitForState(() => vscode.debug.activeDebugSession === session || vscode.debug.activeDebugSession !== undefined, "debug session to restart");
+  }
+
+  async addBreakpoint(fileFullPath: string, line: number, condition?: string, logMessage?: string): Promise<void> {
+    const document = await this.openSourceDocument(fileFullPath, line);
+    const location = new vscode.Location(document.uri, new vscode.Position(line - 1, 0));
+    vscode.debug.addBreakpoints([new vscode.SourceBreakpoint(location, true, condition, undefined, logMessage)]);
+  }
+
+  async removeBreakpoint(fileFullPath: string, line: number): Promise<void> {
+    const document = await this.openSourceDocument(fileFullPath, line);
+    const uri = document.uri;
+    const matches = vscode.debug.breakpoints.filter((breakpoint) => breakpoint instanceof vscode.SourceBreakpoint && breakpoint.location.uri.toString() === uri.toString() && breakpoint.location.range.start.line === line - 1);
+    if (matches.length === 0) throw new Error(`No breakpoint exists at ${fileFullPath}:${line}`);
+    vscode.debug.removeBreakpoints(matches);
+  }
+
+  clearAllBreakpoints(): void { vscode.debug.removeBreakpoints(vscode.debug.breakpoints); }
+
+  listBreakpoints(): unknown[] {
+    return vscode.debug.breakpoints.map((breakpoint) => breakpoint instanceof vscode.SourceBreakpoint ? {
+      fileFullPath: breakpoint.location.uri.fsPath,
+      line: breakpoint.location.range.start.line + 1,
+      condition: breakpoint.condition,
+      logMessage: breakpoint.logMessage,
+
+    } : {});
+  }
+
+  async listVariableNames(scope: Scope): Promise<string[]> {
+    const variables = await this.getScopedVariables(scope);
+    return variables.map((variable) => variable.name).slice(0, MAX_VARIABLES);
+  }
+
+  async getVariablesValues(variableNames: string[], scope: Scope): Promise<Record<string, unknown>> {
+    const session = this.requirePausedSession();
+    const variables = await this.getScopedVariables(scope);
+    const requested = new Set(variableNames);
+    const values: Record<string, unknown> = {};
+    for (const variable of variables) {
+      if (!requested.has(variable.name)) continue;
+      if (this.isSecretName(variable.name)) {
+        values[variable.name] = "[REDACTED]";
+        continue;
+      }
+      let value: unknown = variable.value;
+      if (variable.evaluateName) {
+        try {
+          const response = await this.dapRequest(session, "evaluate", { expression: variable.evaluateName, frameId: this.requireFrameId(), context: "watch" });
+          value = response?.result ?? response?.value ?? value;
+        } catch {
+          value = variable.value;
+        }
+      }
+      values[variable.name] = this.redact(value, variable.name);
+    }
+    return values;
+  }
+
+  async evaluateExpression(expression: string): Promise<unknown> {
+    const session = this.requirePausedSession();
+    const response = await this.dapRequest(session, "evaluate", { expression, frameId: this.requireFrameId(), context: "repl" });
+    return this.redact(response?.result ?? response?.value ?? response, expression);
+  }
+
+  private async getScopedVariables(scope: Scope): Promise<DapVariable[]> {
+    const session = this.requirePausedSession();
+    const response = await this.dapRequest(session, "scopes", { frameId: this.requireFrameId() });
+    const scopes = (response?.scopes ?? []).filter((item) => this.matchesScope(item.name ?? "", scope));
+    if (scopes.length === 0) throw new Error(`No '${scope}' debug scope is available in the paused frame`);
+    const variables: DapVariable[] = [];
+    for (const item of scopes.slice(0, scope === "all" ? 10 : 2)) {
+      if (!item.variablesReference) continue;
+      const result = await this.dapRequest(session, "variables", { variablesReference: item.variablesReference });
+      variables.push(...(result?.variables ?? []).slice(0, MAX_VARIABLES));
+    }
+    return [...new Map(variables.map((variable) => [variable.name, variable])).values()].slice(0, MAX_VARIABLES);
+  }
+
+  private matchesScope(name: string, scope: Scope): boolean {
+    if (scope === "all") return true;
+    const normalized = name.toLowerCase();
+    return scope === "local" ? normalized.includes("local") || normalized.includes("argument") : normalized.includes("global") || normalized.includes("static");
+  }
+
+  private async openSourceDocument(fileFullPath: string, line: number): Promise<vscode.TextDocument> {
+    const document = await vscode.workspace.openTextDocument(vscode.Uri.file(fileFullPath));
+    if (line < 1 || line > document.lineCount) throw new Error(`Line ${line} is outside ${fileFullPath}; document has ${document.lineCount} lines`);
+    return document;
+  }
+
+  private requireSession(): vscode.DebugSession {
+    if (!vscode.debug.activeDebugSession) throw new Error("No active debug session");
+    return vscode.debug.activeDebugSession;
+  }
+
+  private requirePausedSession(): vscode.DebugSession {
+    const session = this.requireSession();
+    if (!vscode.debug.activeStackItem) throw new Error("Debug session is not paused at a stack frame");
+    return session;
+  }
+
+  private requireFrameId(): number {
+    const stackItem = vscode.debug.activeStackItem;
+    if (!stackItem || !("frameId" in stackItem) || typeof stackItem.frameId !== "number") throw new Error("No paused debug stack frame");
+    return stackItem.frameId;
+  }
+
+  private async step(command: string): Promise<void> {
+    this.requirePausedSession();
+    await vscode.commands.executeCommand(command);
+    await this.waitForState(() => !!vscode.debug.activeStackItem, "debugger to reach a paused state");
+  }
+
+  private async waitForState(predicate: () => boolean, description: string): Promise<void> {
+    if (predicate()) return;
+    await new Promise<void>((resolve, reject) => {
+      const disposables = [vscode.debug.onDidChangeActiveDebugSession(check), vscode.debug.onDidChangeActiveStackItem(check)];
+      const timer = setTimeout(() => finish(new Error(`Timed out waiting for ${description}`)), DAP_TIMEOUT_MS);
+      const finish = (error?: Error) => { clearTimeout(timer); disposables.forEach((disposable) => disposable.dispose()); error ? reject(error) : resolve(); };
+      function check(): void { if (predicate()) finish(); }
+    });
+  }
+
+  private async dapRequest(session: vscode.DebugSession, command: string, args: unknown): Promise<DapResponse> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`Debug adapter timed out during '${command}'`)), DAP_TIMEOUT_MS);
+      session.customRequest(command, args).then((result) => { clearTimeout(timer); resolve(result as DapResponse); }, (error) => { clearTimeout(timer); reject(error); });
+    });
+  }
+
+  private isSecretName(name: string): boolean { return SECRET_NAME.test(name); }
+
+  private redact(value: unknown, key?: string): unknown {
+    if (key && this.isSecretName(key)) return "[REDACTED]";
+    if (typeof value === "string") return SECRET_VALUE.test(value) ? "[REDACTED]" : value;
+    if (Array.isArray(value)) return value.map((item) => this.redact(item));
+    if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, this.redact(item, name)]));
+    return value;
+  }
+}

@@ -1,0 +1,14 @@
+src/
+test/
+.vscode/
+.vscode-test/
+*.vsix
+*.map
+.gitignore
+.vscodeignore
+.eslintrc.json
+vitest.config.ts
+esbuild.config.mjs
+tsconfig.json
+.mcpregistry_*
+.npmrc
