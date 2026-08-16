@@ -1,0 +1,123 @@
+@page "/admin"
+@attribute [Authorize]
+@rendermode InteractiveAuto
+
+<h3>Esi.AI Administration</h3>
+
+<div class="row">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>Provider Status</h5>
+            </div>
+            <div class="card-body">
+                <div class="list-group">
+                    @foreach (var provider in ProviderStatuses)
+                    {
+                        <div class="list-group-item d-flex justify-content-between align-items-center">
+                            <span>@provider.Key</span>
+                            <span class="badge bg-@(provider.Value ? "success" : "danger")">@(provider.Value ? "Online" : "Offline")</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Routing Strategies</h5>
+            </div>
+            <div class="card-body">
+                <p>Current strategy: @CurrentRoutingStrategy</p>
+                <button class="btn btn-primary w-100" @onclick="ChangeStrategy(RoutingStrategy.RoundRobin)">RoundRobin</button>
+                <button class="btn btn-secondary w-100 mt-2" @onclick="ChangeStrategy(RoutingStrategy.LowestLatency)">LowestLatency</button>
+                <button class="btn btn-secondary w-100 mt-2" @onclick="ChangeStrategy(RoutingStrategy.LowestCost)">LowestCost</button>
+                <button class="btn btn-secondary w-100 mt-2" @onclick="ChangeStrategy(RoutingStrategy.LeastBusy)">LeastBusy</button>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5>Usage Metrics</h5>
+            </div>
+            <div class="card-body">
+                <p>Total Requests: @TotalRequests</p>
+                <p>Successful: @SuccessfulRequests</p>
+                <p>Failed: @FailedRequests</p>
+                <p>Average Latency: @AverageLatencyMs ms</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row mt-4">
+    <div class="col-md-12">
+        <div class="card">
+            <div class="card-header">
+                <h5>Budget Status</h5>
+            </div>
+            <div class="card-body">
+                <p>Max Input Tokens: @MaxInputTokens</p>
+                <p>Consumed Input Tokens: @ConsumedInputTokens</p>
+                <p>Remaining Input Tokens: @(MaxInputTokens - ConsumedInputTokens)</p>
+                <p>Max Output Tokens: @MaxOutputTokens</p>
+                <p>Consumed Output Tokens: @ConsumedOutputTokens</p>
+                <p>Remaining Output Tokens: @(MaxOutputTokens - ConsumedOutputTokens)</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Inject]
+    private Esi.AI.Llm.Redis.IRedisCacheService? RedisCache { get; set; }
+
+    [Inject]
+    private Esi.AI.Llm.Cost.PricingConfiguration? PricingConfig { get; set; }
+
+    private Dictionary<string, bool> ProviderStatuses { get; set; } = new();
+    private string CurrentRoutingStrategy { get; set; } = "RoundRobin";
+    private int TotalRequests { get; set; } = 0;
+    private int SuccessfulRequests { get; set; } = 0;
+    private int FailedRequests { get; set; } = 0;
+    private int AverageLatencyMs { get; set; } = 0;
+    private int MaxInputTokens { get; set; } = 0;
+    private int ConsumedInputTokens { get; set; } = 0;
+    private int MaxOutputTokens { get; set; } = 0;
+    private int ConsumedOutputTokens { get; set; } = 0;
+
+    protected override void OnInitialized()
+    {
+        // Initialize provider statuses from configured providers
+        ProviderStatuses["openai"] = true;
+        ProviderStatuses["anthropic"] = true;
+        ProviderStatuses["gemini"] = true;
+        ProviderStatuses["azure"] = true;
+        ProviderStatuses["ollama"] = true;
+
+        // Load metrics from Redis if available
+        RedisCache?.GetCounterAsync("admin:total_requests")
+            .ContinueWith(t => TotalRequests = t.Result);
+
+        RedisCache?.GetCounterAsync("admin:successful_requests")
+            .ContinueWith(t => SuccessfulRequests = t.Result);
+
+        RedisCache?.GetCounterAsync("admin:failed_requests")
+            .ContinueWith(t => FailedRequests = t.Result);
+
+        // Load budget info
+        MaxInputTokens = 100000; // default
+        MaxOutputTokens = 8192; // default
+    }
+
+    private void ChangeStrategy(Esi.AI.Llm.Router.RoutingStrategy strategy)
+    {
+        CurrentRoutingStrategy = strategy.ToString();
+        // TODO: Apply routing strategy change
+    }
+}

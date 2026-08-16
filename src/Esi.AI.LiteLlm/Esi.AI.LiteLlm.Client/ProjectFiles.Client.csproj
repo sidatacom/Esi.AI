@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>Esi.AI.LiteLlm</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorWebAssemblyLoadAllGlobalizations>true</BlazorWebAssemblyLoadAllGlobalizations>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../Esi.AI.LiteLlm/Esi.AI.LiteLlm.csproj" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.0" PrivateAssets="all" />
+  </ItemGroup>
+</Project>
+</function>
+</tool_call>
+<tool_call>
+<function=replace_string_in_file>
+<parameter=filePath>
+/home/sysadmin/Git/Esi.AI/src/Esi.AI.LiteLlm/Esi.AI.LiteLlm.Client/Program.cs

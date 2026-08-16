@@ -1,0 +1,56 @@
+@page "/weather"
+@using Esi.AI.LiteLlm.Shared
+
+<h1>Weather</h1>
+
+@if (forecasts == null)
+{
+    <p><em>Loading weather forecasts...</em></p>
+}
+else
+{
+    <table class="table">
+        <thead>
+        <tr>
+            <th>Date</th>
+            <th>Temp.</th>
+            <th>Wind</th>
+            <th>Summary</th>
+        </tr>
+        </thead>
+        <tbody>
+        @foreach (var forecast in forecasts)
+        {
+            <tr>
+                <td>@forecast.Date.ToShortDateString()</td>
+                <td>@forecast.TemperatureC</td>
+                <td>@forecast.WindSpeed</td>
+                <td>@forecast.Summary</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}
+
+@code {
+    private WeatherForecast[]? forecasts;
+
+    protected override Task OnInitializedAsync()
+    {
+        base.OnInitializedAsync();
+        forecasts = Enumerable.Range(1, 5).Select(x => new WeatherForecast(
+                DateOnly.FromDateTime(DateTime.Now.AddDays(x)),
+                Random.Shared.Next(-20, 55),
+                Random.Shared.Next(2, 20),
+                new[] { "Freezing", "Cool", "Mild", "Warm" }[Random.Shared.Next(4)]
+            )).ToArray();
+
+        return Task.CompletedTask;
+    }
+}
+
+public record WeatherForecast(
+    DateOnly Date,
+    int TemperatureC,
+    int WindSpeed,
+    string? Summary);

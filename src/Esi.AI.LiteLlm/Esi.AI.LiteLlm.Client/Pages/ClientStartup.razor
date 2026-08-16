@@ -1,0 +1,15 @@
+@namespace Esi.AI.LiteLlm.Client
+@inject NavigationManager _nav
+
+@using Microsoft.AspNetCore.Components.Web
+
+<PageTitle>Client</PageTitle>
+
+<p class="loading">Client wird geladen — Weiterleitung zum Host …</p>
+
+@code {
+    protected override void OnInitialized()
+    {
+        _nav.NavigateTo("https://localhost:5001", forceLoad: true);
+    }
+}
