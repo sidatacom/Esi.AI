@@ -2,7 +2,7 @@
 name: "Expert C#"
 description: An agent designed to assist with software development tasks for .NET projects.
 # version: 2026-01-20a
-model: nemotron-3.5-lightning-30b-a3b-nvfp4 (customendpoint)
+model: gemma-4-12b-it-qat-mtp (customendpoint)
 tools: [execute, read, edit, search, web, todo]
 ---
 

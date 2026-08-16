@@ -6,18 +6,20 @@ using Esi.AI.Llm;
 using Esi.AI.Llm.Providers;
 using Esi.AI.Llm.Router;
 
+namespace Esi.AI.Llm.Gateway;
+
 /// <summary>
 /// Gateway für OpenAI-kompatible Chat-Completion-Endpunkte.
 /// Stellt ASP.NET Core Endpunkte bereit, die mit bestehenden OpenAI-kompatiblen Clients verwendet werden können.
 /// </summary>
 public class ChatCompletionGateway
 {
-    private readonly ProviderRouter _router;
+    private readonly Orchestrator _orchestrator;
     private readonly ILogger<ChatCompletionGateway>? _logger;
 
-    public ChatCompletionGateway(ProviderRouter router, ILogger<ChatCompletionGateway>? logger = null)
+    public ChatCompletionGateway(Orchestrator orchestrator, ILogger<ChatCompletionGateway>? logger = null)
     {
-        _router = router;
+        _orchestrator = orchestrator;
         _logger = logger;
     }
 
@@ -27,9 +29,10 @@ public class ChatCompletionGateway
     /// <param name="app">Die WebApplication-Instanz.</param>
     public void RegisterEndpoints(WebApplication app)
     {
-        // POST /v1/chat/completions (non-streaming)
+        // POST /v1/chat/completions (non-streaming + SSE streaming)
         app.MapPost("/v1/chat/completions", async (
             [FromBody] ChatCompletionRequest request,
+            HttpContext httpContext,
             CancellationToken ct) =>
         {
             if (request?.Messages?.Any() != true)
@@ -37,9 +40,15 @@ public class ChatCompletionGateway
             if (string.IsNullOrWhiteSpace(request.Model))
                 return Results.BadRequest("Model must be specified.");
 
+            if (request.Stream == true)
+            {
+                await WriteStreamingResponseAsync(httpContext, _orchestrator, request, _logger, ct);
+                return Results.Empty;
+            }
+
             try
             {
-                var result = await _router.CompleteAsync(request, cancellationToken: ct);
+                var result = await _orchestrator.OrchestrateAsync(request, cancellationToken: ct);
 
                 if (result.Error != null)
                     return Results.Problem(result.Error.Reason,
@@ -100,5 +109,70 @@ public class ChatCompletionGateway
 
             return Results.Ok(models);
         });
+    }
+
+    /// <summary>
+    /// Streamt eine Chat-Completion-Anfrage als Server-Sent-Events (OpenAI-kompatibles Chunk-Format).
+    /// </summary>
+    private static async Task WriteStreamingResponseAsync(
+        HttpContext httpContext,
+        Orchestrator orchestrator,
+        ChatCompletionRequest request,
+        ILogger<ChatCompletionGateway>? logger,
+        CancellationToken cancellationToken)
+    {
+        httpContext.Response.ContentType = "text/event-stream";
+        httpContext.Response.Headers.CacheControl = "no-cache";
+        httpContext.Response.Headers["X-Accel-Buffering"] = "no";
+
+        try
+        {
+            await foreach (var chunk in orchestrator.OrchestrateStreamingAsync(request, cancellationToken))
+            {
+                var payload = new Dictionary<string, object?>
+                {
+                    ["id"] = chunk.Id,
+                    ["object"] = "chat.completion.chunk",
+                    ["model"] = request.Model,
+                    ["choices"] = new[]
+                    {
+                        new Dictionary<string, object?>
+                        {
+                            ["index"] = 0,
+                            ["delta"] = new Dictionary<string, object?> { ["content"] = chunk.Content },
+                            ["finish_reason"] = chunk.FinishReason
+                        }
+                    }
+                };
+
+                await httpContext.Response.WriteAsync($"data: {JsonSerializer.Serialize(payload)}\n\n", cancellationToken);
+                await httpContext.Response.Body.FlushAsync(cancellationToken);
+            }
+
+            await httpContext.Response.WriteAsync("data: [DONE]\n\n", cancellationToken);
+            await httpContext.Response.Body.FlushAsync(cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            // Client hat die Verbindung abgebrochen; Response-Header wurden bereits gesendet.
+            logger?.LogDebug("Streaming chat completion request was cancelled by the client.");
+        }
+    }
+}
+
+/// <summary>
+/// Erlaubt Hosts, die LiteLLM-Gateway-Endpunkte mit einer Zeile über DI zu registrieren.
+/// </summary>
+public static class ChatCompletionGatewayExtensions
+{
+    /// <summary>
+    /// Löst den Orchestrator aus DI auf und registriert die OpenAI-kompatiblen Gateway-Endpunkte.
+    /// </summary>
+    public static WebApplication MapLiteLlmGateway(this WebApplication app)
+    {
+        var orchestrator = app.Services.GetRequiredService<Orchestrator>();
+        var logger = app.Services.GetService<ILogger<ChatCompletionGateway>>();
+        new ChatCompletionGateway(orchestrator, logger).RegisterEndpoints(app);
+        return app;
     }
 }

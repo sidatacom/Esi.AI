@@ -1,6 +1,6 @@
 ---
 description: 'AI agent governance expert that reviews code for safety issues, missing governance controls, and helps implement policy enforcement, trust scoring, and audit trails in agent systems.'
-model: nemotron-3.5-lightning-30b-a3b-nvfp4 (customendpoint)
+model: qwen3.8-27b-q4 (customendpoint)
 tools: [execute, read, edit, search, web, todo]
 name: 'Agent Governance Reviewer'
 ---

@@ -1,8 +1,8 @@
 ---
 description: "Provide expert .NET software engineering guidance using modern software design patterns."
 name: "Expert .NET software engineer mode instructions"
-model: nemotron-3.5-lightning-30b-a3b-nvfp4 (customendpoint)
-tools: [execute, read, edit, search, web, todo]
+model: qwen3.8-27b-q4 (customendpoint)
+tools: [execute, read, edit, search, web, 'microsoftdocs/mcp/*', todo]
 ---
 
 # Expert .NET software engineer mode instructions

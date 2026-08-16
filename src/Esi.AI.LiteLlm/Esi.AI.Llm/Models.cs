@@ -127,13 +127,25 @@ public sealed class ChatCompletionResponse
         [System.Text.Json.Serialization.JsonPropertyName("index")]
         public int Index { get; set; }
 
-        /// <summary>Die Chat-Nachricht.</summary>
+        /// <summary>The message content.</summary>
         [System.Text.Json.Serialization.JsonPropertyName("message")]
-        public ChatMessage? Message { get; set; }
+        public Message? Message { get; set; }
 
-        /// <summary>Finish-Reason.</summary>
+        /// <summary>Finish reason.</summary>
         [System.Text.Json.Serialization.JsonPropertyName("finish_reason")]
         public string? FinishReason { get; set; }
+
+        /// <summary>A message in the response.</summary>
+        public sealed class Message
+        {
+            /// <summary>The role (assistant, user, system, tool).</summary>
+            [System.Text.Json.Serialization.JsonPropertyName("role")]
+            public string Role { get; init; } = default!;
+
+            /// <summary>The content of the message.</summary>
+            [System.Text.Json.Serialization.JsonPropertyName("content")]
+            public string? Content { get; init; }
+        }
     }
 }
 

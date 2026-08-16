@@ -12,9 +12,3 @@
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.0" PrivateAssets="all" />
   </ItemGroup>
 </Project>
-</function>
-</tool_call>
-<tool_call>
-<function=replace_string_in_file>
-<parameter=filePath>
-/home/sysadmin/Git/Esi.AI/src/Esi.AI.LiteLlm/Esi.AI.LiteLlm.Client/Program.cs

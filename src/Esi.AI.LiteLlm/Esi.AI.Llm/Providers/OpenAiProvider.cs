@@ -5,6 +5,9 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Runtime.CompilerServices;
+using System.Collections.Generic;
+using System.Linq;
+using Esi.AI.Llm.Models;
 
 namespace Esi.AI.Llm.Providers;
 
@@ -14,8 +17,6 @@ namespace Esi.AI.Llm.Providers;
 /// </summary>
 public class OpenAiProvider : IChatCompletionProvider
 {
-    private readonly string _apiKey;
-    private readonly string _endpoint;
     private readonly HttpClient _httpClient;
     private readonly JsonSerializerOptions _jsonOptions = new()
     {
@@ -32,15 +33,17 @@ public class OpenAiProvider : IChatCompletionProvider
     /// </summary>
     /// <param name="apiKey">API-Key für die OpenAI API.</param>
     /// <param name="endpoint">API-Endpoint (z.B. "https://api.openai.com/v1").</param>
-    public OpenAiProvider(string apiKey, string endpoint = "https://api.openai.com/v1")
+    /// <param name="httpClient">Von <see cref="IHttpClientFactory"/> erzeugter HTTP-Client.</param>
+    public OpenAiProvider(string apiKey, string endpoint, HttpClient httpClient)
     {
-        _apiKey = apiKey;
-        _endpoint = endpoint;
-        _httpClient = new HttpClient
-        {
-            BaseAddress = new Uri(_endpoint)
-        };
-        _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {_apiKey}");
+        ArgumentException.ThrowIfNullOrWhiteSpace(apiKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(endpoint);
+        ArgumentNullException.ThrowIfNull(httpClient);
+
+        _httpClient = httpClient;
+        _httpClient.BaseAddress = new Uri(endpoint.TrimEnd('/') + "/");
+        if (!_httpClient.DefaultRequestHeaders.Contains("Authorization"))
+            _httpClient.DefaultRequestHeaders.Add("Authorization", $"Bearer {apiKey}");
     }
 
     /// <summary>
@@ -63,7 +66,7 @@ public class OpenAiProvider : IChatCompletionProvider
         var jsonPayload = JsonSerializer.Serialize(payload, _jsonOptions);
         var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
-        var response = await _httpClient.PostAsync("/chat/completions", content, cancellationToken);
+        var response = await _httpClient.PostAsync("chat/completions", content, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {
@@ -75,7 +78,7 @@ public class OpenAiProvider : IChatCompletionProvider
                 FinishReason = "error",
                 Error = new ProviderResult.ErrorInfo
                 {
-                    Reason = response.ReasonPhrase ?? "Unknown error",
+                    Reason = string.IsNullOrWhiteSpace(errorBody) ? response.ReasonPhrase ?? "Unknown error" : errorBody,
                     Code = ((int)response.StatusCode).ToString(),
                     StatusCode = (int)response.StatusCode,
                     IsRetryable = response.StatusCode >= HttpStatusCode.InternalServerError && response.StatusCode <= HttpStatusCode.GatewayTimeout
@@ -91,8 +94,10 @@ public class OpenAiProvider : IChatCompletionProvider
 
         if (doc.RootElement.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0)
         {
-            contentText = choices[0].GetProperty("delta").GetProperty("content").GetString() ?? string.Empty;
-            finishReason = choices[0].GetProperty("finish_reason").GetString();
+            var choice = choices[0];
+            var messageElement = choice.TryGetProperty("message", out var m) ? m : choice.GetProperty("delta");
+            contentText = messageElement.TryGetProperty("content", out var c) ? c.GetString() : null;
+            finishReason = choice.GetProperty("finish_reason").GetString();
         }
 
         int? inputTokens = null;
@@ -139,7 +144,7 @@ public class OpenAiProvider : IChatCompletionProvider
         var jsonPayload = JsonSerializer.Serialize(payload, _jsonOptions);
         var content = new StringContent(jsonPayload, Encoding.UTF8, "application/json");
 
-        using var response = await _httpClient.PostAsync("/chat/completions", content, cancellationToken);
+        using var response = await _httpClient.PostAsync("chat/completions", content, cancellationToken);
 
         if (!response.IsSuccessStatusCode)
         {

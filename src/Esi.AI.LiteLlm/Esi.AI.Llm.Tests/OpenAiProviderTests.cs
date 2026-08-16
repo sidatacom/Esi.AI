@@ -1,115 +1,98 @@
 using NUnit.Framework;
 using Esi.AI.Llm.Providers;
+using System.Net;
 using System.Net.Http;
-using System.Text.Json;
+using System.Text;
 
 namespace Esi.AI.Llm.Tests;
 
 [TestFixture]
 public class OpenAiProviderTests
 {
-    private TestOpenAiProvider _provider = null!;
-
-    [SetUp]
-    public void SetUp()
+    private static ChatCompletionRequest CreateRequest() => new()
     {
-        _provider = new TestOpenAiProvider();
-    }
+        Model = "gpt-4o-mini",
+        Messages = new List<ChatMessage> { new() { Role = "user", Content = "Hello" } }
+    };
 
     [Test]
     public async Task CompleteAsync_WithValidRequest_ReturnsProviderResult()
     {
-        // Arrange
-        var request = new ChatCompletionRequest
+        var json = """
         {
-            Messages = new[]
-            {
-                new ChatMessage { Role = "user", Content = "Hello" }
-            }
-        };
+          "choices": [ { "message": { "content": "Test response" }, "finish_reason": "stop" } ],
+          "usage": { "prompt_tokens": 10, "completion_tokens": 20 }
+        }
+        """;
+        var provider = CreateProvider(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(json, Encoding.UTF8, "application/json")
+        });
 
-        // Act
-        var result = await _provider.CompleteAsync(request);
+        var result = await provider.CompleteAsync(CreateRequest());
 
-        // Assert
         Assert.That(result, Is.Not.Null);
-        Assert.That(result.Content, Is.Not.Null);
+        Assert.That(result.Content, Is.EqualTo("Test response"));
         Assert.That(result.FinishReason, Is.EqualTo("stop"));
+        Assert.That(result.Usage, Is.Not.Null);
+        Assert.That(result.Usage!.InputTokens, Is.EqualTo(10));
+        Assert.That(result.Usage!.OutputTokens, Is.EqualTo(20));
+        Assert.That(result.Error, Is.Null);
     }
 
     [Test]
     public async Task CompleteStreamingAsync_WithValidRequest_ReturnsChunks()
     {
-        // Arrange
-        var request = new ChatCompletionRequest
+        var sse =
+            "data: {\"id\":\"1\",\"choices\":[{\"delta\":{\"content\":\"Hel\"},\"finish_reason\":null}]}\n\n" +
+            "data: {\"id\":\"1\",\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":\"stop\"}]}\n\n" +
+            "data: [DONE]\n\n";
+        var provider = CreateProvider(_ => new HttpResponseMessage(HttpStatusCode.OK)
         {
-            Messages = new[]
-            {
-                new ChatMessage { Role = "user", Content = "Hello" }
-            }
-        };
+            Content = new StringContent(sse, Encoding.UTF8, "text/event-stream")
+        });
 
-        // Act
-        var chunks = await _provider.CompleteStreamingAsync(request);
+        var chunks = new List<Chunk>();
+        await foreach (var chunk in provider.CompleteStreamingAsync(CreateRequest()))
+        {
+            chunks.Add(chunk);
+        }
 
-        // Assert
-        Assert.That(chunks, Is.Not.Null);
-        Assert.That(chunks.Count(), Is.GreaterThan(0));
+        Assert.That(chunks, Has.Count.EqualTo(2));
+        Assert.That(chunks[0].Content, Is.EqualTo("Hel"));
+        Assert.That(chunks[1].Content, Is.EqualTo("lo"));
+        Assert.That(chunks[1].FinishReason, Is.EqualTo("stop"));
     }
 
     [Test]
-    public async Task CompleteAsync_WithError_ReturnsErrorResult()
+    public async Task CompleteAsync_WithHttpError_ReturnsRetryableErrorResult()
     {
-        // Arrange
-        var request = new ChatCompletionRequest
+        var provider = CreateProvider(_ => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
         {
-            Messages = new[]
-            {
-                new ChatMessage { Role = "user", Content = "" } // May cause error
-            }
-        };
+            Content = new StringContent("service unavailable")
+        });
 
-        // Act
-        var result = await _provider.CompleteAsync(request);
+        var result = await provider.CompleteAsync(CreateRequest());
 
-        // Assert
         Assert.That(result, Is.Not.Null);
         Assert.That(result.Error, Is.Not.Null);
-        Assert.That(result.Error.IsRetryable, Is.True);
-    }
-}
-
-// Helper test provider that doesn't need real API keys
-public class TestOpenAiProvider : OpenAiProvider
-{
-    public TestOpenAiProvider() 
-        : base(new HttpClient { BaseAddress = new Uri("http://test") }, 
-              "test-model", 
-              "sk-test", 
-              "http://test") 
-    {
+        Assert.That(result.Error!.IsRetryable, Is.True);
+        Assert.That(result.Error!.StatusCode, Is.EqualTo(503));
     }
 
-    protected override async Task<ProviderResult> SendRequestAsync(ChatCompletionRequest request)
+    private static OpenAiProvider CreateProvider(Func<HttpRequestMessage, HttpResponseMessage> responder)
     {
-        // Return a test result without making actual HTTP call
-        return new ProviderResult
-        {
-            Id = "chat-test-123",
-            Content = "Test response",
-            FinishReason = "stop",
-            Usage = new ProviderResult.UsageInfo
-            {
-                InputTokens = 10,
-                OutputTokens = 20,
-                TotalTokens = 30
-            }
-        };
+        var httpClient = new HttpClient(new StubHttpMessageHandler(responder));
+        return new OpenAiProvider("sk-test", "http://test", httpClient);
     }
 
-    protected override IReadOnlyDictionary<string, string> GetHeaders() => new Dictionary<string, string>
+    private sealed class StubHttpMessageHandler : HttpMessageHandler
     {
-        { "Authorization", "Bearer sk-test" },
-        { "Content-Type", "application/json" }
-    };
+        private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
+
+        public StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) => _responder = responder;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(_responder(request));
+    }
 }

@@ -24,6 +24,12 @@ Agent orchestration defines how multiple AI agents coordinate, delegate, and col
 4. **Fan-out/Fan-in**: One agent branches to multiple, results converge
 5. **Feedback Loop**: Agent → Review → Revision → Finalization
 
+### Execution
+
+Delegierbare Repository-Auftraege werden standardmaessig als GPU-Paar ausgefuehrt: genau ein Agent auf NVIDIA und genau ein Agent auf Intel, parallel und mit unabhaengigen Aufgaben oder isolierten Dateien. Der Router verwendet ausschliesslich die im Agent-Frontmatter deklarierte `model`-Bindung und erzeugt oder bindet keine Agents zur Laufzeit um.
+
+Innerhalb jeder GPU bleibt die Ausfuehrung seriell: Vor jedem Modellwechsel wird ueber die LocalAI-API verifiziert, dass der vorherige Worker dieser GPU gestoppt ist. Gemeinsame Modellinstanzen oder zwei Worker auf derselben GPU sind weiterhin unzulaessig. Wenn nur ein GPU-Slot sicher verwendet werden kann, wird keine kuenstliche zweite Aufgabe gestartet.
+
 ## Agent Lifecycle
 
 ```
@@ -56,6 +62,10 @@ Agent configuration is defined in JSONC format (`agents.jsonc`) and specifies:
 - Dependencies between agents
 - Resource requirements (GPU, memory, timeouts)
 - Fallback chains and retry policies
+
+## LocalAI Model Switching
+
+Agents select an existing model-bound agent. LocalAI manages model switching and worker lifetime. Do not manually stop or unload a worker, send shell signals, or restart the LocalAI daemon for a model change. Verify worker state through the LocalAI API before selecting the next model.
 
 ## Best Practices
 

@@ -1,3 +1,8 @@
+using Esi.AI.Llm.Models;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+
 namespace Esi.AI.Llm;
 
 /// <summary>
@@ -94,6 +99,12 @@ public sealed class ProviderResult
 
         /// <summary>Anzahl der Output-Token.</summary>
         public int OutputTokens { get; set; }
+
+        /// <summary>Gesamtt Tokens.</summary>
+        public int TotalTokens { get; set; }
+    }
+}
+       public int OutputTokens { get; set; }
 
         /// <summary>Gesamtt Tokens.</summary>
         public int TotalTokens { get; set; }

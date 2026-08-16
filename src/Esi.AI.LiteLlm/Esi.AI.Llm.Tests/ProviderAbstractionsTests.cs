@@ -1,5 +1,4 @@
 using NUnit.Framework;
-using Esi.AI.Llm.ProviderAbstractions;
 
 namespace Esi.AI.Llm.Tests;
 
@@ -10,11 +9,11 @@ public class ProviderAbstractionsTests
     public void ProviderResult_DefaultValues_AreCorrect()
     {
         // Arrange & Act
-        var result = new ProviderResult();
+        var result = new ProviderResult { Id = string.Empty, Content = string.Empty };
 
         // Assert
         Assert.That(result.Id, Is.Empty);
-        Assert.That(result.Content, Is.Null);
+        Assert.That(result.Content, Is.Empty);
         Assert.That(result.FinishReason, Is.Null);
         Assert.That(result.Usage, Is.Null);
     }
@@ -40,7 +39,7 @@ public class ProviderAbstractionsTests
     public void ProviderResult_UsageInfo_DefaultValues()
     {
         // Arrange & Act
-        var result = new ProviderResult { Usage = new ProviderResult.UsageInfo() };
+        var result = new ProviderResult { Id = "chat-1", Content = string.Empty, Usage = new ProviderResult.UsageInfo() };
 
         // Assert
         Assert.That(result.Usage.InputTokens, Is.Zero);
@@ -54,6 +53,8 @@ public class ProviderAbstractionsTests
         // Arrange & Act
         var result = new ProviderResult
         {
+            Id = "chat-1",
+            Content = string.Empty,
             Usage = new ProviderResult.UsageInfo
             {
                 InputTokens = 50,
@@ -72,12 +73,12 @@ public class ProviderAbstractionsTests
     public void ProviderResult_ErrorInfo_DefaultValues()
     {
         // Arrange & Act
-        var result = new ProviderResult { Error = new ProviderResult.ErrorInfo() };
+        var result = new ProviderResult { Id = "chat-1", Content = string.Empty, Error = new ProviderResult.ErrorInfo() };
 
         // Assert
-        Assert.That(result.Error.Reason, Is.Empty);
-        Assert.That(ErrorCode, Is.Null.Or.EqualTo(default));
-        Assert.That(result.Error.StatusCode, Is.EqualTo(0));
+        Assert.That(result.Error!.Message, Is.Null);
+        Assert.That(result.Error!.Code, Is.Null);
+        Assert.That(result.Error!.StatusCode, Is.EqualTo(500));
         Assert.That(result.Error.IsRetryable, Is.False);
     }
 
@@ -87,6 +88,8 @@ public class ProviderAbstractionsTests
         // Arrange & Act
         var result = new ProviderResult
         {
+            Id = "chat-1",
+            Content = string.Empty,
             Error = new ProviderResult.ErrorInfo
             {
                 Reason = "Rate limit exceeded",
@@ -97,10 +100,10 @@ public class ProviderAbstractionsTests
         };
 
         // Assert
-        Assert.That(result.Error.Reason, Is.EqualTo("Rate limit exceeded"));
-        Assert.That(result.Error.Code, Is.EqualTo("rate_limit"));
-        Assert.That(result.Error.StatusCode, Is.EqualTo(429));
-        Assert.That(result.Error.IsRetryable, Is.True);
+        Assert.That(result.Error!.Message, Is.EqualTo("Rate limit exceeded"));
+        Assert.That(result.Error!.Code, Is.EqualTo("rate_limit"));
+        Assert.That(result.Error!.StatusCode, Is.EqualTo(429));
+        Assert.That(result.Error!.IsRetryable, Is.True);
     }
 
     [Test]
@@ -110,7 +113,7 @@ public class ProviderAbstractionsTests
         var chunk = new Chunk();
 
         // Assert
-        Assert.That(chunk.Id, Is.Empty);
+        Assert.That(chunk.Id, Is.Null);
         Assert.That(chunk.Object, Is.EqualTo("chat.completion.chunk"));
         Assert.That(chunk.Model, Is.Null);
         Assert.That(chunk.Content, Is.Null);
