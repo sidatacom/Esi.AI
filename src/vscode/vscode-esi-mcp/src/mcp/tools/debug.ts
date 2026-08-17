@@ -4,7 +4,7 @@ import type { DebugManager } from "../../debug/manager.js";
 import type { SessionManager } from "../../terminal/session-manager.js";
 import {
   debugBreakpointSchema, debugEmptySchema, debugEvaluateSchema, debugLogpointSchema, debugStartSchema,
-  debugSettingsSchema, debugVariableValuesSchema, debugVariablesSchema,
+  debugSettingsSchema, debugVariableValuesSchema, debugVariablesSchema, debugWaitForEventSchema,
 } from "./schemas.js";
 
 export interface DebugToolDefinition {
@@ -24,6 +24,7 @@ export const DEBUG_TOOLS: DebugToolDefinition[] = [
     const started = await manager.startDebugging(debugStartSchema.parse(params));
     return text(started);
   } },
+  { name: "debug_wait_for_event", description: "EsiMCP Debug: wait for a debugger pause, exception, continue, or termination event", schema: debugWaitForEventSchema, handler: async (params, manager) => { const input = debugWaitForEventSchema.parse(params); return text(await manager.waitForDebugEvent(input.timeoutMs, input.type)); } },
   { name: "debug_stop", description: "EsiMCP Debug: stop the active debug session", schema: empty, handler: async (_, manager) => { await manager.stopDebugging(); return text({ stopped: true }); } },
   { name: "debug_step_over", description: "EsiMCP Debug: step over the current statement", schema: empty, handler: async (_, manager) => { await manager.stepOver(); return text({ stepped: true }); } },
   { name: "debug_step_into", description: "EsiMCP Debug: step into the current statement", schema: empty, handler: async (_, manager) => { await manager.stepInto(); return text({ stepped: true }); } },

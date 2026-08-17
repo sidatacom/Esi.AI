@@ -40,6 +40,7 @@ export async function deactivate(): Promise<void> {
   await server?.close();
   sessionManager?.dispose();
   sessionManager = undefined;
+  debugManager?.dispose();
   debugManager = undefined;
   disposeLogger();
 }

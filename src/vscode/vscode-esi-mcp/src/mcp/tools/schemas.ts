@@ -114,6 +114,7 @@ const debugScopeSchema = z.enum(["local", "global", "all"]).default("local");
 const variableNameSchema = z.string().min(1).max(128).refine((name) => !name.includes("*") && name.toLowerCase() !== "all", { message: "Wildcard and all-variable requests are not allowed" });
 export const debugStartSchema = z.object({ workingDirectory: z.string().min(1), fileFullPath: z.string().min(1).optional(), testName: z.string().min(1).optional(), configurationName: z.string().min(1).optional() }).strict();
 export const debugEmptySchema = z.object({}).strict();
+export const debugWaitForEventSchema = z.object({ timeoutMs: z.coerce.number().int().min(100).max(120000).optional().default(30000), type: z.enum(["paused", "continued", "terminated"]).optional() }).strict();
 export const debugBreakpointSchema = z.object({ fileFullPath: z.string().min(1), line: z.number().int().min(1), condition: z.string().max(1000).optional() }).strict();
 export const debugLogpointSchema = debugBreakpointSchema.extend({ logMessage: z.string().min(1).max(2000) }).strict();
 export const debugVariablesSchema = z.object({ scope: debugScopeSchema }).strict();

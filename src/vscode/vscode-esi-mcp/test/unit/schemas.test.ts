@@ -7,6 +7,7 @@ import {
   terminalCloseSchema,
   terminalSendInputSchema,
   debugStartSchema,
+  debugWaitForEventSchema,
   debugVariableValuesSchema,
   debugEvaluateSchema,
 } from "../../src/mcp/tools/schemas.js";
@@ -149,6 +150,12 @@ describe("Debug Schemas", () => {
 
   it("accepts launch, test, and configuration selectors", () => {
     expect(debugStartSchema.safeParse({ workingDirectory: ".", fileFullPath: "src/test.cs", testName: "Test.One", configurationName: "Esi.Web .NET Server" }).success).toBe(true);
+  });
+
+  it("accepts filtered debugger event waits and applies the timeout default", () => {
+    const result = debugWaitForEventSchema.safeParse({ type: "paused" });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data.timeoutMs).toBe(30000);
   });
 
   it("bounds requested variables and rejects wildcard dumps", () => {

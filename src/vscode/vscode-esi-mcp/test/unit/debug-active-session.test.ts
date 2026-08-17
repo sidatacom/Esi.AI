@@ -7,6 +7,8 @@ const mockState = vi.hoisted(() => ({
 vi.mock("vscode", () => ({
   debug: {
     get activeDebugSession() { return mockState.activeDebugSession; },
+    onDidChangeActiveStackItem: () => ({ dispose: vi.fn() }),
+    onDidTerminateDebugSession: () => ({ dispose: vi.fn() }),
     startDebugging: vi.fn(),
   },
   workspace: {

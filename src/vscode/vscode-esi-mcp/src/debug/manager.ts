@@ -8,8 +8,21 @@ const SECRET_VALUE = /(bearer\s+[A-Za-z0-9._~+/=-]+|(?:api[_-]?key|password|secr
 
 type Scope = "local" | "global" | "all";
 type DapVariable = { name: string; value?: string; evaluateName?: string; variablesReference?: number };
-type DapResponse = { scopes?: Array<{ name?: string; variablesReference?: number }>; variables?: DapVariable[]; result?: unknown; value?: unknown };
+type DapResponse = { scopes?: Array<{ name?: string; variablesReference?: number }>; variables?: DapVariable[]; result?: unknown; value?: unknown; body?: { exceptionId?: string; description?: string; breakMode?: string } };
 type DapBreakpoint = { id?: number; verified?: boolean; line?: number; column?: number; message?: string };
+export type DebugEvent = {
+  id: number;
+  type: "paused" | "continued" | "terminated";
+  sessionId: string;
+  sessionName: string;
+  timestamp: string;
+  reason?: "exception" | "breakpoint" | "pause" | "unknown";
+  exceptionType?: string;
+  exceptionMessage?: string;
+  fileFullPath?: string;
+  line?: number;
+};
+type DebugEventListener = (event: DebugEvent) => void;
 type BreakpointStatus = {
   fileFullPath: string;
   line: number;
@@ -23,6 +36,51 @@ type BreakpointStatus = {
 };
 
 export class DebugManager {
+  private readonly debugDisposables: vscode.Disposable[] = [];
+  private readonly debugEvents: DebugEvent[] = [];
+  private readonly eventWaiters: Array<{ type?: DebugEvent["type"]; resolve: (event: DebugEvent | null) => void; timer: ReturnType<typeof setTimeout> }> = [];
+  private readonly eventListeners = new Set<DebugEventListener>();
+  private nextEventId = 1;
+  private pausedStateKey: string | null = null;
+
+  constructor() {
+    this.debugDisposables.push(vscode.debug.onDidChangeActiveStackItem(() => { void this.observeDebugState(); }));
+    this.debugDisposables.push(vscode.debug.onDidTerminateDebugSession((session) => {
+      if (this.pausedStateKey?.startsWith(`${session.id}:`)) this.pausedStateKey = null;
+      this.publishDebugEvent({ type: "terminated", sessionId: session.id, sessionName: session.name, timestamp: new Date().toISOString() });
+    }));
+  }
+
+  dispose(): void {
+    this.debugDisposables.forEach((disposable) => disposable.dispose());
+    this.debugEvents.length = 0;
+    for (const waiter of this.eventWaiters.splice(0)) {
+      clearTimeout(waiter.timer);
+      waiter.resolve(null);
+    }
+    this.eventListeners.clear();
+  }
+
+  onDebugEvent(listener: DebugEventListener): vscode.Disposable {
+    this.eventListeners.add(listener);
+    return { dispose: () => this.eventListeners.delete(listener) };
+  }
+
+  async waitForDebugEvent(timeoutMs: number, type?: DebugEvent["type"]): Promise<DebugEvent | null> {
+    await this.observeDebugState();
+    const queuedIndex = this.debugEvents.findIndex((event) => !type || event.type === type);
+    if (queuedIndex >= 0) return this.debugEvents.splice(queuedIndex, 1)[0];
+
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        const index = this.eventWaiters.findIndex((waiter) => waiter.timer === timer);
+        if (index >= 0) this.eventWaiters.splice(index, 1);
+        resolve(null);
+      }, timeoutMs);
+      this.eventWaiters.push({ type, resolve, timer });
+    });
+  }
+
   getActiveSessionId(): string | null {
     return vscode.debug.activeDebugSession?.id ?? null;
   }
@@ -89,6 +147,65 @@ export class DebugManager {
 
     await this.waitForDebugSession(configuration.name);
     return true;
+  }
+
+  private async observeDebugState(): Promise<void> {
+    const session = vscode.debug.activeDebugSession;
+    const stackItem = vscode.debug.activeStackItem;
+    if (!session || !stackItem) {
+      if (this.pausedStateKey) {
+        const [sessionId] = this.pausedStateKey.split(":", 1);
+        this.publishDebugEvent({ type: "continued", sessionId, sessionName: session?.name ?? "", timestamp: new Date().toISOString() });
+        this.pausedStateKey = null;
+      }
+      return;
+    }
+
+    const frameId = "frameId" in stackItem && typeof stackItem.frameId === "number" ? stackItem.frameId : "unknown";
+    const stateKey = `${session.id}:${frameId}`;
+    if (stateKey === this.pausedStateKey) return;
+    this.pausedStateKey = stateKey;
+
+    const source = "source" in stackItem ? stackItem.source : undefined;
+    const range = "range" in stackItem ? stackItem.range : undefined;
+    const exception = await this.getExceptionInfo(session, stackItem);
+    this.publishDebugEvent({
+      type: "paused",
+      sessionId: session.id,
+      sessionName: session.name,
+      timestamp: new Date().toISOString(),
+      reason: exception ? "exception" : "unknown",
+      exceptionType: exception?.exceptionType,
+      exceptionMessage: exception?.exceptionMessage,
+      fileFullPath: source?.uri.fsPath,
+      line: range ? range.start.line + 1 : undefined,
+    });
+  }
+
+  private async getExceptionInfo(session: vscode.DebugSession, stackItem: vscode.DebugStackFrame | vscode.DebugThread): Promise<{ exceptionType?: string; exceptionMessage?: string } | undefined> {
+    if (!("threadId" in stackItem) || typeof stackItem.threadId !== "number") return undefined;
+    try {
+      const response = await this.dapRequest(session, "exceptionInfo", { threadId: stackItem.threadId });
+      const body = response.body ?? response;
+      if (!body.exceptionId && !body.description) return undefined;
+      return { exceptionType: body.exceptionId, exceptionMessage: typeof body.description === "string" ? this.redact(body.description) as string : undefined };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private publishDebugEvent(event: Omit<DebugEvent, "id">): void {
+    const published = { ...event, id: this.nextEventId++ };
+    this.debugEvents.push(published);
+    while (this.debugEvents.length > 100) this.debugEvents.shift();
+    const waiterIndex = this.eventWaiters.findIndex((waiter) => !waiter.type || waiter.type === published.type);
+    if (waiterIndex >= 0) {
+      const waiter = this.eventWaiters.splice(waiterIndex, 1)[0];
+      clearTimeout(waiter.timer);
+      this.debugEvents.splice(this.debugEvents.indexOf(published), 1);
+      waiter.resolve(published);
+    }
+    for (const listener of this.eventListeners) listener(published);
   }
 
   async stopDebugging(): Promise<void> {

@@ -152,6 +152,8 @@ The extension reads configuration from VS Code settings under `esimcp.*`. Use di
 
 For debugging, an explicit `configurationName` supplied to `debug_start` takes precedence over this setting. If neither is supplied, `testName` is used when present; otherwise EsiMCP creates a debug configuration from `fileFullPath`.
 
+Use `debug_wait_for_event` to wait for debugger state changes. A paused exception event includes DAP-provided exception details when the adapter supports `exceptionInfo`; the agent must resume a paused host before starting browser or HTTP validation.
+
 ## Recommended: Set as Preferred Tool
 
 Copilot agents may have built-in command execution tools. Prefer the EsiMCP tools so command output remains visible in VS Code and associated with the correct terminal session.
@@ -262,11 +264,11 @@ This commonly happens with commands that produce heavy TUI output (progress bars
 3. Commands execute in real VS Code terminals using the Shell Integration API
 4. Output is stored in circular buffers with pagination support for efficient reading
 
-## Latest Changes (1.0.6)
+## Latest Changes (1.0.7)
 
-- Added `esimcp.debugConfigurationName` as the default launch configuration for `debug_start`
-- Explicit `configurationName` values still take precedence
-- Automatic source-file debug configuration remains available as a fallback
+- Added `debug_wait_for_event` for debugger pause, exception, continue, and termination events
+- Included available DAP exception details in paused events
+- Preserved events until the agent retrieves them
 
 See [CHANGELOG.md](CHANGELOG.md) for full history.
 

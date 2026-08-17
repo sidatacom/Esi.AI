@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.7] - 2026-08-17
+
+### Added
+- `debug_wait_for_event` MCP tool for debugger pause, exception, continue, and termination events
+- DAP exception details including exception type, message, source file, and line when available
+
+### Fixed
+- Preserve debugger events until the agent explicitly waits for them
+
 ## [1.0.6] - 2026-08-17
 
 ### Added
