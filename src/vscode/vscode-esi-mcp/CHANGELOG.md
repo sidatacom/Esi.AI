@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.4] - 2026-08-15
+
+### Added
+- `debug_settings` tool for reading active VS Code workspace settings
+
 ## [1.0.1] - 2026-08-13
 
 ### Fixed

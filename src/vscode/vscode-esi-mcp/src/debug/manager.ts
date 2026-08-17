@@ -13,6 +13,14 @@ export class DebugManager {
     return vscode.debug.activeDebugSession?.id ?? null;
   }
 
+  getSetting(setting: string): { setting: string; value: unknown } {
+    const separator = setting.lastIndexOf(".");
+    const section = setting.slice(0, separator);
+    const key = setting.slice(separator + 1);
+    const value = vscode.workspace.getConfiguration(section).get<unknown>(key);
+    return { setting, value: this.redact(value, setting) };
+  }
+
   async startDebugging(input: { workingDirectory: string; fileFullPath?: string; testName?: string; configurationName?: string }): Promise<boolean> {
     const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(input.workingDirectory));
     if (input.configurationName?.trim()) {

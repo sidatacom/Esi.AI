@@ -2,7 +2,7 @@
   "name": "vscode-esi-mcp",
   "displayName": "EsiMCP",
   "description": "Direct local HTTP MCP server for visible VS Code terminals and Debug MCP controls.",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
@@ -158,6 +158,8 @@
     }
   },
   "scripts": {
+    "version:check": "node scripts/check-version-consistency.mjs",
+    "prebuild": "npm run version:check",
     "vscode:prepublish": "npm run build",
     "build": "node esbuild.config.mjs",
     "watch": "node esbuild.config.mjs --watch",
@@ -165,6 +167,7 @@
     "format": "prettier --write \"src/**/*.ts\"",
     "test": "vitest run",
     "test:watch": "vitest",
+    "prepackage": "npm run version:check",
     "package": "vsce package"
   },
   "dependencies": {

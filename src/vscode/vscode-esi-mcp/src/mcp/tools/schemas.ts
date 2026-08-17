@@ -119,3 +119,4 @@ export const debugLogpointSchema = debugBreakpointSchema.extend({ logMessage: z.
 export const debugVariablesSchema = z.object({ scope: debugScopeSchema }).strict();
 export const debugVariableValuesSchema = z.object({ variableNames: z.array(variableNameSchema).min(1).max(20), scope: debugScopeSchema }).strict();
 export const debugEvaluateSchema = z.object({ expression: z.string().min(1).max(500).refine((expression) => !expression.includes("*"), { message: "Wildcard expressions are not allowed" }) }).strict();
+export const debugSettingsSchema = z.object({ setting: z.string().min(3).max(128).refine((setting) => setting.includes(".") && !/[\\*]/.test(setting), { message: "A fully qualified setting name without wildcards is required" }) }).strict();

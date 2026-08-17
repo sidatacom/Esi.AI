@@ -4,7 +4,7 @@ import type { DebugManager } from "../../debug/manager.js";
 import type { SessionManager } from "../../terminal/session-manager.js";
 import {
   debugBreakpointSchema, debugEmptySchema, debugEvaluateSchema, debugLogpointSchema, debugStartSchema,
-  debugVariableValuesSchema, debugVariablesSchema,
+  debugSettingsSchema, debugVariableValuesSchema, debugVariablesSchema,
 } from "./schemas.js";
 
 export interface DebugToolDefinition {
@@ -19,6 +19,7 @@ const empty = debugEmptySchema;
 
 export const DEBUG_TOOLS: DebugToolDefinition[] = [
   { name: "debug_active_session", description: "EsiMCP Debug: return the ID of the active VS Code debug session", schema: empty, handler: async (_, manager) => text(manager.getActiveSessionId()) },
+  { name: "debug_settings", description: "EsiMCP Debug: read a setting from the active VS Code workspace configuration", schema: debugSettingsSchema, handler: async (params, manager) => { const input = debugSettingsSchema.parse(params); return text(manager.getSetting(input.setting)); } },
   { name: "debug_start", description: "EsiMCP Debug: start a VS Code debug session and wait for its configured terminal ready string", schema: debugStartSchema, handler: async (params, manager, sessionManager) => {
     const waiter = sessionManager.waitForTerminalOutput(sessionManager.getDebugReadyString(), sessionManager.getDebugReadyTimeoutMs());
     try {
