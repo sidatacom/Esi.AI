@@ -20,20 +20,9 @@ const empty = debugEmptySchema;
 export const DEBUG_TOOLS: DebugToolDefinition[] = [
   { name: "debug_active_session", description: "EsiMCP Debug: return the ID of the active VS Code debug session", schema: empty, handler: async (_, manager) => text(manager.getActiveSessionId()) },
   { name: "debug_settings", description: "EsiMCP Debug: read a setting from the active VS Code workspace configuration", schema: debugSettingsSchema, handler: async (params, manager) => { const input = debugSettingsSchema.parse(params); return text(manager.getSetting(input.setting)); } },
-  { name: "debug_start", description: "EsiMCP Debug: start a VS Code debug session and wait for its configured terminal ready string", schema: debugStartSchema, handler: async (params, manager, sessionManager) => {
-    const waiter = sessionManager.waitForTerminalOutput(sessionManager.getDebugReadyString(), sessionManager.getDebugReadyTimeoutMs());
-    try {
-      const started = await manager.startDebugging(debugStartSchema.parse(params));
-      if (!started) {
-        waiter.cancel();
-        return text(started);
-      }
-      await waiter.promise;
-      return text(started);
-    } catch (error) {
-      waiter.cancel();
-      throw error;
-    }
+  { name: "debug_start", description: "EsiMCP Debug: start a VS Code debug session and wait for the debugger to attach", schema: debugStartSchema, handler: async (params, manager) => {
+    const started = await manager.startDebugging(debugStartSchema.parse(params));
+    return text(started);
   } },
   { name: "debug_stop", description: "EsiMCP Debug: stop the active debug session", schema: empty, handler: async (_, manager) => { await manager.stopDebugging(); return text({ stopped: true }); } },
   { name: "debug_step_over", description: "EsiMCP Debug: step over the current statement", schema: empty, handler: async (_, manager) => { await manager.stepOver(); return text({ stepped: true }); } },
@@ -42,8 +31,8 @@ export const DEBUG_TOOLS: DebugToolDefinition[] = [
   { name: "debug_continue", description: "EsiMCP Debug: continue the active debug session", schema: empty, handler: async (_, manager) => { await manager.continueExecution(); return text({ continued: true }); } },
   { name: "debug_pause", description: "EsiMCP Debug: pause the active debug session", schema: empty, handler: async (_, manager) => { await manager.pauseExecution(); return text({ paused: true }); } },
   { name: "debug_restart", description: "EsiMCP Debug: restart the active debug session", schema: empty, handler: async (_, manager) => { await manager.restartDebugging(); return text({ restarted: true }); } },
-  { name: "debug_add_breakpoint", description: "EsiMCP Debug: add a source breakpoint", schema: debugBreakpointSchema, handler: async (params, manager) => { const input = debugBreakpointSchema.parse(params); await manager.addBreakpoint(input.fileFullPath, input.line, input.condition); return text({ added: true }); } },
-  { name: "debug_add_logpoint", description: "EsiMCP Debug: add a source logpoint", schema: debugLogpointSchema, handler: async (params, manager) => { const input = debugLogpointSchema.parse(params); await manager.addBreakpoint(input.fileFullPath, input.line, input.condition, input.logMessage); return text({ added: true }); } },
+  { name: "debug_add_breakpoint", description: "EsiMCP Debug: add a source breakpoint and report adapter binding", schema: debugBreakpointSchema, handler: async (params, manager) => { const input = debugBreakpointSchema.parse(params); return text(await manager.addBreakpoint(input.fileFullPath, input.line, input.condition)); } },
+  { name: "debug_add_logpoint", description: "EsiMCP Debug: add a source logpoint and report adapter binding", schema: debugLogpointSchema, handler: async (params, manager) => { const input = debugLogpointSchema.parse(params); return text(await manager.addBreakpoint(input.fileFullPath, input.line, input.condition, input.logMessage)); } },
   { name: "debug_remove_breakpoint", description: "EsiMCP Debug: remove a source breakpoint", schema: debugBreakpointSchema.omit({ condition: true }), handler: async (params, manager) => { const input = debugBreakpointSchema.omit({ condition: true }).parse(params); await manager.removeBreakpoint(input.fileFullPath, input.line); return text({ removed: true }); } },
   { name: "debug_clear_all_breakpoints", description: "EsiMCP Debug: remove all breakpoints", schema: empty, handler: async (_, manager) => { manager.clearAllBreakpoints(); return text({ cleared: true }); } },
   { name: "debug_list_breakpoints", description: "EsiMCP Debug: list source breakpoints", schema: empty, handler: async (_, manager) => text(manager.listBreakpoints()) },

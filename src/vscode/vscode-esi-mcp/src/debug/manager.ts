@@ -1,4 +1,6 @@
 import * as vscode from "vscode";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 
 const MAX_VARIABLES = 100;
 const SECRET_NAME = /(password|passwd|secret|token|api[_-]?key|connectionstring|authorization|credential|private[_-]?key)/i;
@@ -7,6 +9,18 @@ const SECRET_VALUE = /(bearer\s+[A-Za-z0-9._~+/=-]+|(?:api[_-]?key|password|secr
 type Scope = "local" | "global" | "all";
 type DapVariable = { name: string; value?: string; evaluateName?: string; variablesReference?: number };
 type DapResponse = { scopes?: Array<{ name?: string; variablesReference?: number }>; variables?: DapVariable[]; result?: unknown; value?: unknown };
+type DapBreakpoint = { id?: number; verified?: boolean; line?: number; column?: number; message?: string };
+type BreakpointStatus = {
+  fileFullPath: string;
+  line: number;
+  condition?: string;
+  logMessage?: string;
+  sessionId: string | null;
+  bound: boolean;
+  verified: boolean | null;
+  adapterLine: number | null;
+  message: string | null;
+};
 
 export class DebugManager {
   getActiveSessionId(): string | null {
@@ -24,14 +38,57 @@ export class DebugManager {
   async startDebugging(input: { workingDirectory: string; fileFullPath?: string; testName?: string; configurationName?: string }): Promise<boolean> {
     const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(input.workingDirectory));
     if (input.configurationName?.trim()) {
-      if (this.getDebugSession(input.configurationName.trim())) return false;
-      return vscode.debug.startDebugging(folder, input.configurationName.trim());
+      const configurationName = input.configurationName.trim();
+      if (this.getDebugSession(configurationName)) return false;
+
+      const sessionStarted = this.waitForDebugSession(configurationName);
+      try {
+        const started = await vscode.debug.startDebugging(folder, configurationName);
+        if (!started) {
+          sessionStarted.cancel();
+          return false;
+        }
+
+        await sessionStarted.promise;
+        return true;
+      } catch (error) {
+        sessionStarted.cancel();
+        throw error;
+      }
     }
     if (input.testName?.trim()) {
       await vscode.commands.executeCommand("testing.run", { tests: [input.testName.trim()], debug: true });
       return true;
     }
-    throw new Error("configurationName or testName is required. fileFullPath alone cannot identify a valid launch configuration; provide launch.json configurationName or testName.");
+    const configuredName = vscode.workspace.getConfiguration("esimcp").get<string>("debugConfigurationName", "").trim();
+    if (configuredName) {
+      if (this.getDebugSession(configuredName)) return false;
+
+      const sessionStarted = this.waitForDebugSession(configuredName);
+      try {
+        const started = await vscode.debug.startDebugging(folder, configuredName);
+        if (!started) {
+          sessionStarted.cancel();
+          return false;
+        }
+
+        await sessionStarted.promise;
+        return true;
+      } catch (error) {
+        sessionStarted.cancel();
+        throw error;
+      }
+    }
+    if (!input.fileFullPath?.trim()) {
+      throw new Error("fileFullPath is required when configurationName and testName are not provided");
+    }
+
+    const configuration = await this.createDefaultConfiguration(input.fileFullPath.trim());
+    const started = await vscode.debug.startDebugging(folder, configuration);
+    if (!started) return false;
+
+    await this.waitForDebugSession(configuration.name);
+    return true;
   }
 
   async stopDebugging(): Promise<void> {
@@ -64,10 +121,12 @@ export class DebugManager {
     await this.waitForState(() => vscode.debug.activeDebugSession === session || vscode.debug.activeDebugSession !== undefined, "debug session to restart");
   }
 
-  async addBreakpoint(fileFullPath: string, line: number, condition?: string, logMessage?: string): Promise<void> {
+  async addBreakpoint(fileFullPath: string, line: number, condition?: string, logMessage?: string): Promise<BreakpointStatus> {
     const document = await this.openSourceDocument(fileFullPath, line);
     const location = new vscode.Location(document.uri, new vscode.Position(line - 1, 0));
-    vscode.debug.addBreakpoints([new vscode.SourceBreakpoint(location, true, condition, undefined, logMessage)]);
+    const breakpoint = new vscode.SourceBreakpoint(location, true, condition, undefined, logMessage);
+    vscode.debug.addBreakpoints([breakpoint]);
+    return this.getBreakpointStatus(breakpoint);
   }
 
   async removeBreakpoint(fileFullPath: string, line: number): Promise<void> {
@@ -80,14 +139,9 @@ export class DebugManager {
 
   clearAllBreakpoints(): void { vscode.debug.removeBreakpoints(vscode.debug.breakpoints); }
 
-  listBreakpoints(): unknown[] {
-    return vscode.debug.breakpoints.map((breakpoint) => breakpoint instanceof vscode.SourceBreakpoint ? {
-      fileFullPath: breakpoint.location.uri.fsPath,
-      line: breakpoint.location.range.start.line + 1,
-      condition: breakpoint.condition,
-      logMessage: breakpoint.logMessage,
-
-    } : {});
+  async listBreakpoints(): Promise<BreakpointStatus[]> {
+    const sourceBreakpoints = vscode.debug.breakpoints.filter((breakpoint): breakpoint is vscode.SourceBreakpoint => breakpoint instanceof vscode.SourceBreakpoint);
+    return Promise.all(sourceBreakpoints.map((breakpoint) => this.getBreakpointStatus(breakpoint)));
   }
 
   async listVariableNames(scope: Scope): Promise<string[]> {
@@ -152,6 +206,31 @@ export class DebugManager {
     return document;
   }
 
+  private async getBreakpointStatus(breakpoint: vscode.SourceBreakpoint): Promise<BreakpointStatus> {
+    const session = this.getDebugSession();
+    let protocolBreakpoint: DapBreakpoint | undefined;
+    if (session) {
+      const deadline = Date.now() + Math.min(this.getTimeoutMs("debugAdapterTimeoutMs", 30000), 5000);
+      do {
+        protocolBreakpoint = await session.getDebugProtocolBreakpoint(breakpoint) as DapBreakpoint | undefined;
+        if (protocolBreakpoint) break;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      } while (Date.now() < deadline);
+    }
+
+    return {
+      fileFullPath: breakpoint.location.uri.fsPath,
+      line: breakpoint.location.range.start.line + 1,
+      condition: breakpoint.condition,
+      logMessage: breakpoint.logMessage,
+      sessionId: session?.id ?? null,
+      bound: protocolBreakpoint !== undefined,
+      verified: protocolBreakpoint?.verified ?? null,
+      adapterLine: protocolBreakpoint?.line ?? null,
+      message: protocolBreakpoint?.message ?? null,
+    };
+  }
+
   private requireSession(): vscode.DebugSession {
     const session = this.getDebugSession();
     if (!session) throw new Error("No active debug session");
@@ -187,6 +266,39 @@ export class DebugManager {
     });
   }
 
+  private waitForDebugSession(configurationName: string): { promise: Promise<void>; cancel(): void } {
+    const existingSession = this.getDebugSession(configurationName);
+    if (existingSession) return { promise: Promise.resolve(), cancel: () => undefined };
+
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let resolvePromise: () => void;
+    let rejectPromise: (error: Error) => void;
+    const disposables: vscode.Disposable[] = [];
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      disposables.forEach((disposable) => disposable.dispose());
+      error ? rejectPromise(error) : resolvePromise();
+    };
+    const matches = (session: vscode.DebugSession) => session.name === configurationName || session.name.startsWith(`${configurationName} `);
+    const promise = new Promise<void>((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+      timer = setTimeout(() => finish(new Error(`Timed out after ${this.getTimeoutMs("debugStateTimeoutMs", 30000)}ms waiting for debug session '${configurationName}'`)), this.getTimeoutMs("debugStateTimeoutMs", 30000));
+    });
+
+    disposables.push(vscode.debug.onDidStartDebugSession((session) => {
+      if (matches(session)) finish();
+    }));
+    disposables.push(vscode.debug.onDidTerminateDebugSession((session) => {
+      if (matches(session)) finish(new Error(`Debug session '${configurationName}' terminated before it became ready`));
+    }));
+
+    return { promise, cancel: () => finish(new Error("Debug session startup was cancelled")) };
+  }
+
   private async dapRequest(session: vscode.DebugSession, command: string, args: unknown): Promise<DapResponse> {
     const timeoutMs = this.getTimeoutMs("debugAdapterTimeoutMs", 30000);
     return new Promise((resolve, reject) => {
@@ -198,6 +310,101 @@ export class DebugManager {
   private getTimeoutMs(settingName: string, fallback: number): number {
     const value = vscode.workspace.getConfiguration("esimcp").get<number>(settingName);
     return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+  }
+
+  private async createDefaultConfiguration(fileFullPath: string): Promise<vscode.DebugConfiguration> {
+    const extension = path.extname(fileFullPath).toLowerCase();
+    if (extension !== ".cs" && extension !== ".csproj") {
+      return {
+        type: this.detectDebuggerType(extension),
+        request: "launch",
+        name: "EsiMCP Launch",
+        program: fileFullPath,
+      };
+    }
+
+    const projectPath = await this.findNearestProject(fileFullPath);
+    if (!projectPath) {
+      throw new Error(`Could not locate a .csproj for ${fileFullPath}`);
+    }
+
+    const assemblyPath = await this.findBuiltAssembly(projectPath);
+    if (!assemblyPath) {
+      throw new Error(`Could not find a built assembly for ${path.basename(projectPath)}. Run dotnet build first.`);
+    }
+
+    return {
+      type: "coreclr",
+      request: "launch",
+      name: "EsiMCP .NET Launch",
+      program: assemblyPath,
+      cwd: path.dirname(projectPath),
+      stopAtEntry: false,
+    };
+  }
+
+  private async findNearestProject(fileFullPath: string): Promise<string | null> {
+    const resolvedPath = path.resolve(fileFullPath);
+    let directory = path.extname(resolvedPath).toLowerCase() === ".csproj"
+      ? path.dirname(resolvedPath)
+      : (await fs.stat(resolvedPath)).isDirectory() ? resolvedPath : path.dirname(resolvedPath);
+
+    while (true) {
+      const entries = await fs.readdir(directory, { withFileTypes: true });
+      const project = entries.find((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".csproj"));
+      if (project) return path.join(directory, project.name);
+
+      const parent = path.dirname(directory);
+      if (parent === directory) return null;
+      directory = parent;
+    }
+  }
+
+  private async findBuiltAssembly(projectPath: string): Promise<string | null> {
+    const projectName = path.basename(projectPath, path.extname(projectPath));
+    const binPath = path.join(path.dirname(projectPath), "bin");
+    const configurations = ["Debug", "Release"];
+
+    for (const configuration of configurations) {
+      const configurationPath = path.join(binPath, configuration);
+      let targetFrameworks: string[];
+      try {
+        targetFrameworks = (await fs.readdir(configurationPath, { withFileTypes: true }))
+          .filter((entry) => entry.isDirectory())
+          .map((entry) => entry.name);
+      } catch {
+        continue;
+      }
+
+      for (const targetFramework of targetFrameworks) {
+        const assemblyPath = path.join(configurationPath, targetFramework, `${projectName}.dll`);
+        try {
+          await fs.access(assemblyPath);
+          return assemblyPath;
+        } catch {
+          continue;
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private detectDebuggerType(extension: string): string {
+    const debuggerTypes: Record<string, string> = {
+      ".py": "debugpy",
+      ".js": "pwa-node",
+      ".ts": "pwa-node",
+      ".java": "java",
+      ".cpp": "cppdbg",
+      ".cc": "cppdbg",
+      ".c": "cppdbg",
+      ".go": "go",
+      ".rs": "lldb",
+      ".php": "php",
+      ".rb": "ruby",
+    };
+    return debuggerTypes[extension] ?? "pwa-node";
   }
 
   private getDebugSession(configurationName?: string): vscode.DebugSession | undefined {

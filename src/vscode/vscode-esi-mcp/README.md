@@ -148,6 +148,9 @@ The extension reads configuration from VS Code settings under `esimcp.*`. Use di
 | `esimcp.maxOutputLines` | number | 10000 | Max lines kept in output buffer per session |
 | `esimcp.idleTimeoutMs` | number | 300000 | Close idle sessions after this many ms (0 = disabled) |
 | `esimcp.blockedCommands` | string[] | `["rm -rf /"]` | Commands that will be rejected |
+| `esimcp.debugConfigurationName` | string | empty | Default VS Code launch configuration used by `debug_start` |
+
+For debugging, an explicit `configurationName` supplied to `debug_start` takes precedence over this setting. If neither is supplied, `testName` is used when present; otherwise EsiMCP creates a debug configuration from `fileFullPath`.
 
 ## Recommended: Set as Preferred Tool
 
@@ -259,15 +262,11 @@ This commonly happens with commands that produce heavy TUI output (progress bars
 3. Commands execute in real VS Code terminals using the Shell Integration API
 4. Output is stored in circular buffers with pagination support for efficient reading
 
-## Latest Changes (1.0.2)
+## Latest Changes (1.0.6)
 
-- Screenshots in README for marketplace
-- Clean output format for all tools — no more raw JSON
-- Fixed `waitForCompletion: false` not working
-- Disabled idle reaper — user closes sessions manually
-- Each VS Code workspace uses its own configured port; two workspaces need distinct ports
-- Custom terminal tab names with date format
-- Large output handling documentation
+- Added `esimcp.debugConfigurationName` as the default launch configuration for `debug_start`
+- Explicit `configurationName` values still take precedence
+- Automatic source-file debug configuration remains available as a fallback
 
 See [CHANGELOG.md](CHANGELOG.md) for full history.
 

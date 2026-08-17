@@ -2,7 +2,7 @@
   "name": "vscode-esi-mcp",
   "displayName": "EsiMCP",
   "description": "Direct local HTTP MCP server for visible VS Code terminals and Debug MCP controls.",
-  "version": "1.0.4",
+  "version": "1.0.6",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
@@ -72,6 +72,11 @@
           "default": 120000,
           "description": "Timeout for waiting for the debug ready string in milliseconds",
           "minimum": 1
+        },
+        "esimcp.debugConfigurationName": {
+          "type": "string",
+          "default": "",
+          "description": "Default VS Code launch configuration name used by debug_start when no configurationName is provided"
         },
         "esimcp.terminalPollIntervalMs": {
           "type": "number",

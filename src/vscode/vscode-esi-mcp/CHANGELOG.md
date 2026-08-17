@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.6] - 2026-08-17
+
+### Added
+- Configurable `esimcp.debugConfigurationName` default for `debug_start`
+
+### Fixed
+- Use the configured launch name when no explicit `configurationName` is supplied
+- Keep the automatic source-file debug configuration as the final fallback
+
+## [1.0.5] - 2026-08-17
+
+### Fixed
+- Wait for the VS Code debug session before reporting `debug_start` success
+- Remove unreliable terminal output readiness from debugger startup
+
 ## [1.0.4] - 2026-08-15
 
 ### Added
