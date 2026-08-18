@@ -1,7 +1,23 @@
 # Project: EsiMCP
 
 MCP server that runs commands in visible VS Code terminal tabs.
-EsiMCP is one direct HTTP MCP server per VS Code workspace, hosted by the VS Code extension at `http://127.0.0.1:<configured esimcp.serverPort>/mcp`. Its terminal bindings are `mcp_esimcp_terminal_list`, `mcp_esimcp_terminal_read`, `mcp_esimcp_terminal_input`, `mcp_esimcp_terminal_exec`, `mcp_esimcp_terminal_run`, `mcp_esimcp_terminal_create`, and `mcp_esimcp_terminal_close`; its DebugMCP controls are owned by the backend workflow. Use distinct ports for separate workspaces and configure the bearer token when `ESIMCP_SECRET` is enabled.
+EsiMCP is one direct HTTP MCP server per VS Code workspace, hosted by the VS Code extension at `http://127.0.0.1:<configured esimcp.serverPort>/mcp`. Its terminal bindings are `mcp_esimcp_terminal_list`, `mcp_esimcp_terminal_read`, `mcp_esimcp_terminal_input`, `mcp_esimcp_terminal_exec`, `mcp_esimcp_terminal_run`, `mcp_esimcp_terminal_create`, and `mcp_esimcp_terminal_close`; its DebugMCP controls are split between launch ownership and host-readiness observation. Use distinct ports for separate workspaces and configure the bearer token when `ESIMCP_SECRET` is enabled.
+
+## Esi.Web Debug Readiness
+
+For a new Esi.Web launch, the orchestrator must dispatch `debug_start` and
+`debug_check_host_readyness` in the same parallel tool-call batch:
+
+1. The backend owns `debug_start`, which starts the configured VS Code debug session and waits for the debugger to attach.
+2. The frontend owns `debug_check_host_readyness` and must invoke it immediately, without waiting for `debug_start` to return.
+3. `debug_check_host_readyness` is a blocking call. It reads live shell execution output from VS Code terminals and remains open until readiness or its timeout is returned. It does not read terminal scrollback.
+4. `{ "ready": true }` means the configured readiness string was observed. The default string is `Now ready on:`.
+5. `{ "ready": false }` means only that the readiness timeout expired.
+6. `Canceled: Canceled` means the MCP call was externally canceled. It is not a timeout and must stop the workflow; do not continue to browser actions.
+
+Do not perform browser validation, call `debug_stop`, or delegate another action while
+`debug_check_host_readyness` is pending. Start the readiness call before or during host
+startup so it can observe live shell output.
 
 ## Release Process
 

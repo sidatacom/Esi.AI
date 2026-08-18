@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.10] - 2026-08-18
+
+### Fixed
+- Reset the host readiness latch before `debug_start` and after `debug_stop`
+
+## [1.0.9] - 2026-08-18
+
+### Added
+- `debug_check_host_readyness` MCP tool with a global terminal readiness latch
+- Configurable `esimcp.debugHostReadinessTimeoutSeconds` setting with a 60-second default
+
 ## [1.0.8] - 2026-08-18
 
 ### Fixed

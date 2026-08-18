@@ -22,6 +22,7 @@ describe("EsiMCP tool catalog", () => {
       "debug_active_session",
       "debug_settings",
       "debug_start",
+      "debug_check_host_readyness",
       "debug_wait_for_event",
       "debug_stop",
       "debug_step_over",

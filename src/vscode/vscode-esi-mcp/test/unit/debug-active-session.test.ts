@@ -21,6 +21,7 @@ vi.mock("vscode", () => ({
   },
   workspace: {
     getWorkspaceFolder: () => ({}),
+    getConfiguration: () => ({ get: () => undefined }),
   },
   Uri: { file: (filePath: string) => ({ fsPath: filePath }) },
   commands: { executeCommand: vi.fn() },

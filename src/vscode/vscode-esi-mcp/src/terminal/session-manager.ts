@@ -24,6 +24,8 @@ interface OutputWaiterState {
 export class SessionManager {
   private sessions = new Map<string, TerminalSession>();
   private outputWaiters = new Set<OutputWaiterState>();
+  private debugHostReady = false;
+  private debugHostReadyRecentOutput = "";
   private terminalOutputDisposable: vscode.Disposable | null = null;
   private onSessionsChangedEmitter = new vscode.EventEmitter<void>();
   readonly onSessionsChanged = this.onSessionsChangedEmitter.event;
@@ -55,6 +57,7 @@ export class SessionManager {
       try {
         for await (const chunk of event.execution.read()) {
           this.findByTerminal(event.terminal)?.appendOutput(chunk);
+          this.updateDebugHostReadiness(chunk);
           this.notifyOutputWaiters(chunk);
         }
       } catch (error) {
@@ -62,6 +65,17 @@ export class SessionManager {
         this.rejectOutputWaiters(error instanceof Error ? error : new Error(String(error)));
       }
     });
+  }
+
+  private updateDebugHostReadiness(chunk: string): void {
+    const readyString = this.getDebugReadyString();
+    if (!readyString) return;
+
+    const output = `${this.debugHostReadyRecentOutput}${chunk}`;
+    if (output.includes(readyString)) {
+      this.debugHostReady = true;
+    }
+    this.debugHostReadyRecentOutput = output.slice(-(readyString.length - 1));
   }
 
   private notifyOutputWaiters(chunk: string): void {
@@ -155,6 +169,36 @@ export class SessionManager {
   getDebugReadyTimeoutMs(): number {
     const timeoutMs = vscode.workspace.getConfiguration("esimcp").get<number>("debugReadyTimeoutMs", 120000);
     return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 120000;
+  }
+
+  getDebugHostReadinessTimeoutMs(): number {
+    const timeoutSeconds = vscode.workspace
+      .getConfiguration("esimcp")
+      .get<number>("debugHostReadinessTimeoutSeconds", 60);
+    return typeof timeoutSeconds === "number" && Number.isFinite(timeoutSeconds) && timeoutSeconds > 0
+      ? timeoutSeconds * 1000
+      : 60000;
+  }
+
+  resetDebugHostReadiness(): void {
+    this.debugHostReady = false;
+    this.debugHostReadyRecentOutput = "";
+  }
+
+  async waitForDebugHostReadiness(): Promise<boolean> {
+    const timeoutMs = this.getDebugHostReadinessTimeoutMs();
+    const startedAt = Date.now();
+
+    try {
+      while (Date.now() - startedAt < timeoutMs) {
+        if (this.debugHostReady) return true;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(1000, timeoutMs - (Date.now() - startedAt))));
+      }
+
+      return this.debugHostReady;
+    } finally {
+      this.resetDebugHostReadiness();
+    }
   }
 
   waitForTerminalOutput(expectedText: string, timeoutMs: number): TerminalOutputWaiter {

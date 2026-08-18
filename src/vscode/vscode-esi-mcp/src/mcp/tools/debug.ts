@@ -5,6 +5,7 @@ import type { SessionManager } from "../../terminal/session-manager.js";
 import {
   debugBreakpointSchema, debugEmptySchema, debugEvaluateSchema, debugLogpointSchema, debugStartSchema,
   debugSettingsSchema, debugVariableValuesSchema, debugVariablesSchema, debugWaitForEventSchema,
+  debugCheckHostReadinessSchema,
 } from "./schemas.js";
 
 export interface DebugToolDefinition {
@@ -16,15 +17,24 @@ export interface DebugToolDefinition {
 
 const text = (value: unknown): McpToolResponse => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
 const empty = debugEmptySchema;
-const stopDebugSession = async (_: unknown, manager: DebugManager): Promise<McpToolResponse> => { await manager.stopDebugging(); return text({ stopped: true }); };
+const stopDebugSession = async (_: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
+  try {
+    await manager.stopDebugging();
+    return text({ stopped: true });
+  } finally {
+    sessionManager.resetDebugHostReadiness();
+  }
+};
 
 export const DEBUG_TOOLS: DebugToolDefinition[] = [
   { name: "debug_active_session", description: "EsiMCP Debug: return the ID of the active VS Code debug session", schema: empty, handler: async (_, manager) => text(manager.getActiveSessionId()) },
   { name: "debug_settings", description: "EsiMCP Debug: read a setting from the active VS Code workspace configuration", schema: debugSettingsSchema, handler: async (params, manager) => { const input = debugSettingsSchema.parse(params); return text(manager.getSetting(input.setting)); } },
-  { name: "debug_start", description: "EsiMCP Debug: start a VS Code debug session and wait for the debugger to attach", schema: debugStartSchema, handler: async (params, manager) => {
+  { name: "debug_start", description: "EsiMCP Debug: start a VS Code debug session and wait for the debugger to attach", schema: debugStartSchema, handler: async (params, manager, sessionManager) => {
+    sessionManager.resetDebugHostReadiness();
     const started = await manager.startDebugging(debugStartSchema.parse(params));
     return text(started);
   } },
+  { name: "debug_check_host_readyness", description: "EsiMCP Debug: wait for the configured readiness string in any VS Code terminal", schema: debugCheckHostReadinessSchema, handler: async (_, _manager, sessionManager) => text({ ready: await sessionManager.waitForDebugHostReadiness() }) },
   { name: "debug_wait_for_event", description: "EsiMCP Debug: wait for a debugger pause, exception, continue, or termination event", schema: debugWaitForEventSchema, handler: async (params, manager) => { const input = debugWaitForEventSchema.parse(params); return text(await manager.waitForDebugEvent(input.timeoutMs, input.type)); } },
   { name: "debug_stop", description: "EsiMCP Debug: stop the active debug session", schema: empty, handler: stopDebugSession },
   { name: "debug_step_over", description: "EsiMCP Debug: step over the current statement", schema: empty, handler: async (_, manager) => { await manager.stepOver(); return text({ stepped: true }); } },

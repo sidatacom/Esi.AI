@@ -81,6 +81,25 @@ You should see a new terminal tab open in VSCode with the command output.
 | `list` | List active sessions. Optionally filter by `agentId`. |
 | `close` | Close a terminal session and its VSCode tab. |
 
+### Debug Controls
+
+| Tool | Description |
+|------|-------------|
+| `debug_start` | Start the configured VS Code debug session and wait for the debugger to attach. This tool does not replace host-readiness observation. |
+| `debug_check_host_readyness` | Block until the configured readiness string is observed in live VS Code shell output or the readiness timeout expires. The default string is `Now ready on:`. |
+| `debug_settings` | Read a setting from the active VS Code workspace configuration. |
+| `debug_active_session` | Return the active VS Code debug session ID. |
+| `debug_wait_for_event` | Wait for a debugger pause, exception, continue, or termination event. |
+| `debug_stop` | Stop the active VS Code debug session. |
+
+For a new Esi.Web launch, dispatch `debug_start` and `debug_check_host_readyness` in the
+same parallel tool-call batch. The backend owns `debug_start`; the frontend must invoke
+`debug_check_host_readyness` immediately and keep the blocking call open until it returns.
+The readiness tool reads live shell execution output, not terminal scrollback. A result of
+`{ "ready": true }` confirms the readiness string was observed. `{ "ready": false }` means
+only that the timeout expired. `Canceled: Canceled` is external cancellation, not a timeout;
+stop the workflow and do not continue to browser actions.
+
 ## Usage Patterns
 
 ### Simple Command
@@ -149,8 +168,10 @@ The extension reads configuration from VS Code settings under `esimcp.*`. Use di
 | `esimcp.idleTimeoutMs` | number | 300000 | Close idle sessions after this many ms (0 = disabled) |
 | `esimcp.blockedCommands` | string[] | `["rm -rf /"]` | Commands that will be rejected |
 | `esimcp.debugConfigurationName` | string | empty | Default VS Code launch configuration used by `debug_start` |
+| `esimcp.debugReadyString` | string | `Now ready on:` | Text observed in live VS Code shell output by `debug_check_host_readyness` |
+| `esimcp.debugHostReadinessTimeoutSeconds` | number | 60 | Timeout for `debug_check_host_readyness` in seconds |
 
-For debugging, an explicit `configurationName` supplied to `debug_start` takes precedence over this setting. If neither is supplied, `testName` is used when present; otherwise EsiMCP creates a debug configuration from `fileFullPath`.
+For debugging, an explicit `configurationName` supplied to `debug_start` takes precedence over this setting. If neither is supplied, `testName` is used when present; otherwise EsiMCP creates a debug configuration from `fileFullPath`. `debug_start` reports debugger attachment; use `debug_check_host_readyness` separately for host readiness.
 
 Use `debug_wait_for_event` to wait for debugger state changes. A paused exception event includes DAP-provided exception details when the adapter supports `exceptionInfo`; the agent must resume a paused host before starting browser or HTTP validation.
 
