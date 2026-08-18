@@ -210,8 +210,14 @@ export class DebugManager {
 
   async stopDebugging(): Promise<void> {
     const session = this.requireSession();
-    await vscode.debug.stopDebugging(session);
-    await this.waitForState(() => vscode.debug.activeDebugSession !== session, "debug session to stop");
+    const termination = this.waitForSessionTermination(session);
+    try {
+      await vscode.debug.stopDebugging(session);
+      await termination.promise;
+    } catch (error) {
+      termination.cancel();
+      throw error;
+    }
   }
 
   async stepOver(): Promise<void> { await this.step("workbench.action.debug.stepOver"); }
@@ -381,6 +387,30 @@ export class DebugManager {
       const finish = (error?: Error) => { clearTimeout(timer); disposables.forEach((disposable) => disposable.dispose()); error ? reject(error) : resolve(); };
       function check(): void { if (predicate()) finish(); }
     });
+  }
+
+  private waitForSessionTermination(session: vscode.DebugSession): { promise: Promise<void>; cancel(): void } {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let resolvePromise: () => void;
+    let rejectPromise: (error: Error) => void;
+    const disposable = vscode.debug.onDidTerminateDebugSession((terminatedSession) => {
+      if (terminatedSession.id === session.id) finish();
+    });
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      disposable.dispose();
+      error ? rejectPromise(error) : resolvePromise();
+    };
+    const promise = new Promise<void>((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+      timer = setTimeout(() => finish(new Error(`Timed out after ${this.getTimeoutMs("debugStateTimeoutMs", 30000)}ms waiting for debug session to stop`)), this.getTimeoutMs("debugStateTimeoutMs", 30000));
+    });
+
+    return { promise, cancel: () => finish(new Error("Waiting for debug session termination was cancelled")) };
   }
 
   private waitForDebugSession(configurationName: string): { promise: Promise<void>; cancel(): void } {

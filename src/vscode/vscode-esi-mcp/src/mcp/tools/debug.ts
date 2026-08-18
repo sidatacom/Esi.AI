@@ -16,6 +16,7 @@ export interface DebugToolDefinition {
 
 const text = (value: unknown): McpToolResponse => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
 const empty = debugEmptySchema;
+const stopDebugSession = async (_: unknown, manager: DebugManager): Promise<McpToolResponse> => { await manager.stopDebugging(); return text({ stopped: true }); };
 
 export const DEBUG_TOOLS: DebugToolDefinition[] = [
   { name: "debug_active_session", description: "EsiMCP Debug: return the ID of the active VS Code debug session", schema: empty, handler: async (_, manager) => text(manager.getActiveSessionId()) },
@@ -25,7 +26,7 @@ export const DEBUG_TOOLS: DebugToolDefinition[] = [
     return text(started);
   } },
   { name: "debug_wait_for_event", description: "EsiMCP Debug: wait for a debugger pause, exception, continue, or termination event", schema: debugWaitForEventSchema, handler: async (params, manager) => { const input = debugWaitForEventSchema.parse(params); return text(await manager.waitForDebugEvent(input.timeoutMs, input.type)); } },
-  { name: "debug_stop", description: "EsiMCP Debug: stop the active debug session", schema: empty, handler: async (_, manager) => { await manager.stopDebugging(); return text({ stopped: true }); } },
+  { name: "debug_stop", description: "EsiMCP Debug: stop the active debug session", schema: empty, handler: stopDebugSession },
   { name: "debug_step_over", description: "EsiMCP Debug: step over the current statement", schema: empty, handler: async (_, manager) => { await manager.stepOver(); return text({ stepped: true }); } },
   { name: "debug_step_into", description: "EsiMCP Debug: step into the current statement", schema: empty, handler: async (_, manager) => { await manager.stepInto(); return text({ stepped: true }); } },
   { name: "debug_step_out", description: "EsiMCP Debug: step out of the current function", schema: empty, handler: async (_, manager) => { await manager.stepOut(); return text({ stepped: true }); } },

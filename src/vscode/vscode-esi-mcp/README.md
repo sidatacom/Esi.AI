@@ -154,6 +154,8 @@ For debugging, an explicit `configurationName` supplied to `debug_start` takes p
 
 Use `debug_wait_for_event` to wait for debugger state changes. A paused exception event includes DAP-provided exception details when the adapter supports `exceptionInfo`; the agent must resume a paused host before starting browser or HTTP validation.
 
+Use `debug_stop` to stop the active debug session.
+
 ## Recommended: Set as Preferred Tool
 
 Copilot agents may have built-in command execution tools. Prefer the EsiMCP tools so command output remains visible in VS Code and associated with the correct terminal session.

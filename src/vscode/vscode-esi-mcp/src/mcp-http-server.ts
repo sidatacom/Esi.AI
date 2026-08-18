@@ -44,7 +44,7 @@ async function readBody(request: http.IncomingMessage): Promise<unknown> {
 }
 
 function createMcpSdkServer(requestHandler: RequestHandler): Server {
-  const server = new Server({ name: "EsiMCP", version: "1.0.7" }, { capabilities: { tools: {} } });
+  const server = new Server({ name: "EsiMCP", version: "1.0.8" }, { capabilities: { tools: {} } });
   server.setRequestHandler(InitializeRequestSchema, (request) => requestHandler("initialize", request.params) as never);
   server.setRequestHandler(ListToolsRequestSchema, () => requestHandler("tools/list") as never);
   server.setRequestHandler(CallToolRequestSchema, (request) => requestHandler("tools/call", request.params) as never);

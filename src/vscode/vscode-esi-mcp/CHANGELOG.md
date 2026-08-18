@@ -2,7 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.7] - 2026-08-17
+## [1.0.8] - 2026-08-18
+
+### Fixed
+- Use a single `debug_start` and `debug_stop` tool pair
+- Wait for the exact debug session termination when stopping
 
 ### Added
 - `debug_wait_for_event` MCP tool for debugger pause, exception, continue, and termination events
