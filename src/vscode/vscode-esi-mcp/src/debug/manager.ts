@@ -42,6 +42,7 @@ export class DebugManager {
   private readonly eventListeners = new Set<DebugEventListener>();
   private nextEventId = 1;
   private pausedStateKey: string | null = null;
+  private debugStartInProgress = false;
 
   constructor() {
     this.debugDisposables.push(vscode.debug.onDidChangeActiveStackItem(() => { void this.observeDebugState(); }));
@@ -94,59 +95,63 @@ export class DebugManager {
   }
 
   async startDebugging(input: { workingDirectory: string; fileFullPath?: string; testName?: string; configurationName?: string }): Promise<boolean> {
-    const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(input.workingDirectory));
-    if (input.configurationName?.trim()) {
-      const configurationName = input.configurationName.trim();
-      if (this.getDebugSession(configurationName)) return false;
+    if (this.debugStartInProgress || this.getDebugSession()) return false;
+    this.debugStartInProgress = true;
 
-      const sessionStarted = this.waitForDebugSession(configurationName);
-      try {
-        const started = await vscode.debug.startDebugging(folder, configurationName);
-        if (!started) {
+    try {
+      const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(input.workingDirectory));
+      if (input.configurationName?.trim()) {
+        const configurationName = input.configurationName.trim();
+
+        const sessionStarted = this.waitForDebugSession(configurationName);
+        try {
+          const started = await vscode.debug.startDebugging(folder, configurationName);
+          if (!started) {
+            sessionStarted.cancel();
+            return false;
+          }
+
+          await sessionStarted.promise;
+          return true;
+        } catch (error) {
           sessionStarted.cancel();
-          return false;
+          throw error;
         }
-
-        await sessionStarted.promise;
-        return true;
-      } catch (error) {
-        sessionStarted.cancel();
-        throw error;
       }
-    }
-    if (input.testName?.trim()) {
-      await vscode.commands.executeCommand("testing.run", { tests: [input.testName.trim()], debug: true });
+      if (input.testName?.trim()) {
+        await vscode.commands.executeCommand("testing.run", { tests: [input.testName.trim()], debug: true });
+        return true;
+      }
+      const configuredName = vscode.workspace.getConfiguration("esimcp").get<string>("debugConfigurationName", "").trim();
+      if (configuredName) {
+        const sessionStarted = this.waitForDebugSession(configuredName);
+        try {
+          const started = await vscode.debug.startDebugging(folder, configuredName);
+          if (!started) {
+            sessionStarted.cancel();
+            return false;
+          }
+
+          await sessionStarted.promise;
+          return true;
+        } catch (error) {
+          sessionStarted.cancel();
+          throw error;
+        }
+      }
+      if (!input.fileFullPath?.trim()) {
+        throw new Error("fileFullPath is required when configurationName and testName are not provided");
+      }
+
+      const configuration = await this.createDefaultConfiguration(input.fileFullPath.trim());
+      const started = await vscode.debug.startDebugging(folder, configuration);
+      if (!started) return false;
+
+      await this.waitForDebugSession(configuration.name);
       return true;
+    } finally {
+      this.debugStartInProgress = false;
     }
-    const configuredName = vscode.workspace.getConfiguration("esimcp").get<string>("debugConfigurationName", "").trim();
-    if (configuredName) {
-      if (this.getDebugSession(configuredName)) return false;
-
-      const sessionStarted = this.waitForDebugSession(configuredName);
-      try {
-        const started = await vscode.debug.startDebugging(folder, configuredName);
-        if (!started) {
-          sessionStarted.cancel();
-          return false;
-        }
-
-        await sessionStarted.promise;
-        return true;
-      } catch (error) {
-        sessionStarted.cancel();
-        throw error;
-      }
-    }
-    if (!input.fileFullPath?.trim()) {
-      throw new Error("fileFullPath is required when configurationName and testName are not provided");
-    }
-
-    const configuration = await this.createDefaultConfiguration(input.fileFullPath.trim());
-    const started = await vscode.debug.startDebugging(folder, configuration);
-    if (!started) return false;
-
-    await this.waitForDebugSession(configuration.name);
-    return true;
   }
 
   private async observeDebugState(): Promise<void> {
