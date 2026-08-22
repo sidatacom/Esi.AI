@@ -10,6 +10,7 @@ type Scope = "local" | "global" | "all";
 type DapVariable = { name: string; value?: string; evaluateName?: string; variablesReference?: number };
 type DapResponse = { scopes?: Array<{ name?: string; variablesReference?: number }>; variables?: DapVariable[]; result?: unknown; value?: unknown; body?: { exceptionId?: string; description?: string; breakMode?: string } };
 type DapBreakpoint = { id?: number; verified?: boolean; line?: number; column?: number; message?: string };
+export type DebugStartLifecycle = { onAcceptedStart?: () => void; onEnd?: () => void };
 export type DebugEvent = {
   id: number;
   type: "paused" | "continued" | "terminated";
@@ -94,11 +95,12 @@ export class DebugManager {
     return { setting, value: this.redact(value, setting) };
   }
 
-  async startDebugging(input: { workingDirectory: string; fileFullPath?: string; testName?: string; configurationName?: string }): Promise<boolean> {
+  async startDebugging(input: { workingDirectory: string; fileFullPath?: string; testName?: string; configurationName?: string }, lifecycle?: DebugStartLifecycle): Promise<boolean> {
     if (this.debugStartInProgress || this.getDebugSession()) return false;
     this.debugStartInProgress = true;
 
     try {
+      lifecycle?.onAcceptedStart?.();
       const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(input.workingDirectory));
       if (input.configurationName?.trim()) {
         const configurationName = input.configurationName.trim();
@@ -150,7 +152,11 @@ export class DebugManager {
       await this.waitForDebugSession(configuration.name);
       return true;
     } finally {
-      this.debugStartInProgress = false;
+      try {
+        lifecycle?.onEnd?.();
+      } finally {
+        this.debugStartInProgress = false;
+      }
     }
   }
 

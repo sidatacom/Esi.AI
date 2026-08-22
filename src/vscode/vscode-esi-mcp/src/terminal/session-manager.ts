@@ -189,16 +189,12 @@ export class SessionManager {
     const timeoutMs = this.getDebugHostReadinessTimeoutMs();
     const startedAt = Date.now();
 
-    try {
-      while (Date.now() - startedAt < timeoutMs) {
-        if (this.debugHostReady) return true;
-        await new Promise((resolve) => setTimeout(resolve, Math.min(1000, timeoutMs - (Date.now() - startedAt))));
-      }
-
-      return this.debugHostReady;
-    } finally {
-      this.resetDebugHostReadiness();
+    while (Date.now() - startedAt < timeoutMs) {
+      if (this.debugHostReady) return true;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1000, timeoutMs - (Date.now() - startedAt))));
     }
+
+    return this.debugHostReady;
   }
 
   waitForTerminalOutput(expectedText: string, timeoutMs: number): TerminalOutputWaiter {

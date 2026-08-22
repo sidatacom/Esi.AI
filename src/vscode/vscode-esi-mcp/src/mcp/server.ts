@@ -121,7 +121,7 @@ export function createMcpRequestHandler(
         },
         serverInfo: {
           name: "EsiMCP",
-          version: "1.0.11",
+          version: "1.0.12",
         },
       };
     }

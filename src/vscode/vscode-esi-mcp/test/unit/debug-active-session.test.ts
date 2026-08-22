@@ -4,7 +4,7 @@ const mockState = vi.hoisted(() => ({
   activeDebugSession: undefined as { id: string; name: string } | undefined,
   terminationListeners: [] as Array<(session: { id: string; name: string }) => void>,
   startListeners: [] as Array<(session: { id: string; name: string }) => void>,
-  resolveStart: undefined as (() => void) | undefined,
+  resolveStart: undefined as ((started?: boolean) => void) | undefined,
 }));
 
 vi.mock("vscode", () => ({
@@ -24,11 +24,13 @@ vi.mock("vscode", () => ({
       mockState.terminationListeners.slice().forEach((listener) => listener(session));
     }),
     startDebugging: vi.fn(() => new Promise<boolean>((resolve) => {
-      mockState.resolveStart = () => {
-        const session = { id: "session-started", name: "Esi.Web .NET Server" };
-        mockState.activeDebugSession = session;
-        mockState.startListeners.slice().forEach((listener) => listener(session));
-        resolve(true);
+      mockState.resolveStart = (started = true) => {
+        if (started) {
+          const session = { id: "session-started", name: "Esi.Web .NET Server" };
+          mockState.activeDebugSession = session;
+          mockState.startListeners.slice().forEach((listener) => listener(session));
+        }
+        resolve(started);
       };
     })),
   },
@@ -78,12 +80,34 @@ describe("DebugManager active session", () => {
   it("rejects a second start while the first start is in progress", async () => {
     const manager = new DebugManager();
     const input = { workingDirectory: "C:/workspace", configurationName: "Esi.Web .NET Server" };
-    const firstStart = manager.startDebugging(input);
+    const onAcceptedStart = vi.fn();
+    const onEnd = vi.fn();
+    const firstStart = manager.startDebugging(input, { onAcceptedStart, onEnd });
 
     await Promise.resolve();
-    await expect(manager.startDebugging(input)).resolves.toBe(false);
+    const secondOnAcceptedStart = vi.fn();
+    const secondOnEnd = vi.fn();
+    await expect(manager.startDebugging(input, { onAcceptedStart: secondOnAcceptedStart, onEnd: secondOnEnd })).resolves.toBe(false);
+    expect(onAcceptedStart).toHaveBeenCalledOnce();
+    expect(secondOnAcceptedStart).not.toHaveBeenCalled();
+    expect(secondOnEnd).not.toHaveBeenCalled();
 
     mockState.resolveStart?.();
     await expect(firstStart).resolves.toBe(true);
+    expect(onEnd).toHaveBeenCalledOnce();
+  });
+
+  it("runs the lifecycle end callback when an accepted start fails", async () => {
+    const manager = new DebugManager();
+    const input = { workingDirectory: "C:/workspace", testName: "Esi.Web startup" };
+    const onAcceptedStart = vi.fn();
+    const onEnd = vi.fn();
+    const vscode = await import("vscode");
+    vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error("startup failed"));
+    const start = manager.startDebugging(input, { onAcceptedStart, onEnd });
+
+    await expect(start).rejects.toThrow("startup failed");
+    expect(onAcceptedStart).toHaveBeenCalledOnce();
+    expect(onEnd).toHaveBeenCalledOnce();
   });
 });

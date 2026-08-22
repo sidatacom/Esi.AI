@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.12] - 2026-08-22
+
+### Fixed
+- Keep the debug host readiness latch until the next debug lifecycle reset
+
 ## [1.0.11] - 2026-08-19
 
 ### Fixed

@@ -16,6 +16,7 @@ class MockTerminal {
 const mockState = vi.hoisted(() => ({
   terminals: [] as Array<MockTerminal>,
   includeAllTerminals: false,
+  debugHostReadinessTimeoutSeconds: 60,
   onDidCloseTerminal: vi.fn(() => ({ dispose: vi.fn() })),
   onDidStartTerminalShellExecution: vi.fn(() => ({ dispose: vi.fn() })),
   onDidEndTerminalShellExecution: vi.fn(() => ({ dispose: vi.fn() })),
@@ -42,6 +43,8 @@ vi.mock("vscode", () => ({
       get: (key: string, defaultValue: unknown) =>
         key === "includeAllTerminals"
           ? mockState.includeAllTerminals
+          : key === "debugHostReadinessTimeoutSeconds"
+            ? mockState.debugHostReadinessTimeoutSeconds
           : defaultValue,
     }),
   },
@@ -53,6 +56,7 @@ describe("SessionManager terminal recovery", () => {
   beforeEach(() => {
     mockState.terminals.length = 0;
     mockState.includeAllTerminals = false;
+    mockState.debugHostReadinessTimeoutSeconds = 60;
     vi.clearAllMocks();
   });
 
@@ -149,6 +153,46 @@ describe("SessionManager terminal recovery", () => {
     });
 
     await expect(waiter.promise).resolves.toBeUndefined();
+    manager.dispose();
+  });
+
+  it("keeps the readiness latch after a successful wait", async () => {
+    const manager = new SessionManager();
+    const listener = mockState.onDidStartTerminalShellExecution.mock.calls[0]?.[0] as ((event: {
+      execution: { read: () => AsyncIterable<string> };
+    }) => Promise<void>);
+
+    await listener({
+      execution: {
+        async *read() {
+          yield "Now ready on: https://localhost:5012";
+        },
+      },
+    });
+
+    await expect(manager.waitForDebugHostReadiness()).resolves.toBe(true);
+    await expect(manager.waitForDebugHostReadiness()).resolves.toBe(true);
+    manager.dispose();
+  });
+
+  it("keeps the readiness latch available after a timeout", async () => {
+    mockState.debugHostReadinessTimeoutSeconds = 0.001;
+    const manager = new SessionManager();
+
+    await expect(manager.waitForDebugHostReadiness()).resolves.toBe(false);
+
+    const listener = mockState.onDidStartTerminalShellExecution.mock.calls[0]?.[0] as ((event: {
+      execution: { read: () => AsyncIterable<string> };
+    }) => Promise<void>);
+    await listener({
+      execution: {
+        async *read() {
+          yield "Now ready on: https://localhost:5012";
+        },
+      },
+    });
+
+    await expect(manager.waitForDebugHostReadiness()).resolves.toBe(true);
     manager.dispose();
   });
 
