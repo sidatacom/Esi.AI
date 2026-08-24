@@ -2,7 +2,7 @@
 
 ## Delegate Work to Subagents
 
-Delegate repository work to the most specific custom agent in `.github/agents/` by default. Copilot acts as the coordinator: understand the request, choose one role, provide the relevant context, review the result, and request a focused follow-up when needed. The routing catalogue and fallback metadata live in `.github/agents.jsonc`; VS Code does not execute that JSONC file automatically, so the role agents and the rules below are the executable Copilot integration.
+Delegate repository work to the most specific custom agent in `.github/agents/` by default. Copilot acts as the coordinator: understand the request, choose one role, provide the relevant context, review the result, and request a focused follow-up when needed.
 
 ### Routing Table
 

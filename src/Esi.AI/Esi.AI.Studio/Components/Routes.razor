@@ -1,0 +1,12 @@
+<Router AppAssembly="typeof(Program).Assembly"
+        AdditionalAssemblies="new[] { typeof(Esi.AI.Studio.Client._Imports).Assembly }"
+    NotFoundPage="typeof(Esi.AI.Studio.Client.Pages.NotFound)">
+    <Found Context="routeData">
+        <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(Esi.AI.Studio.Client.Layout.MainLayout)">
+            <NotAuthorized>
+                <Esi.AI.Studio.Client.RedirectToLogin />
+            </NotAuthorized>
+        </AuthorizeRouteView>
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
+    </Found>
+</Router>

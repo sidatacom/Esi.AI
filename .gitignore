@@ -1,10 +1,31 @@
-# .NET build output
-**/bin/
-**/obj/
+# Build results
+**/[Bb]in/
+**/[Oo]bj/
+**/[Aa]rtifacts/
 
-# User-specific files
+# .NET local tool and SDK state
+.dotnet/
+*.nupkg
+packages/
+
+# Visual Studio user state
+.vs/
 *.user
+*.userosscache
 *.suo
+*.sln.docstates
 
-# Local Visual Studio Code settings
-.vscode/
+# Test and coverage output
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+
+# IDE/editor state
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db

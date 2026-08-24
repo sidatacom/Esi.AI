@@ -1,9 +1,0 @@
-/* shared css */
-body { font-family: system-ui, -apple-system, sans-serif; margin: 0; padding: 0; background: #f9f9f9; color: #333; }
-.page { display: flex; min-height: 100vh; }
-.main-nav { display: flex; flex-direction: column; gap: .5rem; padding: 1rem 2rem; background: #fff; border-right: 1px solid #e8e8e8; }
-.main-nav a { color: #0366d6; text-decoration: none; }
-.main-nav a.active { font-weight: bold; }
-main { padding: 2rem; flex: 1; }
-.spinner { animation: spin 1s linear infinite; height: 2rem; width: 2rem; border: 3px solid #888; border-top-color: transparent; border-radius: 50%; }
-@keyframes spin { to { transform: rotate(360deg); } }
