@@ -1,40 +1,357 @@
 @page "/llama"
 @rendermode InteractiveWebAssembly
 
-@inject HttpClient Http
+@using System.Text.Json
+@inject IDataService DataService
+@inject ILlamaControlService LlamaControl
 
 <PageTitle>LLama</PageTitle>
 
-<h1>LLama</h1>
+<div class="llama-header">
+    <div>
+        <p class="eyebrow">LOCAL INFERENCE / CONTROL ROOM</p>
+        <h1>LLama</h1>
+        <p class="lede">Model routing, Vulkan allocation and native load diagnostics.</p>
+    </div>
+    <div class="backend-mark"><span></span> Vulkan ready</div>
+</div>
 
-<p>Lokale LLamaSharp-Inferenz und Backend-Konfiguration.</p>
-
-<EditForm Model="form" OnValidSubmit="LoadModelAsync">
+<EditForm Model="form" FormName="LlamaModel" OnValidSubmit="LoadModelAsync" class="llama-workspace">
     <DataAnnotationsValidator />
     <ValidationSummary />
 
-    <div class="mb-3">
-        <label class="form-label" for="model-path">GGUF model path</label>
-        <InputText id="model-path" class="form-control" @bind-Value="form.ModelPath" />
-    </div>
+    <section class="config-panel">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">MODEL INPUT</p>
+                <h2>Load configuration</h2>
+            </div>
+            <span class="step-label">01</span>
+        </div>
 
-    <div class="mb-3">
-        <label class="form-label" for="backend">Backend</label>
-        <InputSelect id="backend" class="form-select" @bind-Value="form.Backend">
-            <option value="Vulkan">Vulkan</option>
-            <option value="CPU">CPU</option>
-        </InputSelect>
-    </div>
+        <section class="loaded-models" aria-labelledby="loaded-models-heading">
+            <div class="loaded-models-heading">
+                <div>
+                    <p class="eyebrow">ACTIVE RUNTIMES</p>
+                    <h3 id="loaded-models-heading">Loaded models</h3>
+                </div>
+                <div class="loaded-models-status">
+                    <div class="runtime-status @GetRuntimeStatusClass()" role="status" aria-live="polite">
+                        <span class="runtime-status-dot"></span>
+                        <div>
+                            <strong>@GetRuntimeStatusLabel()</strong>
+                            <span>@GetRuntimeStatusDetail()</span>
+                        </div>
+                    </div>
+                    <span class="device-count">@(loadStatus?.LoadedModels.Count ?? 0) active</span>
+                </div>
+            </div>
+            @if (loadStatus?.LoadedModels.Count > 0)
+            {
+                @foreach (var model in loadStatus.LoadedModels)
+                {
+                    <article class="loaded-model">
+                        <div class="loaded-model-topline">
+                            <div>
+                                <strong>@Path.GetFileName(model.ModelPath)</strong>
+                                <span>@model.Backend | @model.ContextSize tokens | @FormatBytes(model.ModelSizeInBytes)</span>
+                            </div>
+                            <button class="profile-button" type="button" @onclick="() => UnloadModelAsync(model.ModelPath)">Unload</button>
+                        </div>
+                        <div class="loaded-model-devices">
+                            @foreach (var device in model.VulkanDevices.Where(device => device.AssignedLayerCount > 0 || device.ModelBufferMiB is not null))
+                            {
+                                <span><b>@device.Name</b> @FormatMemory(device.ModelBufferMiB), @device.AssignedLayerCount layers</span>
+                            }
+                            @if (model.CpuModelBufferMiB is not null)
+                            {
+                                <span><b>CPU</b> @FormatMemory(model.CpuModelBufferMiB)</span>
+                            }
+                        </div>
+                    </article>
+                }
+            }
+            else
+            {
+                <p class="loaded-models-empty">No models loaded.</p>
+            }
+        </section>
 
-    <div class="mb-3">
-        <label class="form-label" for="gpu-layers">GPU layers</label>
-        <InputNumber id="gpu-layers" class="form-control" @bind-Value="form.GpuLayerCount" />
-    </div>
+        <div class="model-load-row">
+            <div class="model-picker">
+                <label class="form-label" for="model-picker">Model from repository</label>
+                <select id="model-picker" class="form-select" value="@form.ModelPath" @onchange="SelectModelAsync">
+                    <option value="">Select a model...</option>
+                    @if (!string.IsNullOrWhiteSpace(form.ModelPath) && !databaseModels.Any(model => string.Equals(model.Path, form.ModelPath, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        <option value="@form.ModelPath">@Path.GetFileName(form.ModelPath) (saved path)</option>
+                    }
+                    @foreach (var model in databaseModels)
+                    {
+                        <option value="@model.Path">@model.Name</option>
+                    }
+                </select>
+                @if (databaseModels.Count == 0)
+                {
+                    <span class="picker-note">No models are stored in the database yet.</span>
+                }
+            </div>
+            <div class="model-actions">
+                <button class="load-button" type="submit" disabled="@(isLoading || string.IsNullOrWhiteSpace(form.ModelPath))">
+                    @(isLoading ? "Loading model..." : "Load model")
+                </button>
+            </div>
+        </div>
 
-    <button class="btn btn-primary" type="submit" disabled="@isLoading">
-        @(isLoading ? "Loading..." : "Load model")
-    </button>
+        <div class="profile-toolbar">
+            <div class="profile-select">
+                <label class="form-label" for="configuration-profile">Configuration set</label>
+                <select id="configuration-profile" class="form-select" value="@selectedProfileId" @onchange="SelectProfileAsync">
+                    <option value="">Select a saved set...</option>
+                    @foreach (var profile in MatchingProfiles)
+                    {
+                        <option value="@profile.Id">@profile.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="profile-actions">
+                <button class="profile-button" type="button" @onclick="CreateProfileAsync">Create</button>
+                <button class="profile-button" type="button" @onclick="UpdateProfileAsync" disabled="@(!selectedProfileId.HasValue)">Update</button>
+                <button class="profile-button" type="button" @onclick="OpenAssignProfileAsync">Assign</button>
+            </div>
+        </div>
+
+        @if (isAssigningProfile)
+        {
+            <div class="profile-create-row">
+                <label class="form-label" for="assign-source-profile">Configuration to copy</label>
+                <div class="profile-create-fields">
+                    <select id="assign-source-profile" class="form-select" value="@assignSourceProfileId" @onchange="SelectAssignSourceProfileAsync">
+                        <option value="">Select a configuration...</option>
+                        @foreach (var profile in profiles.OrderBy(profile => profile.Name))
+                        {
+                            <option value="@profile.Id">@profile.Name (@Path.GetFileName(profile.ModelPath))</option>
+                        }
+                    </select>
+                    <label class="form-label" for="assign-target-model">Target model</label>
+                    <select id="assign-target-model" class="form-select" value="@profileTargetModelPath" @onchange="SelectProfileTargetModelAsync">
+                        <option value="">Select a model...</option>
+                        @foreach (var model in databaseModels)
+                        {
+                            <option value="@model.Path">@model.Name</option>
+                        }
+                    </select>
+                    <button class="profile-button profile-button-primary" type="button" @onclick="AssignProfileToModelAsync" disabled="@(!assignSourceProfileId.HasValue || string.IsNullOrWhiteSpace(profileTargetModelPath))">Copy</button>
+                    <button class="profile-button" type="button" @onclick="CancelAssignProfile">Cancel</button>
+                </div>
+            </div>
+        }
+
+        @if (isCreatingProfile)
+        {
+            <div class="profile-create-row">
+                <label class="form-label" for="new-profile-name">Set name</label>
+                <div class="profile-create-fields">
+                    <InputText id="new-profile-name" class="form-control" @bind-Value="newProfileName" />
+                    <button class="profile-button profile-button-primary" type="button" @onclick="SaveNewProfileAsync">Save</button>
+                    <button class="profile-button" type="button" @onclick="CancelCreateProfile">Cancel</button>
+                </div>
+            </div>
+        }
+
+    <div class="settings-panels">
+        <details class="settings-panel">
+            <summary>Model loading</summary>
+            <div class="field-group">
+                <label class="form-label" for="model-path">GGUF model path</label>
+                <InputText id="model-path" class="form-control" @bind-Value="form.ModelPath" @bind-Value:after="SaveSettingsAsync" />
+            </div>
+            <div class="field-row">
+                <div class="field-group">
+                    <label class="form-label" for="backend">Backend</label>
+                    <InputSelect id="backend" class="form-select" @bind-Value="form.Backend" @bind-Value:after="SaveSettingsAsync">
+                        <option value="Vulkan">Vulkan</option>
+                        <option value="CPU">CPU</option>
+                    </InputSelect>
+                </div>
+
+                <div class="field-group">
+                    <label class="form-label" for="gpu-layers">GPU layers</label>
+                    <InputNumber id="gpu-layers" class="form-control" @bind-Value="form.GpuLayerCount" @bind-Value:after="SaveSettingsAsync" />
+                </div>
+
+                <div class="field-group">
+                    <label class="form-label" for="context-size">Context size</label>
+                    <InputSelect id="context-size" class="form-select" @bind-Value="form.ContextSize" @bind-Value:after="SaveSettingsAsync">
+                        @foreach (var size in ContextSizes)
+                        {
+                            <option value="@size.Value">@size.Label</option>
+                        }
+                    </InputSelect>
+                </div>
+            </div>
+        </details>
+
+        <details class="settings-panel">
+            <summary>GPU and memory</summary>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Main GPU</label><InputNumber class="form-control" @bind-Value="advanced.MainGpu" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Threads</label><InputNumber class="form-control" @bind-Value="advanced.Threads" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Batch threads</label><InputNumber class="form-control" @bind-Value="advanced.BatchThreads" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.UseMemorymap" @bind-Value:after="SaveSettingsAsync" /> Use memory mapping</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.UseDirectIO" @bind-Value:after="SaveSettingsAsync" /> Use direct I/O</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.UseMemoryLock" @bind-Value:after="SaveSettingsAsync" /> Lock model memory</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.OpOffload" @bind-Value:after="SaveSettingsAsync" /> Offload operations</label>
+        </details>
+
+        <details class="settings-panel">
+            <summary>Context and batching</summary>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Max sequences</label><InputNumber class="form-control" @bind-Value="advanced.SeqMax" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Batch size</label><InputNumber class="form-control" @bind-Value="advanced.BatchSize" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Physical batch size</label><InputNumber class="form-control" @bind-Value="advanced.UBatchSize" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.Embeddings" @bind-Value:after="SaveSettingsAsync" /> Embeddings mode</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.VocabOnly" @bind-Value:after="SaveSettingsAsync" /> Vocabulary only</label>
+        </details>
+
+        <details class="settings-panel">
+            <summary>Attention and cache</summary>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.NoKqvOffload" @bind-Value:after="SaveSettingsAsync" /> Keep K/Q/V on CPU</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.FlashAttention" @bind-Value:after="SaveSettingsAsync" /> Flash attention</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.SwaFull" @bind-Value:after="SaveSettingsAsync" /> Full sliding-window attention</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.KVUnified" @bind-Value:after="SaveSettingsAsync" /> Unified KV cache</label>
+        </details>
+
+        <details class="settings-panel">
+            <summary>LLamaSharp model options</summary>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Context type</label><InputSelect class="form-select" @bind-Value="advanced.ContextType" @bind-Value:after="SaveSettingsAsync"><option value="Default">Default</option><option value="Mtp">MTP</option></InputSelect></div>
+                <div class="field-group"><label class="form-label">KV type K</label><InputSelect class="form-select" @bind-Value="advanced.TypeK" @bind-Value:after="SaveSettingsAsync"><option value="">Model default</option><option value="F16">F16</option><option value="Q8_0">Q8_0</option><option value="Q4_K">Q4_K</option></InputSelect></div>
+                <div class="field-group"><label class="form-label">KV type V</label><InputSelect class="form-select" @bind-Value="advanced.TypeV" @bind-Value:after="SaveSettingsAsync"><option value="">Model default</option><option value="F16">F16</option><option value="Q8_0">Q8_0</option><option value="Q4_K">Q4_K</option></InputSelect></div>
+            </div>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Pooling type</label><InputSelect class="form-select" @bind-Value="advanced.PoolingType" @bind-Value:after="SaveSettingsAsync"><option value="Unspecified">Unspecified</option><option value="None">None</option><option value="Mean">Mean</option><option value="CLS">CLS</option><option value="Last">Last</option><option value="Rank">Rank</option></InputSelect></div>
+                <div class="field-group"><label class="form-label">Attention type</label><InputSelect class="form-select" @bind-Value="advanced.AttentionType" @bind-Value:after="SaveSettingsAsync"><option value="Unspecified">Unspecified</option><option value="Causal">Causal</option><option value="NonCausal">Non-causal</option></InputSelect></div>
+                <div class="field-group"><label class="form-label">YARN scaling type</label><InputSelect class="form-select" @bind-Value="advanced.YarnScalingType" @bind-Value:after="SaveSettingsAsync"><option value="">Model default</option><option value="Linear">Linear</option><option value="YaRN">YaRN</option></InputSelect></div>
+            </div>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.CheckTensors" @bind-Value:after="SaveSettingsAsync" /> Check tensors</label>
+        </details>
+
+        <details class="settings-panel">
+            <summary>Sampling and generation</summary>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Temperature</label><InputNumber class="form-control" @bind-Value="advanced.Temperature" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Top K</label><InputNumber class="form-control" @bind-Value="advanced.TopK" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Top P</label><InputNumber class="form-control" @bind-Value="advanced.TopP" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Min P</label><InputNumber class="form-control" @bind-Value="advanced.MinP" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Repeat penalty</label><InputNumber class="form-control" @bind-Value="advanced.RepeatPenalty" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Frequency penalty</label><InputNumber class="form-control" @bind-Value="advanced.FrequencyPenalty" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Presence penalty</label><InputNumber class="form-control" @bind-Value="advanced.PresencePenalty" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Penalty count</label><InputNumber class="form-control" @bind-Value="advanced.PenaltyCount" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Max generated tokens</label><InputNumber class="form-control" @bind-Value="advanced.MaxTokens" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Tokens to keep</label><InputNumber class="form-control" @bind-Value="advanced.TokensKeep" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Seed</label><InputNumber class="form-control" @bind-Value="advanced.Seed" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.DecodeSpecialTokens" @bind-Value:after="SaveSettingsAsync" /> Decode special tokens</label>
+        </details>
+
+        <details class="settings-panel">
+            <summary>RoPE and YARN scaling</summary>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">RoPE frequency base</label><InputNumber class="form-control" @bind-Value="advanced.RopeFrequencyBase" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">RoPE frequency scale</label><InputNumber class="form-control" @bind-Value="advanced.RopeFrequencyScale" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">YARN original context</label><InputNumber class="form-control" @bind-Value="advanced.YarnOriginalContext" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">YARN extrapolation</label><InputNumber class="form-control" @bind-Value="advanced.YarnExtrapolationFactor" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">YARN attention factor</label><InputNumber class="form-control" @bind-Value="advanced.YarnAttentionFactor" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">YARN beta fast</label><InputNumber class="form-control" @bind-Value="advanced.YarnBetaFast" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">YARN beta slow</label><InputNumber class="form-control" @bind-Value="advanced.YarnBetaSlow" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+        </details>
+    </div>
+    </section>
+
+    <section class="gpu-panel">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">DEVICE ROUTING</p>
+                <h2>Vulkan GPUs</h2>
+            </div>
+            <span class="device-count">@(loadStatus?.FoundVulkanGpuCount ?? 0) detected</span>
+        </div>
+        <p class="panel-note">Enable a device and assign its relative tensor split weight.</p>
+        @if (loadStatus?.VulkanDevices.Count > 0)
+        {
+            @foreach (var device in loadStatus.VulkanDevices)
+            {
+                <div class="gpu-row">
+                    <div class="gpu-identity">
+                    <input class="form-check-input" type="checkbox" id="device-@device.Name"
+                           checked="@GetDeviceSetting(device.Name).Enabled"
+                              @onchange="async eventArgs => await SetDeviceEnabledAsync(device.Name, eventArgs.Value is true)" />
+                    <label class="gpu-name" for="device-@device.Name">
+                        <strong>@device.Name</strong>
+                        <span>@(device.Description ?? "Unknown device")</span>
+                    </label>
+                    </div>
+                    <div class="weight-field">
+                    <label for="@($"weight-{device.Name}")">Weight</label>
+                          <input id="@($"weight-{device.Name}")" class="form-control" type="number" min="0" step="0.1"
+                              value="@GetDeviceSetting(device.Name).Weight.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)"
+                              @onchange="async eventArgs => await SetDeviceWeightAsync(device.Name, eventArgs.Value?.ToString())" />
+                    </div>
+                </div>
+            }
+        }
+        else
+        {
+            <p class="text-muted">Keine Vulkan-Geräte gefunden.</p>
+        }
+    </section>
+
+    <section class="telemetry-panel">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">NATIVE TELEMETRY</p>
+                <h2>Runtime status</h2>
+            </div>
+        </div>
+        @if (loadStatus is not null)
+        {
+        <dl class="telemetry-grid">
+        <dt>Backend</dt>
+        <dd>@loadStatus.Backend, @loadStatus.GpuLayerCount GPU layers, @loadStatus.ContextSize tokens</dd>
+        <dt>Found Vulkan GPUs</dt>
+        <dd>@loadStatus.FoundVulkanGpuCount</dd>
+        @foreach (var device in loadStatus.VulkanDevices)
+        {
+            <dt>@device.Name @(device.Description is null ? "" : $"({device.Description})")</dt>
+            <dd>@device.AssignedLayerCount layers, @(device.ModelBufferMiB?.ToString("F2") ?? "-") MiB model buffer</dd>
+        }
+        @if (loadStatus.IsModelLoaded && loadStatus.CpuModelBufferMiB is not null)
+        {
+            <dt>CPU model buffer</dt>
+            <dd>@loadStatus.CpuModelBufferMiB.Value.ToString("F2") MiB</dd>
+        }
+        @if (loadStatus.IsModelLoaded)
+        {
+            <dt>Model size</dt>
+            <dd>@(loadStatus.ModelSizeInBytes / 1024d / 1024d / 1024d).ToString("F2") GiB</dd>
+        }
+        </dl>
+        }
+        else
+        {
+            <p class="empty-state">Waiting for backend discovery.</p>
+        }
+    </section>
 </EditForm>
+}
 
 @if (isLoading)
 {
@@ -45,66 +362,111 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     <p class="mt-3" role="status">@statusMessage</p>
 }
 
-<label class="form-label mt-3" for="load-log">LLamaSharp load output</label>
-<textarea id="load-log" class="form-control" rows="20" readonly>@(loadStatus?.LoadLog ?? "Noch kein Modell geladen.")</textarea>
-
-@if (loadStatus is not null)
-{
-    <dl class="mt-3">
-        <dt>Backend</dt>
-        <dd>@loadStatus.Backend, @loadStatus.GpuLayerCount GPU layers</dd>
-        <dt>GPU</dt>
-        <dd>@(loadStatus.GpuName ?? "No NVIDIA GPU information available")</dd>
-        <dt>Found Vulkan GPUs</dt>
-        <dd>@loadStatus.FoundVulkanGpuCount</dd>
-        @foreach (var device in loadStatus.VulkanDevices)
-        {
-            <dt>@device.Name</dt>
-            <dd>@device.AssignedLayerCount layers, @(device.ModelBufferMiB?.ToString("F2") ?? "-") MiB model buffer</dd>
-        }
-        @if (loadStatus.GpuUsedMemoryMiB is not null && loadStatus.GpuTotalMemoryMiB is not null)
-        {
-            <dt>VRAM after loading</dt>
-            <dd>@loadStatus.GpuUsedMemoryMiB / @loadStatus.GpuTotalMemoryMiB MiB</dd>
-        }
-        <dt>Model size</dt>
-        <dd>@(loadStatus.ModelSizeInBytes / 1024d / 1024d / 1024d).ToString("F2") GiB</dd>
-    </dl>
-
-}
+<section class="log-panel">
+    <div class="log-heading">
+        <div>
+            <p class="eyebrow">DEBUG STREAM</p>
+            <h2>LLamaSharp load output</h2>
+        </div>
+        <span>READ ONLY</span>
+    </div>
+    <textarea id="load-log" class="form-control log-output" rows="12" readonly>@(loadLog ?? loadStatus?.LoadLog ?? "Noch kein Modell geladen.")</textarea>
+</section>
 
 @code {
-    private readonly ModelForm form = new() { GpuLayerCount = 20 };
-    private bool isLoading;
-    private string? statusMessage;
-    private ModelLoadStatus? loadStatus;
+    private static readonly (string Label, uint Value)[] ContextSizes =
+    [
+        ("32k", 32768), ("40k", 40960), ("48k", 49152), ("56k", 57344),
+        ("64k", 65536), ("72k", 73728), ("80k", 81920), ("88k", 90112),
+        ("96k", 98304), ("104k", 106496), ("112k", 114688), ("120k", 122880),
+        ("128k", 131072), ("136k", 139264), ("144k", 147456), ("152k", 155648),
+        ("160k", 163840), ("168k", 172032), ("176k", 180224), ("184k", 188416),
+        ("192k", 196608), ("200k", 204800), ("208k", 212992), ("216k", 221184),
+        ("224k", 229376), ("232k", 237568), ("240k", 245760), ("248k", 253952),
+        ("256k", 262144), ("512k", 524288), ("1m", 1048576)
+    ];
 
-    protected override async Task OnInitializedAsync()
+    private readonly ModelForm form = new() { GpuLayerCount = 20, ContextSize = 131072 };
+    private bool isLoading;
+    private bool isInitializing = true;
+    private string? statusMessage;
+    private string? loadLog;
+    private ModelLoadStatus? loadStatus;
+    private readonly AdvancedForm advanced = new();
+    private IReadOnlyList<LlamaModel> databaseModels = [];
+    private IReadOnlyList<LlamaConfigurationProfile> profiles = [];
+    private Guid? selectedProfileId;
+    private Guid? assignSourceProfileId;
+    private string profileTargetModelPath = string.Empty;
+    private bool isAssigningProfile;
+    private bool isCreatingProfile;
+    private bool isApplyingProfile;
+    private string newProfileName = string.Empty;
+
+    protected override Task OnInitializedAsync()
     {
-        var response = await Http.GetAsync("api/llama/status");
-        if (response.IsSuccessStatusCode && response.StatusCode != System.Net.HttpStatusCode.NoContent)
+        _ = InitializeAsync();
+        return Task.CompletedTask;
+    }
+
+    private async Task InitializeAsync()
+    {
+        try
         {
-            loadStatus = await response.Content.ReadFromJsonAsync<ModelLoadStatus>();
+            var savedSettings = await DataService.GetLlamaSettingsAsync();
+            if (savedSettings is not null)
+            {
+                form.ModelPath = savedSettings.ModelPath;
+                form.Backend = savedSettings.Backend;
+                form.GpuLayerCount = savedSettings.GpuLayerCount;
+                form.ContextSize = savedSettings.ContextSize;
+                advanced.Load(savedSettings.Advanced);
+                form.VulkanDevices.Clear();
+                foreach (var device in savedSettings.VulkanDevices)
+                    form.VulkanDevices[device.Key] = device.Value;
+            }
+            databaseModels = await DataService.GetLlamaModelsAsync();
+            profiles = await DataService.GetLlamaConfigurationProfilesAsync();
+            selectedProfileId = savedSettings?.ConfigurationProfileId is Guid profileId &&
+                profiles.Any(profile => profile.Id == profileId && string.Equals(profile.ModelPath, form.ModelPath, StringComparison.OrdinalIgnoreCase))
+                ? savedSettings.ConfigurationProfileId
+                : MatchingProfiles.OrderByDescending(profile => profile.IsDefault).ThenByDescending(profile => profile.UpdatedAtUtc).FirstOrDefault()?.Id;
+            loadStatus = await LlamaControl.GetModelStatusAsync();
         }
+        catch (Exception exception)
+        {
+            statusMessage = $"Initialization failed: {exception.Message}";
+        }
+        isInitializing = false;
+        await InvokeAsync(StateHasChanged);
     }
 
     private async Task LoadModelAsync()
     {
+        if (string.IsNullOrWhiteSpace(form.ModelPath))
+        {
+            statusMessage = "Select or enter a GGUF model path first.";
+            return;
+        }
+
         isLoading = true;
         statusMessage = null;
+        loadLog = string.Empty;
 
         try
         {
-            var response = await Http.PostAsJsonAsync("api/llama/load", form);
-            if (response.IsSuccessStatusCode)
-            {
-                loadStatus = await response.Content.ReadFromJsonAsync<ModelLoadStatus>();
-                statusMessage = $"Loaded: {form.ModelPath}";
-            }
-            else
-            {
-                statusMessage = await response.Content.ReadAsStringAsync();
-            }
+            var request = new LoadModelRequest(
+                form.ModelPath,
+                form.Backend,
+                form.GpuLayerCount,
+                form.ContextSize,
+                GetVulkanWeightsForLoad(),
+                advanced.ToSettings());
+            await SaveSettingsAsync();
+            loadStatus = await LlamaControl.LoadModelAsync(request);
+            loadLog = loadStatus.LoadLog;
+            SyncEnabledDevices();
+            statusMessage = $"Loaded: {form.ModelPath}";
         }
         catch (OperationCanceledException)
         {
@@ -128,26 +490,453 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         }
     }
 
+    private async Task UnloadModelAsync(string modelPath)
+    {
+        try
+        {
+            loadStatus = await LlamaControl.UnloadModelAsync(modelPath);
+            loadLog = loadStatus.LoadLog;
+            statusMessage = $"Unloaded: {Path.GetFileName(modelPath)}";
+        }
+        catch (Exception)
+        {
+            statusMessage = "The selected model could not be unloaded.";
+        }
+    }
+
+    private static string FormatBytes(ulong bytes) => $"{bytes / 1024d / 1024d / 1024d:F2} GiB";
+
+    private static string FormatMemory(double? memoryMiB) => memoryMiB is null ? "- VRAM" : $"{memoryMiB.Value:F2} MiB VRAM";
+
+    private async Task SaveSettingsAsync()
+    {
+        if (isInitializing || isApplyingProfile)
+            return;
+
+        await DataService.SaveLlamaSettingsAsync(new LlamaSettings(
+            form.ModelPath,
+            form.Backend,
+            form.GpuLayerCount,
+            form.ContextSize,
+            form.VulkanDevices,
+            advanced.ToSettings(),
+            selectedProfileId));
+    }
+
+    private async Task SelectProfileAsync(ChangeEventArgs args)
+    {
+        if (!Guid.TryParse(args.Value?.ToString(), out var profileId))
+        {
+            selectedProfileId = null;
+            return;
+        }
+
+        var profile = await DataService.GetLlamaConfigurationProfileAsync(profileId);
+        if (profile is null)
+            return;
+
+        try
+        {
+            var settings = JsonSerializer.Deserialize<LlamaSettings>(profile.ConfigurationJson)
+                ?? throw new JsonException();
+            isApplyingProfile = true;
+            selectedProfileId = profile.Id;
+            profileTargetModelPath = profile.ModelPath;
+            ApplySettings(settings);
+            statusMessage = $"Selected: {profile.Name}";
+        }
+        catch (JsonException)
+        {
+            statusMessage = "The selected configuration set is invalid.";
+        }
+        finally
+        {
+            isApplyingProfile = false;
+        }
+        await SaveSettingsAsync();
+    }
+
+    private Task OpenAssignProfileAsync()
+    {
+        assignSourceProfileId = selectedProfileId ?? profiles.FirstOrDefault()?.Id;
+        profileTargetModelPath = form.ModelPath;
+        isAssigningProfile = true;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private void SelectAssignSourceProfileAsync(ChangeEventArgs args) =>
+        assignSourceProfileId = Guid.TryParse(args.Value?.ToString(), out var profileId) ? profileId : null;
+
+    private void SelectProfileTargetModelAsync(ChangeEventArgs args) =>
+        profileTargetModelPath = args.Value?.ToString() ?? string.Empty;
+
+    private void CancelAssignProfile()
+    {
+        isAssigningProfile = false;
+        assignSourceProfileId = null;
+    }
+
+    private async Task AssignProfileToModelAsync()
+    {
+        if (!assignSourceProfileId.HasValue || string.IsNullOrWhiteSpace(profileTargetModelPath))
+            return;
+
+        var profile = profiles.FirstOrDefault(item => item.Id == assignSourceProfileId.Value);
+        if (profile is null)
+            return;
+
+        if (string.Equals(profile.ModelPath, profileTargetModelPath, StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = "The configuration is already assigned to this model.";
+            return;
+        }
+
+        var settings = JsonSerializer.Deserialize<LlamaSettings>(profile.ConfigurationJson)
+            ?? throw new JsonException();
+        var targetName = databaseModels.FirstOrDefault(model =>
+            string.Equals(model.Path, profileTargetModelPath, StringComparison.OrdinalIgnoreCase))?.Name
+            ?? Path.GetFileName(profileTargetModelPath);
+        var copyName = GetAvailableProfileName($"{profile.Name} - {targetName}");
+        var saved = await DataService.SaveLlamaConfigurationProfileAsync(new LlamaConfigurationProfile(
+            Guid.Empty,
+            copyName,
+            profile.Description,
+            profileTargetModelPath,
+            false,
+            profile.SchemaVersion,
+            SerializeSettingsForModel(settings, profileTargetModelPath),
+            default,
+            default));
+        profiles = profiles.Append(saved).ToArray();
+        profileTargetModelPath = saved.ModelPath;
+        assignSourceProfileId = saved.Id;
+        isAssigningProfile = false;
+        statusMessage = $"Configuration copied to {Path.GetFileName(saved.ModelPath)}.";
+    }
+
+    private string GetAvailableProfileName(string baseName)
+    {
+        var name = baseName;
+        var suffix = 2;
+        while (profiles.Any(profile => string.Equals(profile.Name, name, StringComparison.OrdinalIgnoreCase)))
+            name = $"{baseName} ({suffix++})";
+        return name;
+    }
+
+    private async Task SelectModelAsync(ChangeEventArgs args)
+    {
+        var modelPath = args.Value?.ToString();
+        form.ModelPath = modelPath ?? string.Empty;
+        var configurationInvalid = false;
+        var profile = MatchingProfiles
+            .OrderByDescending(item => item.IsDefault)
+            .ThenByDescending(item => item.UpdatedAtUtc)
+            .FirstOrDefault();
+
+        if (profile is null)
+        {
+            selectedProfileId = null;
+            ResetModelConfiguration();
+        }
+        else
+        {
+            try
+            {
+                var settings = JsonSerializer.Deserialize<LlamaSettings>(profile.ConfigurationJson)
+                    ?? throw new JsonException();
+                isApplyingProfile = true;
+                selectedProfileId = profile.Id;
+                ApplySettings(settings);
+                form.ModelPath = modelPath ?? string.Empty;
+            }
+            catch (JsonException)
+            {
+                selectedProfileId = null;
+                ResetModelConfiguration();
+                configurationInvalid = true;
+            }
+            finally
+            {
+                isApplyingProfile = false;
+            }
+        }
+
+        await SaveSettingsAsync();
+        if (configurationInvalid)
+        {
+            statusMessage = "The model configuration is invalid.";
+            return;
+        }
+
+        statusMessage = string.IsNullOrWhiteSpace(modelPath)
+            ? "No model selected."
+            : $"Model selected: {databaseModels.FirstOrDefault(model => model.Path == modelPath)?.Name ?? modelPath}; configuration applied.";
+    }
+
+    private async Task CreateProfileAsync()
+    {
+        newProfileName = string.Empty;
+        isCreatingProfile = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SaveNewProfileAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newProfileName))
+        {
+            statusMessage = "Enter a name for the configuration set.";
+            return;
+        }
+
+        var saved = await DataService.SaveLlamaConfigurationProfileAsync(new LlamaConfigurationProfile(
+            Guid.Empty, newProfileName.Trim(), null, form.ModelPath.Trim(), false, 1, SerializeCurrentSettings(), default, default));
+        profiles = profiles.Append(saved).OrderByDescending(profile => profile.IsDefault).ThenBy(profile => profile.Name).ToArray();
+        selectedProfileId = saved.Id;
+        isCreatingProfile = false;
+        statusMessage = $"Created: {saved.Name}";
+    }
+
+    private async Task UpdateProfileAsync()
+    {
+        if (!selectedProfileId.HasValue)
+            return;
+
+        var profile = profiles.FirstOrDefault(item => item.Id == selectedProfileId.Value);
+        if (profile is null)
+            return;
+
+        var saved = await DataService.SaveLlamaConfigurationProfileAsync(profile with
+        {
+            ModelPath = form.ModelPath.Trim(),
+            ConfigurationJson = SerializeCurrentSettings()
+        });
+        profiles = profiles.Select(item => item.Id == saved.Id ? saved : item).ToArray();
+        statusMessage = $"Updated: {saved.Name}";
+    }
+
+    private void CancelCreateProfile() => isCreatingProfile = false;
+
+    private IEnumerable<LlamaConfigurationProfile> MatchingProfiles =>
+        profiles.Where(profile => string.Equals(profile.ModelPath.Trim(), form.ModelPath.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private string SerializeCurrentSettings() => JsonSerializer.Serialize(new LlamaSettings(
+        form.ModelPath,
+        form.Backend,
+        form.GpuLayerCount,
+        form.ContextSize,
+        form.VulkanDevices,
+        advanced.ToSettings()));
+
+    private static string SerializeSettingsForModel(LlamaSettings settings, string modelPath) =>
+        JsonSerializer.Serialize(settings with { ModelPath = modelPath });
+
+    private void ApplySettings(LlamaSettings settings)
+    {
+        form.ModelPath = settings.ModelPath;
+        form.Backend = settings.Backend;
+        form.GpuLayerCount = settings.GpuLayerCount;
+        form.ContextSize = settings.ContextSize;
+        advanced.Load(settings.Advanced);
+        form.VulkanDevices.Clear();
+        foreach (var device in settings.VulkanDevices)
+            form.VulkanDevices[device.Key] = device.Value;
+    }
+
+    private void ResetModelConfiguration()
+    {
+        form.Backend = "Vulkan";
+        form.GpuLayerCount = 20;
+        form.ContextSize = 131072;
+        advanced.Load(new LlamaAdvancedSettings());
+        form.VulkanDevices.Clear();
+    }
+
+    private VulkanDeviceSetting GetDeviceSetting(string deviceName) =>
+        form.VulkanDevices.TryGetValue(deviceName, out var setting) && setting is not null
+            ? setting
+            : new VulkanDeviceSetting(false, 0);
+
+    private IReadOnlyDictionary<string, float> GetVulkanWeightsForLoad() =>
+        form.VulkanDevices.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Enabled ? pair.Value.Weight : 0,
+            StringComparer.OrdinalIgnoreCase);
+
+    private async Task SetDeviceEnabledAsync(string deviceName, bool enabled)
+    {
+        if (enabled)
+        {
+            var setting = GetDeviceSetting(deviceName);
+            form.VulkanDevices[deviceName] = new VulkanDeviceSetting(true, setting.Weight > 0 ? setting.Weight : 1);
+        }
+        else
+        {
+            var setting = GetDeviceSetting(deviceName);
+            form.VulkanDevices[deviceName] = setting with { Enabled = false };
+        }
+        await SaveSettingsAsync();
+    }
+
+    private async Task SetDeviceWeightAsync(string deviceName, string? value)
+    {
+        if (float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var weight))
+        {
+            var setting = GetDeviceSetting(deviceName);
+            form.VulkanDevices[deviceName] = new VulkanDeviceSetting(setting.Enabled, Math.Max(0, weight));
+        }
+        await SaveSettingsAsync();
+    }
+
+    private void SyncEnabledDevices()
+    {
+        if (loadStatus is null)
+            return;
+
+        form.VulkanDevices.Clear();
+        foreach (var device in loadStatus.VulkanDevices)
+        {
+            var weight = loadStatus.VulkanDeviceWeights.TryGetValue(device.Name, out var value) ? value : 1;
+            form.VulkanDevices[device.Name] = new VulkanDeviceSetting(weight > 0, weight);
+        }
+    }
+
+    private string GetRuntimeStatusClass() =>
+        isLoading ? "runtime-status-loading" :
+        loadStatus?.IsModelLoaded == true ? "runtime-status-loaded" :
+        IsLoadError() ? "runtime-status-error" : "runtime-status-idle";
+
+    private string GetRuntimeStatusLabel() =>
+        isLoading ? "LOADING MODEL" :
+        loadStatus?.IsModelLoaded == true ? "MODEL LOADED" :
+        IsLoadError() ? "LOAD FAILED" : "NO MODEL LOADED";
+
+    private string GetRuntimeStatusDetail()
+    {
+        if (isLoading)
+            return "Reading model tensors and preparing the context...";
+
+        if (loadStatus?.IsModelLoaded == true)
+            return $"{Path.GetFileName(loadStatus.ModelPath)} | {loadStatus.GpuLayerCount} GPU layers";
+
+        return IsLoadError() ? statusMessage! : "Load a model to start inference.";
+    }
+
+    private bool IsLoadError() =>
+        !string.IsNullOrWhiteSpace(statusMessage) &&
+        (statusMessage.Contains("could not", StringComparison.OrdinalIgnoreCase) ||
+         statusMessage.Contains("not found", StringComparison.OrdinalIgnoreCase) ||
+         statusMessage.Contains("valid", StringComparison.OrdinalIgnoreCase) ||
+         statusMessage.Contains("cancelled", StringComparison.OrdinalIgnoreCase));
+
     private sealed class ModelForm
     {
-        public string ModelPath { get; set; } = "/home/llm/LocalAI/models/llama-cpp/models/qwen3.8-27b/Qwen3.8-27B-Q4_K_M.gguf";
+        public string ModelPath { get; set; } = string.Empty;
 
         public string Backend { get; set; } = "Vulkan";
 
         public int GpuLayerCount { get; set; }
+
+        public uint ContextSize { get; set; }
+
+        public Dictionary<string, VulkanDeviceSetting> VulkanDevices { get; } = new(StringComparer.OrdinalIgnoreCase);
     }
 
-    private sealed record ModelLoadStatus(
-        string ModelPath,
-        string Backend,
-        int GpuLayerCount,
-        ulong ModelSizeInBytes,
-        string? GpuName,
-        long? GpuUsedMemoryMiB,
-        long? GpuTotalMemoryMiB,
-        int FoundVulkanGpuCount,
-        IReadOnlyList<VulkanDeviceStatus> VulkanDevices,
-        string LoadLog);
+    private sealed class AdvancedForm
+    {
+        public int MainGpu { get; set; }
+        public int SeqMax { get; set; } = 1;
+        public int RecurrentRollbackSnapshots { get; set; }
+        public bool UseMemorymap { get; set; } = true;
+        public bool UseDirectIO { get; set; }
+        public bool UseMemoryLock { get; set; }
+        public int? Threads { get; set; }
+        public int? BatchThreads { get; set; }
+        public int BatchSize { get; set; } = 512;
+        public int UBatchSize { get; set; } = 512;
+        public bool Embeddings { get; set; }
+        public bool NoKqvOffload { get; set; }
+        public bool FlashAttention { get; set; }
+        public bool VocabOnly { get; set; }
+        public bool OpOffload { get; set; }
+        public bool SwaFull { get; set; }
+        public bool KVUnified { get; set; }
+        public float? RopeFrequencyBase { get; set; }
+        public float? RopeFrequencyScale { get; set; }
+        public float? YarnExtrapolationFactor { get; set; }
+        public float? YarnAttentionFactor { get; set; }
+        public float? YarnBetaFast { get; set; }
+        public float? YarnBetaSlow { get; set; }
+        public int? YarnOriginalContext { get; set; }
+        public string ContextType { get; set; } = "Default";
+        public string? TypeK { get; set; }
+        public string? TypeV { get; set; }
+        public string PoolingType { get; set; } = "Unspecified";
+        public string AttentionType { get; set; } = "Unspecified";
+        public string? YarnScalingType { get; set; }
+        public bool CheckTensors { get; set; }
+        public float Temperature { get; set; } = .75f;
+        public int TopK { get; set; } = 40;
+        public float TopP { get; set; } = .9f;
+        public float MinP { get; set; } = .1f;
+        public float RepeatPenalty { get; set; } = 1f;
+        public float FrequencyPenalty { get; set; }
+        public float PresencePenalty { get; set; }
+        public int PenaltyCount { get; set; } = 64;
+        public int MaxTokens { get; set; } = -1;
+        public int TokensKeep { get; set; }
+        public int Seed { get; set; }
+        public bool DecodeSpecialTokens { get; set; }
 
-    private sealed record VulkanDeviceStatus(string Name, int AssignedLayerCount, double? ModelBufferMiB);
+        public void Load(LlamaAdvancedSettings? settings)
+        {
+            if (settings is null)
+                return;
+            MainGpu = settings.MainGpu;
+            SeqMax = (int)settings.SeqMax;
+            RecurrentRollbackSnapshots = (int)settings.RecurrentRollbackSnapshots;
+            UseMemorymap = settings.UseMemorymap;
+            UseDirectIO = settings.UseDirectIO;
+            UseMemoryLock = settings.UseMemoryLock;
+            Threads = settings.Threads;
+            BatchThreads = settings.BatchThreads;
+            BatchSize = (int)settings.BatchSize;
+            UBatchSize = (int)settings.UBatchSize;
+            Embeddings = settings.Embeddings;
+            NoKqvOffload = settings.NoKqvOffload;
+            FlashAttention = settings.FlashAttention ?? false;
+            VocabOnly = settings.VocabOnly;
+            OpOffload = settings.OpOffload ?? false;
+            SwaFull = settings.SwaFull ?? false;
+            KVUnified = settings.KVUnified ?? false;
+            RopeFrequencyBase = settings.RopeFrequencyBase;
+            RopeFrequencyScale = settings.RopeFrequencyScale;
+            YarnExtrapolationFactor = settings.YarnExtrapolationFactor;
+            YarnAttentionFactor = settings.YarnAttentionFactor;
+            YarnBetaFast = settings.YarnBetaFast;
+            YarnBetaSlow = settings.YarnBetaSlow;
+            YarnOriginalContext = settings.YarnOriginalContext.HasValue ? (int)settings.YarnOriginalContext.Value : null;
+            ContextType = settings.ContextType;
+            TypeK = settings.TypeK;
+            TypeV = settings.TypeV;
+            PoolingType = settings.PoolingType;
+            AttentionType = settings.AttentionType;
+            YarnScalingType = settings.YarnScalingType;
+            CheckTensors = settings.CheckTensors;
+            Temperature = settings.Temperature;
+            TopK = settings.TopK;
+            TopP = settings.TopP;
+            MinP = settings.MinP;
+            RepeatPenalty = settings.RepeatPenalty;
+            FrequencyPenalty = settings.FrequencyPenalty;
+            PresencePenalty = settings.PresencePenalty;
+            PenaltyCount = settings.PenaltyCount;
+            MaxTokens = settings.MaxTokens;
+            TokensKeep = settings.TokensKeep;
+            Seed = settings.Seed > int.MaxValue ? int.MaxValue : (int)settings.Seed;
+            DecodeSpecialTokens = settings.DecodeSpecialTokens;
+        }
+
+        public LlamaAdvancedSettings ToSettings() => new(MainGpu, (uint)Math.Max(1, SeqMax), (uint)Math.Max(0, RecurrentRollbackSnapshots), UseMemorymap, UseDirectIO, UseMemoryLock, Threads, BatchThreads, (uint)Math.Max(1, BatchSize), (uint)Math.Max(1, UBatchSize), Embeddings, NoKqvOffload, FlashAttention, VocabOnly, OpOffload, SwaFull, KVUnified, RopeFrequencyBase, RopeFrequencyScale, YarnExtrapolationFactor, YarnAttentionFactor, YarnBetaFast, YarnBetaSlow, YarnOriginalContext.HasValue ? (uint?)Math.Max(1, YarnOriginalContext.Value) : null, ContextType, TypeK, TypeV, PoolingType, AttentionType, YarnScalingType, CheckTensors, Temperature, TopK, TopP, MinP, RepeatPenalty, FrequencyPenalty, PresencePenalty, PenaltyCount, MaxTokens, TokensKeep, (uint)Math.Max(0, Seed), DecodeSpecialTokens);
+    }
+
 }

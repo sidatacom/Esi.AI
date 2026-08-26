@@ -3,16 +3,19 @@ using System;
 using Esi.AI.Studio.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace Esi.AI.Studio.Migrations
+namespace Esi.AI.Studio.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260826095705_AddLlamaConfigurationProfiles")]
+    partial class AddLlamaConfigurationProfiles
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -119,9 +122,6 @@ namespace Esi.AI.Studio.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("ModelPath")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Role")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -158,10 +158,6 @@ namespace Esi.AI.Studio.Migrations
                     b.Property<bool>("IsDefault")
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("ModelPath")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -175,34 +171,6 @@ namespace Esi.AI.Studio.Migrations
                     b.HasKey("Id");
 
                     b.ToTable("LlamaConfigurationProfiles");
-                });
-
-            modelBuilder.Entity("Esi.AI.Studio.Data.LlamaModelEntity", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("LastWriteTimeUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Path")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("SizeInBytes")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("LlamaModels");
                 });
 
             modelBuilder.Entity("Esi.AI.Studio.Data.LlamaSettingsEntity", b =>
@@ -221,9 +189,6 @@ namespace Esi.AI.Studio.Migrations
 
                     b.Property<uint>("ContextSize")
                         .HasColumnType("INTEGER");
-
-                    b.Property<Guid?>("ConfigurationProfileId")
-                        .HasColumnType("TEXT");
 
                     b.Property<int>("GpuLayerCount")
                         .HasColumnType("INTEGER");

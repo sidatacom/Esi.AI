@@ -81,3 +81,18 @@ Scheduling must preserve these invariants:
 ## Namespace Rules
 
 - `Esi.AI.Llm` ist der einzige erlaubte Root-Namespace für alle Objekte in diesem Projekt. Neue Typen (Klassen, Interfaces, Models, Provider, Services, etc.) sind unter `Esi.AI.Llm` anzulegen; Separate Root-Namen wie `Esi.AI.LiteLlm` sowie beliebige andere Root-Namen sind unzulässig. LiteLLM-abhängige Funktionalität wird ausschliesslich unter `Esi.AI.Llm` integriert, nicht unter separaten LiteLLM-Namenpaces.
+
+## WebAPI and UI Integration
+
+- In diesem Projekt gibt es genau eine WebAPI: die OpenAI-kompatible API.
+- Die UI muss für Chat, Modelle, Konfiguration und Inferenz diese OpenAI-kompatible WebAPI verwenden.
+- Keine separate oder parallele WebAPI, keine direkten alternativen Controller-Endpunkte und keine UI-eigenen direkten Provider-Aufrufe für dieselben Funktionen einführen.
+- UI-Services wie `SignalRDataService` dürfen nur als Transport-/Abstraktionsschicht dienen und müssen letztlich die OpenAI-kompatible WebAPI verwenden; sie dürfen keine eigene fachliche API neben ihr etablieren.
+- Bei neuen UI-Funktionen zuerst den vorhandenen OpenAI-kompatiblen API-Client bzw. Service erweitern und erst danach die UI anbinden.
+
+## Hot Reload Validation
+
+- Bei kleinen Änderungen, die vom laufenden `dotnet watch`-Hot-Reload unterstützt werden, keinen separaten vollständigen `dotnet build` starten. Das gilt insbesondere für reine Razor-/CSS-Layoutänderungen. Den laufenden Watch-Prozess die Änderung kompilieren lassen und nur bei Bedarf eine gezielte Validierung ausführen.
+- Einen vollständigen Build nur ausführen, wenn Hot Reload nicht aktiv ist, die Änderung nicht unterstützt wird, ein reproduzierbarer Build-Nachweis benötigt wird oder der Watch-Prozess einen Fehler meldet.
+- Den laufenden Studio-Host niemals eigenständig starten, stoppen oder neu starten. Prozessbereinigung und Host-Neustart sind nur nach ausdrücklicher Aufforderung erlaubt.
+- Für Inspektionen und Diagnose des laufenden Entwicklungsprozesses bevorzugt die EsiMcp-Terminal- und Debug-Integration verwenden, sofern eine aktive EsiMcp-Session verfügbar ist.

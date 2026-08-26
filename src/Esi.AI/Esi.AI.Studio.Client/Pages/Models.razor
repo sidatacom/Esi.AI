@@ -1,7 +1,105 @@
 @page "/models"
+@rendermode InteractiveWebAssembly
+@inject HttpClient Http
+@inject NavigationManager NavigationManager
 
 <PageTitle>Models</PageTitle>
 
-<h1>Models</h1>
+<div class="models-shell">
+    <header class="models-header">
+        <div><p class="eyebrow">MODEL LIBRARY</p><h1>Models</h1><p class="lede">Lokale GGUF-Dateien verwalten oder Modelle von Hugging Face laden.</p></div>
+        <button class="primary-button" type="button" @onclick="ScanLocalAsync" disabled="@isBusy">Bibliothek aktualisieren</button>
+    </header>
 
-<p>Verfuegbare lokale Sprachmodelle verwalten.</p>
+    @if (status is not null)
+    {
+        <section class="active-model">
+            <div><p class="eyebrow">ACTIVE MODEL</p><strong>@(status.IsModelLoaded ? "Modell geladen" : "Modell ausgewählt, aber nicht geladen")</strong><span>@(status.ModelPath ?? "Kein Modell ausgewählt")</span></div>
+            <div class="active-actions"><button class="secondary-button" type="button" @onclick="OpenConfiguration">Konfiguration</button><button class="primary-button" type="button" @onclick="OpenChat" disabled="@(!status.IsModelLoaded)">Chat öffnen</button></div>
+        </section>
+    }
+
+    <section class="library-section">
+        <div class="section-heading"><div><p class="eyebrow">LOCAL FILES</p><h2>Lokale Modelle</h2></div><span class="count-label">@localModels.Count GGUF</span></div>
+        @if (modelDirectories.Count > 0) { <p class="directories">Suche in: @string.Join(" · ", modelDirectories)</p> }
+        @if (localModels.Count == 0) { <p class="empty-state">Keine GGUF-Dateien in den konfigurierten Ordnern gefunden.</p> }
+        else
+        {
+            <div class="model-list">
+                @foreach (var model in localModels)
+                {
+                    <article class="model-row @(IsActive(model.Path) ? "selected" : "")"><div class="model-details"><strong>@model.Name</strong><span>@FormatSize(model.SizeInBytes) · @model.Path</span></div><button class="secondary-button" type="button" @onclick="() => SelectModelAsync(model.Path)">@(IsActive(model.Path) ? "Aktiv" : "Auswählen")</button></article>
+                }
+            </div>
+        }
+    </section>
+
+    <section class="library-section remote-section">
+        <div class="section-heading"><div><p class="eyebrow">HUGGING FACE</p><h2>Modelle suchen</h2></div></div>
+        <div class="search-row"><InputText class="form-control" @bind-Value="searchQuery" placeholder="z. B. Qwen 3 GGUF" @onkeydown="HandleSearchKeyDown" /><button class="primary-button" type="button" @onclick="SearchAsync" disabled="@isSearching">@(isSearching ? "Suche ..." : "Suchen")</button></div>
+        @if (searchResults.Count > 0)
+        {
+            <div class="model-list">
+                @foreach (var model in searchResults)
+                {
+                    <article class="model-row"><div class="model-details"><strong>@model.Id</strong><span>@model.Downloads Downloads · @model.Likes Likes · @(model.Author ?? "unbekannter Autor")</span></div><button class="secondary-button" type="button" @onclick="() => DownloadAsync(model.Id)" disabled="@isBusy">GGUF laden</button></article>
+                }
+            </div>
+        }
+        else if (hasSearched) { <p class="empty-state">Keine passenden Hugging-Face-Modelle gefunden.</p> }
+    </section>
+
+    @if (downloads.Count > 0)
+    {
+        <section class="library-section downloads-section"><div class="section-heading"><div><p class="eyebrow">TRANSFERS</p><h2>Downloads</h2></div></div>
+            @foreach (var download in downloads.Values.OrderByDescending(item => item.Id))
+            {
+                <div class="download-row"><div class="download-heading"><strong>@download.FileName</strong><span>@download.ModelId</span></div>@if (!string.IsNullOrWhiteSpace(download.Error)) { <p class="error-message">@download.Error</p> } else { <progress max="100" value="@download.Percent"></progress><span class="download-status">@(download.Completed ? "Download abgeschlossen" : $"{download.Percent:F0}% · {FormatSize(download.BytesDownloaded)}")</span> }</div>
+            }
+        </section>
+    }
+    @if (!string.IsNullOrWhiteSpace(message)) { <p class="model-message" role="status">@message</p> }
+</div>
+
+<style>
+    .models-shell { max-width: 1040px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    .models-header, .active-model, .section-heading, .search-row, .model-row, .download-heading { display: flex; justify-content: space-between; gap: 1rem; }
+    .models-header { align-items: end; margin-bottom: 1.5rem; }
+    .active-model, .library-section { border: 1px solid #d9d4ca; background: #fbfaf6; padding: 1.25rem 1.5rem; }
+    .active-model { align-items: center; border-left: 4px solid #236b70; margin-bottom: 1.25rem; }
+    .active-model div:first-child, .model-details, .download-heading { display: grid; gap: .25rem; min-width: 0; }
+    .active-model span, .directories, .model-details span, .download-heading span { color: #756f65; overflow-wrap: anywhere; }
+    .active-actions { display: flex; flex-wrap: wrap; gap: .65rem; }
+    .library-section { margin-top: 1.25rem; }
+    .section-heading { align-items: end; border-bottom: 1px solid #e1dbd1; padding-bottom: .9rem; }
+    .section-heading h2 { margin: 0; }.count-label, .download-status { color: #756f65; font-size: .85rem; }.directories { font-size: .85rem; }
+    .model-list { display: grid; gap: .65rem; margin-top: 1rem; }.model-row { align-items: center; padding: .9rem 0; border-bottom: 1px solid #e1dbd1; }.model-row:last-child { border-bottom: 0; }.model-row.selected { border-left: 3px solid #236b70; padding-left: .75rem; }.model-details strong { overflow-wrap: anywhere; }
+    .search-row { margin-top: 1rem; }.search-row .form-control { flex: 1; }.remote-section { background: #f2eee7; }.downloads-section { background: #eef4f0; }.download-row { display: grid; gap: .4rem; padding: .8rem 0; border-bottom: 1px solid #d5dfd8; }progress { width: 100%; height: .7rem; accent-color: #236b70; }.empty-state, .model-message { color: #756f65; }.error-message { color: #7e311f; margin: 0; }
+    .primary-button, .secondary-button { border: 0; padding: .7rem 1rem; font-weight: 700; cursor: pointer; }.primary-button { background: #236b70; color: white; }.secondary-button { background: #e7e1d7; color: #302d28; white-space: nowrap; }button:disabled { opacity: .55; cursor: not-allowed; }
+    @@media (max-width: 680px) { .models-header, .active-model, .model-row, .search-row { align-items: stretch; flex-direction: column; } .secondary-button, .primary-button { width: 100%; } }
+</style>
+
+@code {
+    private readonly List<LocalModel> localModels = [];
+    private readonly List<HuggingFaceModel> searchResults = [];
+    private readonly Dictionary<Guid, DownloadStatus> downloads = [];
+    private readonly List<string> modelDirectories = [];
+    private string searchQuery = string.Empty;
+    private bool isBusy, isSearching, hasSearched;
+    private string? message;
+    private ModelStatus? status;
+
+    protected override async Task OnInitializedAsync() { await LoadStatusAsync(); await ScanLocalAsync(); var directories = await Http.GetFromJsonAsync<List<string>>("api/models/directories"); if (directories is not null) modelDirectories.AddRange(directories); }
+    private async Task ScanLocalAsync() { try { var models = await Http.GetFromJsonAsync<List<LocalModel>>("api/models/local") ?? []; localModels.Clear(); localModels.AddRange(models); } catch (Exception) { message = "Die lokalen Modelle konnten nicht gelesen werden."; } }
+    private async Task SearchAsync() { isSearching = true; hasSearched = true; message = null; try { var url = $"api/models/search?query={Uri.EscapeDataString(searchQuery.Trim())}"; searchResults.Clear(); searchResults.AddRange(await Http.GetFromJsonAsync<List<HuggingFaceModel>>(url) ?? []); } catch (Exception) { message = "Die Hugging-Face-Suche ist fehlgeschlagen."; } finally { isSearching = false; } }
+    private async Task DownloadAsync(string modelId) { isBusy = true; message = null; try { var response = await Http.PostAsJsonAsync("api/models/download", new DownloadRequest(modelId)); if (!response.IsSuccessStatusCode) { message = await response.Content.ReadAsStringAsync(); return; } var result = await response.Content.ReadFromJsonAsync<DownloadStarted>(); if (result is not null) _ = PollDownloadAsync(result.Id); } catch (Exception) { message = "Der Download konnte nicht gestartet werden."; } finally { isBusy = false; } }
+    private async Task PollDownloadAsync(Guid id) { while (true) { await Task.Delay(1000); var result = await Http.GetFromJsonAsync<DownloadStatus>($"api/models/downloads/{id}"); if (result is null) return; downloads[id] = result; await InvokeAsync(StateHasChanged); if (result.Completed || !string.IsNullOrWhiteSpace(result.Error)) { if (result.Completed) await ScanLocalAsync(); return; } } }
+    private async Task SelectModelAsync(string path) { var response = await Http.PostAsJsonAsync("api/models/select", new SelectRequest(path)); if (response.IsSuccessStatusCode) { await LoadStatusAsync(); message = "Modell als aktives Chat-Modell ausgewählt. Jetzt unter LLama laden."; } else message = "Das Modell konnte nicht ausgewählt werden."; }
+    private async Task LoadStatusAsync() { status = await Http.GetFromJsonAsync<ModelStatus>("api/llama/status"); }
+    private bool IsActive(string path) => string.Equals(status?.ModelPath, path, StringComparison.OrdinalIgnoreCase);
+    private void OpenConfiguration() => NavigationManager.NavigateTo("llama"); private void OpenChat() => NavigationManager.NavigateTo("chats");
+    private static string FormatSize(long bytes) => bytes switch { > 1024 * 1024 * 1024 => $"{bytes / 1024d / 1024d / 1024d:F2} GiB", > 1024 * 1024 => $"{bytes / 1024d / 1024d:F1} MiB", _ => $"{bytes / 1024d:F0} KiB" };
+    private sealed record LocalModel(string Name, string Path, long SizeInBytes, DateTime LastWriteTimeUtc); private sealed record HuggingFaceModel(string Id, string? Author, long Downloads, long Likes, DateTime? LastModified); private sealed record ModelStatus(string? ModelPath, string Backend, int GpuLayerCount, uint ContextSize, int FoundVulkanGpuCount, bool IsModelLoaded); private sealed record DownloadRequest(string ModelId, string? FileName = null); private sealed record SelectRequest(string Path); private sealed record DownloadStarted(Guid Id);
+    private sealed record DownloadStatus(Guid Id, string ModelId, string FileName, string DestinationPath, long BytesDownloaded, long? TotalBytes, bool Completed, string? Error) { public double Percent => TotalBytes is > 0 ? BytesDownloaded * 100d / TotalBytes.Value : Completed ? 100 : 0; }
+    private async Task HandleSearchKeyDown(KeyboardEventArgs args) { if (args.Key == "Enter") await SearchAsync(); }
+}

@@ -1,5 +1,9 @@
 {
 	"servers": {
+		"EsiMCP": {
+			"type": "http",
+			"url": "http://127.0.0.1:3002/mcp"
+		},
 		"Microsoft.FluentUI.AspNetCore.McpServer": {
 			"type": "stdio",
 			"command": "${workspaceFolder}/.dotnet/dnx",

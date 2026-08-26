@@ -3,16 +3,19 @@ using System;
 using Esi.AI.Studio.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
 
-namespace Esi.AI.Studio.Migrations
+namespace Esi.AI.Studio.Data.Migrations
 {
     [DbContext(typeof(ApplicationDbContext))]
-    partial class ApplicationDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260826103749_AddLlamaModels")]
+    partial class AddLlamaModels
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
@@ -119,9 +122,6 @@ namespace Esi.AI.Studio.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("TEXT");
 
-                    b.Property<string>("ModelPath")
-                        .HasColumnType("TEXT");
-
                     b.Property<string>("Role")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -221,9 +221,6 @@ namespace Esi.AI.Studio.Migrations
 
                     b.Property<uint>("ContextSize")
                         .HasColumnType("INTEGER");
-
-                    b.Property<Guid?>("ConfigurationProfileId")
-                        .HasColumnType("TEXT");
 
                     b.Property<int>("GpuLayerCount")
                         .HasColumnType("INTEGER");
