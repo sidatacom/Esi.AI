@@ -161,3 +161,18 @@ Repair the chat workflow after `AddChatExchange` returned an empty model answer.
 # Final Summary
 
 LLama chat sessions now format system, user, and assistant messages using SmolLM-compatible ChatML markers and stop on `<|im_end|>`. Generation is capped at 128 new tokens so a missing stop marker cannot leave the SignalR call running indefinitely. The browser test successfully created a new conversation, persisted both messages, and displayed the assistant response with token statistics. The Studio build passed without errors.
+
+# Current Request
+
+Register all repositories from `.gitmodules` as clean, initialized Git submodules.
+
+# Action plan
+
+- [done] Initialize the Litellm and LocalAI submodules.
+- [done] Convert OpenVINO from the tracked directory tree to the configured `csharp3.3` submodule.
+- [done] Register LLamaSharp in the local submodule configuration.
+- [done] Validate all four submodule worktrees and Gitlinks.
+
+# Final Summary
+
+All four paths are now initialized Git submodules: Litellm, LocalAI, LLamaSharp, and OpenVINO-CSharp-API. OpenVINO is checked out from `csharp3.3`. The previous OpenVINO directory was preserved temporarily at `/tmp/tmp.F2twZBzadn/OpenVINO-CSharp-API-existing`; it differed from the current remote branch in several source files and contained a local NuGet package.
