@@ -6,7 +6,7 @@ Diese Dokumentation beschreibt die aktuellen Projekte unter `src/Esi.AI`.
 
 - [Esi.AI.Studio](Esi.AI.Studio/README.md): ASP.NET Core Blazor Web App und Host fuer Identity, SQLite und interaktive Komponenten.
 - [Esi.AI.Studio.Client](Esi.AI.Studio.Client/README.md): Blazor WebAssembly Client fuer die Auto-Interaktivitaet.
-- [Esi.AI.LLama](Esi.AI.LLama/README.md): Class Library fuer die lokale LLamaSharp-Anbindung.
+- [Esi.AI.Core](Esi.AI.Core/README.md): Class Library fuer die lokale LLamaSharp-Anbindung.
 
 ## Solution
 

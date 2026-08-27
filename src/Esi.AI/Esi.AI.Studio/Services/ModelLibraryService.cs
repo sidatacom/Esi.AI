@@ -1,6 +1,9 @@
 using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Text.Json;
+using Esi.AI.Models;
+using Esi.AI.Studio.Hubs;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Options;
 using YamlDotNet.RepresentationModel;
 
@@ -9,12 +12,14 @@ namespace Esi.AI.Studio.Services;
 public sealed class ModelLibraryService
 {
     private readonly HttpClient httpClient;
+    private readonly IHubContext<DataHub> hubContext;
     private readonly ModelLibraryOptions options;
     private readonly ConcurrentDictionary<Guid, ModelDownloadStatus> downloads = new();
 
-    public ModelLibraryService(HttpClient httpClient, IOptions<ModelLibraryOptions> options)
+    public ModelLibraryService(HttpClient httpClient, IHubContext<DataHub> hubContext, IOptions<ModelLibraryOptions> options)
     {
         this.httpClient = httpClient;
+        this.hubContext = hubContext;
         this.options = options.Value;
     }
 
@@ -161,6 +166,7 @@ public sealed class ModelLibraryService
         var destination = Path.Combine(directory, Path.GetFileName(selectedFile));
         var downloadId = Guid.NewGuid();
         downloads[downloadId] = new ModelDownloadStatus(downloadId, modelId, selectedFile, destination, 0, null, false, null);
+        await PublishDownloadUpdateAsync(downloads[downloadId]);
         _ = DownloadAsync(downloadId, modelId, selectedFile, destination);
         return downloadId;
     }
@@ -194,23 +200,41 @@ public sealed class ModelLibraryService
             using var response = await httpClient.GetAsync($"{Uri.EscapeDataString(modelId).Replace("%2F", "/")}/resolve/main/{Uri.EscapeDataString(fileName)}", HttpCompletionOption.ResponseHeadersRead);
             response.EnsureSuccessStatusCode();
             var total = response.Content.Headers.ContentLength;
-            await using var source = await response.Content.ReadAsStreamAsync();
-            await using var target = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, useAsync: true);
-            var buffer = new byte[1024 * 1024];
-            long downloaded = 0;
-            int read;
-            while ((read = await source.ReadAsync(buffer)) > 0)
+            await using (var source = await response.Content.ReadAsStreamAsync())
+            await using (var target = new FileStream(destination, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, useAsync: true))
             {
-                await target.WriteAsync(buffer.AsMemory(0, read));
-                downloaded += read;
-                downloads[downloadId] = new ModelDownloadStatus(downloadId, modelId, fileName, destination, downloaded, total, false, null);
+                var buffer = new byte[1024 * 1024];
+                long downloaded = 0;
+                int read;
+                while ((read = await source.ReadAsync(buffer)) > 0)
+                {
+                    await target.WriteAsync(buffer.AsMemory(0, read));
+                    downloaded += read;
+                    var status = new ModelDownloadStatus(downloadId, modelId, fileName, destination, downloaded, total, false, null);
+                    downloads[downloadId] = status;
+                    await PublishDownloadUpdateAsync(status);
+                }
+                await target.FlushAsync();
             }
-            downloads[downloadId] = new ModelDownloadStatus(downloadId, modelId, fileName, destination, downloaded, total, true, null);
+            var completed = new ModelDownloadStatus(downloadId, modelId, fileName, destination, new FileInfo(destination).Length, total, true, null);
+            downloads[downloadId] = completed;
+            var localModels = await ScanLocalModelsAsync();
+            await PublishDownloadUpdateAsync(completed, localModels);
         }
         catch (Exception exception)
         {
-            downloads[downloadId] = new ModelDownloadStatus(downloadId, modelId, fileName, destination, 0, null, false, exception.Message);
+            var failed = new ModelDownloadStatus(downloadId, modelId, fileName, destination, 0, null, false, exception.Message);
+            downloads[downloadId] = failed;
+            await PublishDownloadUpdateAsync(failed);
         }
+    }
+
+    private Task PublishDownloadUpdateAsync(ModelDownloadStatus status, IReadOnlyList<LocalModelInfo>? localModels = null)
+    {
+        var download = new DownloadStatus(status.Id, status.ModelId, status.FileName, status.DestinationPath,
+            status.BytesDownloaded, status.TotalBytes, status.Completed, status.Error);
+        var models = localModels?.Select(model => new LocalModel(model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc)).ToArray();
+        return hubContext.Clients.All.SendAsync("ModelDownloadUpdated", new ModelDownloadUpdate(download, models));
     }
 
     private IReadOnlyList<string> GetDirectories()

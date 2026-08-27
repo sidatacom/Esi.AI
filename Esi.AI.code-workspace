@@ -1,10 +1,13 @@
 {
 	"folders": [
 		{
-			"path": ".."
+			"path": "/home/llm/Git/Esi.AI"
 		}
 	],
 	"settings": {
-		"esimcp.debugConfigurationName": "Esi.AI Studio (F5 Debug + Hot Reload)"
+		"esimcp.debugConfigurationName": "Esi.AI Studio (F5 Debug + Hot Reload)",
+		"dotnet.projectLoad.exclude": [
+			"**/origins/**"
+		]
 	}
 }

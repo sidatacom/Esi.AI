@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>{NUGET_ID}</id>
+    <version>{VERSION}</version>
+    <authors>{AUTHORS}</authors>
+    <owners>{AUTHORS}</owners>
+    <projectUrl>https://github.com/guojin-yan/OpenVINO-CSharp-API</projectUrl>
+    <icon>logo.jpg</icon>
+    <readme>README.md</readme>
+    <license type="file">LICENSE.txt</license>
+    <licenseUrl>https://aka.ms/deprecateLicenseUrl</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>Native OpenVINO GenAI {VERSION} runtime libraries for {PLATFORM_LABEL}. Bundled from the upstream Intel release at storage.openvinotoolkit.org. Companion native package to JYPPX.OpenVINO.CSharp.API.</description>
+    <summary>OpenVINO GenAI {VERSION} native runtime for {PLATFORM_LABEL}.</summary>
+    <releaseNotes>Packaged from official OpenVINO GenAI archive: {ARCHIVE_URL}</releaseNotes>
+    <tags>OpenVINO OpenVINO.GenAI GenAI native runtime {PLATFORM_LABEL} DeepLearning AI Inference LLM</tags>
+    <repository type="git" url="https://github.com/guojin-yan/OpenVINO-CSharp-API" />
+  </metadata>
+  <files>
+    <file src="runtimes\{RID}\native\*.*" target="runtimes\{RID}\native" />
+    <file src="build\net46\*.*" target="build\net46" />
+    <file src="build\netstandard2.0\*.*" target="build\netstandard2.0" />
+    <file src="lib\net46\_._" target="lib\net46" />
+    <file src="lib\netstandard2.0\_._" target="lib\netstandard2.0" />
+    <file src="licenses\**\*" target="licenses" />
+    <file src="LICENSE.txt" target="" />
+    <file src="logo.jpg" target="" />
+    <file src="README.md" target="" />
+    <file src="manifest.txt" target="" />
+  </files>
+</package>

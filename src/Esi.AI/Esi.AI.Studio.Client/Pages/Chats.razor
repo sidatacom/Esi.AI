@@ -1,7 +1,7 @@
 @page "/chats"
 @rendermode InteractiveWebAssembly
-@inject HttpClient Http
-@inject ILlamaControlService LlamaControl
+@using Esi.AI.Models
+@inject IDataService DataService
 
 <PageTitle>Chats</PageTitle>
 
@@ -53,7 +53,7 @@
     private string? selectedModelPath;
 
     protected override async Task OnInitializedAsync() { await LoadLoadedModelsAsync(); await LoadChatsAsync(); if (chatSummaries.Count > 0) await SelectChatAsync(chatSummaries[0].Id); else await NewChatAsync(); }
-    private async Task LoadLoadedModelsAsync() { var status = await LlamaControl.GetModelStatusAsync(); loadedModels.Clear(); loadedModels.AddRange(status.LoadedModels); selectedModelPath = loadedModels.FirstOrDefault()?.ModelPath; }
+    private async Task LoadLoadedModelsAsync() { var status = await DataService.GetModelStatusAsync(); loadedModels.Clear(); loadedModels.AddRange(status.LoadedModels); selectedModelPath = loadedModels.FirstOrDefault()?.ModelPath; }
     private static string DisplayContent(PersistedChatMessage message)
     {
         if (message.Role != "assistant")
@@ -66,14 +66,9 @@
             ? "Keine Antwort vom Modell erhalten."
             : content;
     }
-    private async Task LoadChatsAsync() { chatSummaries.Clear(); chatSummaries.AddRange(await Http.GetFromJsonAsync<List<ChatSummary>>("api/chats") ?? []); }
-    private async Task NewChatAsync() { currentChat = await (await Http.PostAsJsonAsync("api/chats", new CreateChatRequest())).Content.ReadFromJsonAsync<PersistedChat>(); await LoadChatsAsync(); statusMessage = null; }
-    private async Task SelectChatAsync(Guid id) { currentChat = await Http.GetFromJsonAsync<PersistedChat>($"api/chats/{id}"); composer.Content = string.Empty; statusMessage = null; }
-    private async Task SendAsync() { if (currentChat is null || string.IsNullOrWhiteSpace(composer.Content) || string.IsNullOrWhiteSpace(selectedModelPath) || isSending) return; isSending = true; statusMessage = null; var content = composer.Content.Trim(); composer.Content = string.Empty; try { var response = await Http.PostAsJsonAsync($"api/chats/{currentChat.Id}/messages", new ChatExchangeRequest(content, selectedModelPath)); if (response.IsSuccessStatusCode) { currentChat = await response.Content.ReadFromJsonAsync<PersistedChat>(); await LoadChatsAsync(); } else { statusMessage = await response.Content.ReadAsStringAsync(); composer.Content = content; } } catch (Exception) { statusMessage = "Die Chat-Anfrage konnte nicht verarbeitet werden."; composer.Content = content; } finally { isSending = false; } }
+    private async Task LoadChatsAsync() { chatSummaries.Clear(); chatSummaries.AddRange(await DataService.GetChatSummariesAsync()); }
+    private async Task NewChatAsync() { currentChat = await DataService.CreateChatAsync(new CreateChatRequest()); await LoadChatsAsync(); statusMessage = null; }
+    private async Task SelectChatAsync(Guid id) { currentChat = await DataService.GetChatAsync(id); composer.Content = string.Empty; statusMessage = null; }
+    private async Task SendAsync() { if (currentChat is null || string.IsNullOrWhiteSpace(composer.Content) || string.IsNullOrWhiteSpace(selectedModelPath) || isSending) return; isSending = true; statusMessage = null; var content = composer.Content.Trim(); composer.Content = string.Empty; try { currentChat = await DataService.AddChatExchangeAsync(currentChat.Id, new ChatExchangeRequest(content, selectedModelPath)); await LoadChatsAsync(); } catch (Exception exception) { statusMessage = exception.Message; composer.Content = content; } finally { isSending = false; } }
     private sealed class Composer { public string Content { get; set; } = string.Empty; }
-    private sealed record ChatSummary(Guid Id, string Title, DateTime UpdatedAtUtc, int MessageCount);
-    private sealed record PersistedChat(Guid Id, string Title, DateTime CreatedAtUtc, DateTime UpdatedAtUtc, IReadOnlyList<PersistedChatMessage> Messages);
-    private sealed record PersistedChatMessage(string Role, string Content, DateTime CreatedAtUtc, string? ModelPath = null, int? TokenCount = null, double? TokensPerSecond = null);
-    private sealed record CreateChatRequest(string? Title = null);
-    private sealed record ChatExchangeRequest(string Content, string ModelPath);
 }

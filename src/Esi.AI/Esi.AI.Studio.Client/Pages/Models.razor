@@ -1,7 +1,10 @@
 @page "/models"
 @rendermode InteractiveWebAssembly
-@inject HttpClient Http
+@implements IAsyncDisposable
+@using Esi.AI.Models
 @inject NavigationManager NavigationManager
+@inject IDataService DataService
+@inject IModelDownloadEvents DownloadEvents
 
 <PageTitle>Models</PageTitle>
 
@@ -89,17 +92,16 @@
     private string? message;
     private ModelStatus? status;
 
-    protected override async Task OnInitializedAsync() { await LoadStatusAsync(); await ScanLocalAsync(); var directories = await Http.GetFromJsonAsync<List<string>>("api/models/directories"); if (directories is not null) modelDirectories.AddRange(directories); }
-    private async Task ScanLocalAsync() { try { var models = await Http.GetFromJsonAsync<List<LocalModel>>("api/models/local") ?? []; localModels.Clear(); localModels.AddRange(models); } catch (Exception) { message = "Die lokalen Modelle konnten nicht gelesen werden."; } }
-    private async Task SearchAsync() { isSearching = true; hasSearched = true; message = null; try { var url = $"api/models/search?query={Uri.EscapeDataString(searchQuery.Trim())}"; searchResults.Clear(); searchResults.AddRange(await Http.GetFromJsonAsync<List<HuggingFaceModel>>(url) ?? []); } catch (Exception) { message = "Die Hugging-Face-Suche ist fehlgeschlagen."; } finally { isSearching = false; } }
-    private async Task DownloadAsync(string modelId) { isBusy = true; message = null; try { var response = await Http.PostAsJsonAsync("api/models/download", new DownloadRequest(modelId)); if (!response.IsSuccessStatusCode) { message = await response.Content.ReadAsStringAsync(); return; } var result = await response.Content.ReadFromJsonAsync<DownloadStarted>(); if (result is not null) _ = PollDownloadAsync(result.Id); } catch (Exception) { message = "Der Download konnte nicht gestartet werden."; } finally { isBusy = false; } }
-    private async Task PollDownloadAsync(Guid id) { while (true) { await Task.Delay(1000); var result = await Http.GetFromJsonAsync<DownloadStatus>($"api/models/downloads/{id}"); if (result is null) return; downloads[id] = result; await InvokeAsync(StateHasChanged); if (result.Completed || !string.IsNullOrWhiteSpace(result.Error)) { if (result.Completed) await ScanLocalAsync(); return; } } }
-    private async Task SelectModelAsync(string path) { var response = await Http.PostAsJsonAsync("api/models/select", new SelectRequest(path)); if (response.IsSuccessStatusCode) { await LoadStatusAsync(); message = "Modell als aktives Chat-Modell ausgewählt. Jetzt unter LLama laden."; } else message = "Das Modell konnte nicht ausgewählt werden."; }
-    private async Task LoadStatusAsync() { status = await Http.GetFromJsonAsync<ModelStatus>("api/llama/status"); }
+    protected override async Task OnInitializedAsync() { DownloadEvents.ModelDownloadUpdated += HandleModelDownloadUpdatedAsync; await LoadStatusAsync(); await ScanLocalAsync(); modelDirectories.AddRange(await DataService.GetModelDirectoriesAsync()); }
+    private async Task ScanLocalAsync() { try { var models = await DataService.ScanLocalModelsAsync(); localModels.Clear(); localModels.AddRange(models); } catch (Exception) { message = "Die lokalen Modelle konnten nicht gelesen werden."; } }
+    private async Task SearchAsync() { isSearching = true; hasSearched = true; message = null; try { searchResults.Clear(); searchResults.AddRange(await DataService.SearchModelsAsync(searchQuery.Trim())); } catch (Exception) { message = "Die Hugging-Face-Suche ist fehlgeschlagen."; } finally { isSearching = false; } }
+    private async Task DownloadAsync(string modelId) { isBusy = true; message = null; try { await DataService.StartModelDownloadAsync(new ModelDownloadRequest(modelId)); } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
+    private async Task HandleModelDownloadUpdatedAsync(ModelDownloadUpdate update) { await InvokeAsync(() => { downloads[update.Download.Id] = update.Download; if (update.LocalModels is not null) { localModels.Clear(); localModels.AddRange(update.LocalModels); } StateHasChanged(); }); }
+    private async Task SelectModelAsync(string path) { try { status = await DataService.SelectModelAsync(new SelectModelRequest(path)); message = "Modell als aktives Chat-Modell ausgewählt. Jetzt unter LLama laden."; } catch (Exception) { message = "Das Modell konnte nicht ausgewählt werden."; } }
+    private async Task LoadStatusAsync() { var modelStatus = await DataService.GetModelStatusAsync(); status = new ModelStatus(modelStatus.ModelPath, modelStatus.Backend, modelStatus.GpuLayerCount, modelStatus.ContextSize, modelStatus.FoundVulkanGpuCount, modelStatus.IsModelLoaded); }
     private bool IsActive(string path) => string.Equals(status?.ModelPath, path, StringComparison.OrdinalIgnoreCase);
-    private void OpenConfiguration() => NavigationManager.NavigateTo("llama"); private void OpenChat() => NavigationManager.NavigateTo("chats");
+    private void OpenConfiguration() => NavigationManager.NavigateTo("backends"); private void OpenChat() => NavigationManager.NavigateTo("chats");
     private static string FormatSize(long bytes) => bytes switch { > 1024 * 1024 * 1024 => $"{bytes / 1024d / 1024d / 1024d:F2} GiB", > 1024 * 1024 => $"{bytes / 1024d / 1024d:F1} MiB", _ => $"{bytes / 1024d:F0} KiB" };
-    private sealed record LocalModel(string Name, string Path, long SizeInBytes, DateTime LastWriteTimeUtc); private sealed record HuggingFaceModel(string Id, string? Author, long Downloads, long Likes, DateTime? LastModified); private sealed record ModelStatus(string? ModelPath, string Backend, int GpuLayerCount, uint ContextSize, int FoundVulkanGpuCount, bool IsModelLoaded); private sealed record DownloadRequest(string ModelId, string? FileName = null); private sealed record SelectRequest(string Path); private sealed record DownloadStarted(Guid Id);
-    private sealed record DownloadStatus(Guid Id, string ModelId, string FileName, string DestinationPath, long BytesDownloaded, long? TotalBytes, bool Completed, string? Error) { public double Percent => TotalBytes is > 0 ? BytesDownloaded * 100d / TotalBytes.Value : Completed ? 100 : 0; }
     private async Task HandleSearchKeyDown(KeyboardEventArgs args) { if (args.Key == "Enter") await SearchAsync(); }
+    public ValueTask DisposeAsync() { DownloadEvents.ModelDownloadUpdated -= HandleModelDownloadUpdatedAsync; return ValueTask.CompletedTask; }
 }

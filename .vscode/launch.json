@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Esi.AI Studio (Server Debug)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build-esi-ai-studio",
+      "program": "${workspaceFolder}/src/Esi.AI/Esi.AI.Studio/bin/Debug/net10.0/Esi.AI.Studio",
+      "args": [],
+      "cwd": "${workspaceFolder}/src/Esi.AI/Esi.AI.Studio",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "ASPNETCORE_URLS": "http://localhost:7010",
+        "DOTNET_USE_POLLING_FILE_WATCHER": "1"
+      },
+      "serverReadyAction": {
+        "action": "openIntegratedBrowser",
+        "pattern": "\\bNow (?:listening on|ready on):\\s+(https?://\\S+)"
+      }
+    }
+  ]
+}

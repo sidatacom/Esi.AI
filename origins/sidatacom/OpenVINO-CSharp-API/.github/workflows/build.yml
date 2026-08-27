@@ -1,0 +1,65 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, master, develop, csharp3.3 ]
+  pull_request:
+    branches: [ main, master, develop, csharp3.3 ]
+
+jobs:
+  # Linux 构建 - 只构建 .NET Core/.NET 5+ 项目
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: |
+          6.0.x
+          8.0.x
+    
+    # Linux 上只构建 API 项目的 net8.0 目标（跳过 .NET Framework 目标）
+    - name: Restore API (net8.0 only)
+      run: dotnet restore src/OpenVINO.CSharp.API/OpenVINO.CSharp.API.csproj -p:TargetFramework=net8.0
+    
+    - name: Build API (net8.0 only)
+      run: dotnet build src/OpenVINO.CSharp.API/OpenVINO.CSharp.API.csproj --configuration Release --framework net8.0 --no-restore
+    
+    # 构建跨平台示例（.NET Core 3.1 / .NET 10.0）
+    - name: Build Cross-Platform Samples
+      run: |
+        dotnet build samples/Yolo26Det-netcoreapp3.1/Yolo26Det-netcoreapp3.1.csproj --configuration Release -p:CheckEolTargetFramework=false -p:SuppressTfmSupportBuildWarnings=true -p:NoWarn=NU1701 || true
+        dotnet build samples/Yolo26Det-net10.0/Yolo26Det-net10.0.csproj --configuration Release -p:NoWarn=NU1701 || true
+      continue-on-error: true
+
+  # Windows 构建 - 构建所有项目包括 .NET Framework
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v6
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v5
+      with:
+        dotnet-version: |
+          6.0.x
+          8.0.x
+    
+    - name: Restore dependencies (API)
+      run: dotnet restore src/OpenVINO.CSharp.API/OpenVINO.CSharp.API.csproj
+    
+    - name: Build API
+      run: dotnet build src/OpenVINO.CSharp.API/OpenVINO.CSharp.API.csproj --configuration Release --no-restore
+    
+    - name: Restore dependencies (Tests)
+      run: dotnet restore tests/OpenVINO.CSharp.API.Tests/OpenVINO.CSharp.API.Tests.csproj
+    
+    - name: Build Tests
+      run: dotnet build tests/OpenVINO.CSharp.API.Tests/OpenVINO.CSharp.API.Tests.csproj --configuration Release --no-restore
+    
+    - name: Build .NET Framework Samples (Windows only)
+      run: |
+        msbuild samples/Yolo26Det-net4.8/Yolo26Det-net4.8.csproj /p:Configuration=Release /p:Platform=AnyCPU
+      continue-on-error: true

@@ -1,15 +1,65 @@
 using System.Text.Json;
 using Esi.AI.Studio.Client.Services;
 using Esi.AI.Studio.Data;
-using Esi.AI.Llm.Chat;
+using Esi.AI.Core.Chat;
+using Esi.AI.Core.ModelLoading;
+using Esi.AI.Models;
 using Microsoft.EntityFrameworkCore;
+using ClientModelLoadStatus = Esi.AI.Studio.Client.Services.ModelLoadStatus;
+using ClientLoadedModelStatus = Esi.AI.Studio.Client.Services.LoadedModelStatus;
+using ClientVulkanDeviceStatus = Esi.AI.Studio.Client.Services.VulkanDeviceStatus;
 
 namespace Esi.AI.Studio.Services;
 
 public sealed class DataService(
     IDbContextFactory<ApplicationDbContext> dbContextFactory,
-    ModelLibraryService modelLibrary) : IDataService
+    ModelLibraryService modelLibrary,
+    LlamaModelLoader llamaModelLoader,
+    OpenVinoDiagnosticsService openVinoDiagnostics,
+    OpenVinoDriverInstaller openVinoInstaller,
+    OpenVinoModelLoader openVinoModelLoader) : IDataService
 {
+    public async Task<IReadOnlyList<LocalModel>> ScanLocalModelsAsync(CancellationToken cancellationToken = default) =>
+        (await modelLibrary.ScanLocalModelsAsync(cancellationToken))
+        .Select(model => new LocalModel(model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc)).ToArray();
+
+    public IReadOnlyList<string> GetModelDirectories() => modelLibrary.GetModelDirectories();
+
+    public Task<IReadOnlyList<string>> GetModelDirectoriesAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(GetModelDirectories());
+
+    public async Task<IReadOnlyList<HuggingFaceModel>> SearchModelsAsync(string query, CancellationToken cancellationToken = default) =>
+        (await modelLibrary.SearchHuggingFaceAsync(query, cancellationToken))
+        .Select(model => new HuggingFaceModel(model.Id, model.Author, model.Downloads, model.Likes, model.LastModified)).ToArray();
+
+    public Task<Guid> StartModelDownloadAsync(ModelDownloadRequest request, CancellationToken cancellationToken = default) =>
+        modelLibrary.StartDownloadAsync(request.ModelId, request.FileName, cancellationToken);
+
+    public DownloadStatus? GetModelDownload(Guid id)
+    {
+        var status = modelLibrary.GetDownload(id);
+        return status is null ? null : new DownloadStatus(status.Id, status.ModelId, status.FileName, status.DestinationPath,
+            status.BytesDownloaded, status.TotalBytes, status.Completed, status.Error);
+    }
+
+    public Task<DownloadStatus?> GetModelDownloadAsync(Guid id, CancellationToken cancellationToken = default) =>
+        Task.FromResult(GetModelDownload(id));
+
+    public async Task<ModelStatus> SelectModelAsync(SelectModelRequest request, CancellationToken cancellationToken = default)
+    {
+        if (!Path.IsPathFullyQualified(request.Path) || !request.Path.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("A fully qualified GGUF path is required.");
+        var settings = await GetLlamaSettingsAsync(cancellationToken) ?? new LlamaSettings(
+            request.Path, "Vulkan", 0, (uint)LlamaContextSize.Context128K,
+            new Dictionary<string, VulkanDeviceSetting>(StringComparer.OrdinalIgnoreCase));
+        await SaveLlamaSettingsAsync(settings with { ModelPath = request.Path }, cancellationToken);
+        return new ModelStatus(request.Path, settings.Backend, settings.GpuLayerCount, settings.ContextSize, 0, false);
+    }
+
+    public Task<PersistedChat> CreateChatAsync(CreateChatRequest request, CancellationToken cancellationToken = default) =>
+        CreateChatAsync(request.Title, cancellationToken);
+
+
     public async Task<LlamaSettings?> GetLlamaSettingsAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
@@ -52,7 +102,31 @@ public sealed class DataService(
             return await GetLlamaModelsAsync(cancellationToken);
 
         await SyncLlamaModelsAsync(llamaModels, cancellationToken);
-        return llamaModels;
+        return await GetLlamaModelsAsync(cancellationToken);
+    }
+
+    public async Task SetModelConfigurationProfileAsync(string modelPath, Guid? profileId, CancellationToken cancellationToken = default)
+    {
+        var normalizedPath = modelPath.Trim();
+        if (string.IsNullOrWhiteSpace(normalizedPath))
+            return;
+
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var model = await db.LlamaModels.SingleOrDefaultAsync(item => item.Path == normalizedPath, cancellationToken);
+        if (model is null)
+            return;
+
+        if (profileId.HasValue)
+        {
+            var profile = await db.ModelConfigurationProfiles.SingleOrDefaultAsync(item => item.Id == profileId.Value, cancellationToken)
+                ?? throw new KeyNotFoundException("The model configuration profile was not found.");
+            if (!string.Equals(profile.ModelPath.Trim(), normalizedPath, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("The configuration profile does not belong to the selected model.", nameof(profileId));
+        }
+
+        model.ConfigurationProfileId = profileId;
+        model.UpdatedAtUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
     }
 
     public async Task SyncLlamaModelsAsync(IReadOnlyList<LlamaModel> models, CancellationToken cancellationToken = default)
@@ -79,7 +153,8 @@ public sealed class DataService(
                     Path = model.Path,
                     SizeInBytes = model.SizeInBytes,
                     LastWriteTimeUtc = model.LastWriteTimeUtc,
-                    UpdatedAtUtc = now
+                    UpdatedAtUtc = now,
+                    ConfigurationProfileId = model.ConfigurationProfileId
                 });
             }
         }
@@ -87,42 +162,43 @@ public sealed class DataService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyList<LlamaConfigurationProfile>> GetLlamaConfigurationProfilesAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ModelConfigurationProfile>> GetModelConfigurationProfilesAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entities = await db.LlamaConfigurationProfiles.AsNoTracking()
+        var entities = await db.ModelConfigurationProfiles.AsNoTracking()
             .OrderByDescending(profile => profile.IsDefault)
             .ThenBy(profile => profile.Name)
             .ToArrayAsync(cancellationToken);
         return entities.Select(ToProfile).ToArray();
     }
 
-    public async Task<LlamaConfigurationProfile?> GetLlamaConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<ModelConfigurationProfile?> GetModelConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.LlamaConfigurationProfiles.AsNoTracking()
+        var entity = await db.ModelConfigurationProfiles.AsNoTracking()
             .Where(profile => profile.Id == id)
             .SingleOrDefaultAsync(cancellationToken);
         return entity is null ? null : ToProfile(entity);
     }
 
-    public async Task<LlamaConfigurationProfile> SaveLlamaConfigurationProfileAsync(LlamaConfigurationProfile profile, CancellationToken cancellationToken = default)
+    public async Task<ModelConfigurationProfile> SaveModelConfigurationProfileAsync(ModelConfigurationProfile profile, CancellationToken cancellationToken = default)
     {
         ValidateProfile(profile);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var duplicateName = await db.LlamaConfigurationProfiles.AnyAsync(item =>
-            item.Name == profile.Name && item.Id != profile.Id, cancellationToken);
+        var duplicateName = await db.ModelConfigurationProfiles.AnyAsync(item =>
+            item.Name == profile.Name && item.Backend == profile.Backend && item.Id != profile.Id, cancellationToken);
         if (duplicateName)
             throw new InvalidOperationException($"A configuration profile named '{profile.Name}' already exists.");
 
         var now = DateTime.UtcNow;
         var entity = profile.Id == Guid.Empty
-            ? new LlamaConfigurationProfileEntity { Id = Guid.NewGuid(), CreatedAtUtc = now }
-            : await db.LlamaConfigurationProfiles.SingleOrDefaultAsync(item => item.Id == profile.Id, cancellationToken)
+            ? new ModelConfigurationProfileEntity { Id = Guid.NewGuid(), CreatedAtUtc = now }
+            : await db.ModelConfigurationProfiles.SingleOrDefaultAsync(item => item.Id == profile.Id, cancellationToken)
                 ?? throw new KeyNotFoundException("The configuration profile was not found.");
         entity.Name = profile.Name.Trim();
         entity.Description = string.IsNullOrWhiteSpace(profile.Description) ? null : profile.Description.Trim();
         entity.ModelPath = profile.ModelPath.Trim();
+        entity.Backend = profile.Backend;
         entity.IsDefault = profile.IsDefault;
         entity.SchemaVersion = profile.SchemaVersion < 1 ? 1 : profile.SchemaVersion;
         entity.ConfigurationJson = profile.ConfigurationJson;
@@ -130,26 +206,26 @@ public sealed class DataService(
         if (entity.Id == Guid.Empty)
             entity.Id = Guid.NewGuid();
         if (db.Entry(entity).State == EntityState.Detached)
-            db.LlamaConfigurationProfiles.Add(entity);
+            db.ModelConfigurationProfiles.Add(entity);
 
         if (entity.IsDefault)
             await ClearOtherDefaultsAsync(db, entity.Id, cancellationToken);
-        else if (!await db.LlamaConfigurationProfiles.AnyAsync(item => item.IsDefault && item.Id != entity.Id, cancellationToken))
+        else if (!await db.ModelConfigurationProfiles.AnyAsync(item => item.IsDefault && item.Id != entity.Id, cancellationToken))
             entity.IsDefault = true;
 
         await db.SaveChangesAsync(cancellationToken);
         return ToProfile(entity);
     }
 
-    public async Task DeleteLlamaConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteModelConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.LlamaConfigurationProfiles.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
+        var entity = await db.ModelConfigurationProfiles.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
             ?? throw new KeyNotFoundException("The configuration profile was not found.");
-        db.LlamaConfigurationProfiles.Remove(entity);
+        db.ModelConfigurationProfiles.Remove(entity);
         if (entity.IsDefault)
         {
-            var replacement = await db.LlamaConfigurationProfiles
+            var replacement = await db.ModelConfigurationProfiles
                 .Where(item => item.Id != id)
                 .OrderBy(item => item.Name)
                 .FirstOrDefaultAsync(cancellationToken);
@@ -159,10 +235,10 @@ public sealed class DataService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task SetDefaultLlamaConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task SetDefaultModelConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.LlamaConfigurationProfiles.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
+        var entity = await db.ModelConfigurationProfiles.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
             ?? throw new KeyNotFoundException("The configuration profile was not found.");
         await ClearOtherDefaultsAsync(db, id, cancellationToken);
         entity.IsDefault = true;
@@ -208,6 +284,109 @@ public sealed class DataService(
         return ToChat(chat);
     }
 
+    public Task<ClientModelLoadStatus> GetModelStatusAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(ToClientStatus(llamaModelLoader.GetStatus()));
+
+    public async Task<ClientModelLoadStatus> LoadModelAsync(LoadModelRequest request, CancellationToken cancellationToken = default)
+    {
+        var advanced = request.Advanced;
+        await llamaModelLoader.LoadAsync(request.ModelPath, request.Backend, request.GpuLayerCount, request.ContextSize,
+            request.VulkanDeviceWeights,
+            new LlamaLoadOptions(advanced.MainGpu, advanced.SeqMax, advanced.RecurrentRollbackSnapshots, advanced.UseMemorymap,
+                advanced.UseDirectIO, advanced.UseMemoryLock, advanced.Threads, advanced.BatchThreads, advanced.BatchSize,
+                advanced.UBatchSize, advanced.Embeddings, advanced.NoKqvOffload, advanced.FlashAttention, advanced.VocabOnly,
+                advanced.OpOffload, advanced.SwaFull, advanced.KVUnified, advanced.RopeFrequencyBase, advanced.RopeFrequencyScale,
+                advanced.YarnExtrapolationFactor, advanced.YarnAttentionFactor, advanced.YarnBetaFast, advanced.YarnBetaSlow,
+                advanced.YarnOriginalContext), cancellationToken);
+        return ToClientStatus(llamaModelLoader.GetStatus());
+    }
+
+    public async Task<ClientModelLoadStatus> UnloadModelAsync(CancellationToken cancellationToken = default)
+    {
+        await llamaModelLoader.StopAsync(cancellationToken);
+        return ToClientStatus(llamaModelLoader.GetStatus());
+    }
+
+    public async Task<ClientModelLoadStatus> UnloadModelAsync(string modelPath, CancellationToken cancellationToken = default)
+    {
+        await llamaModelLoader.UnloadAsync(modelPath, cancellationToken);
+        return ToClientStatus(llamaModelLoader.GetStatus());
+    }
+
+    public Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default)
+    {
+        var result = openVinoDiagnostics.Diagnose();
+        return Task.FromResult(new OpenVinoDiagnosticsDto
+        {
+            IsGpuReady = result.IsGpuReady,
+            IsNpuReady = result.IsNpuReady,
+            Devices = result.Devices.Select(device => new OpenVinoDeviceDto { Id = device.Id, Name = device.Name, IsCompatible = device.IsCompatible, Detail = device.Detail }).ToArray(),
+            Checks = result.Checks.Select(check => new OpenVinoDiagnosticCheckDto { Id = check.Id, Name = check.Name, IsAvailable = check.IsAvailable, Detail = check.Detail, CanSolve = check.CanSolve }).ToArray(),
+            Error = result.Error
+        });
+    }
+
+    public async Task<OpenVinoSolveResultDto> SolveDiagnosticAsync(string checkId, CancellationToken cancellationToken = default)
+    {
+        var result = checkId switch
+        {
+            "level-zero-loader" or "intel-level-zero-gpu" => await openVinoInstaller.InstallAsync(cancellationToken),
+            "render-permissions" => await openVinoInstaller.AddUserToRenderGroupsAsync(cancellationToken),
+            _ => new OpenVinoInstallResult(false, "This diagnostic cannot be repaired automatically.", string.Empty)
+        };
+        return new OpenVinoSolveResultDto
+        {
+            Succeeded = result.Succeeded,
+            Message = result.Message,
+            Output = string.IsNullOrWhiteSpace(result.Output) ? "No installer output was returned by the server." : result.Output
+        };
+    }
+
+    public async Task<OpenVinoLoadResultDto> LoadModelAsync(OpenVinoLoadRequest request, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            await openVinoModelLoader.LoadAsync(
+                request.ModelPath,
+                request.Device,
+                cancellationToken,
+                new OpenVinoGenerationOptions(request.MaxNewTokens, request.Temperature, request.TopP, request.DoSample),
+                request.CacheDirectory,
+                new OpenVinoNpuOptions(
+                    request.Npu?.MaxPromptLength ?? 1024,
+                    request.Npu?.MinResponseLength ?? 128,
+                    request.Npu?.PrefillHint ?? "DYNAMIC",
+                    request.Npu?.GenerateHint ?? "FAST_COMPILE"));
+            return new OpenVinoLoadResultDto(true, $"OpenVINO model loaded on {request.Device}.", request.Device);
+        }
+        catch (Exception exception)
+        {
+            return new OpenVinoLoadResultDto(false, exception.ToString(), request.Device);
+        }
+    }
+
+    public async Task<PersistedChat?> AddChatExchangeAsync(Guid id, ChatExchangeRequest request, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Content) || string.IsNullOrWhiteSpace(request.ModelPath))
+            return null;
+        var chat = await GetChatAsync(id, cancellationToken);
+        if (chat is null)
+            return null;
+        using var session = llamaModelLoader.CreateChatSession("You are a helpful assistant.", request.ModelPath);
+        var messages = chat.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content))
+            .Append(new LlamaChatMessage("user", request.Content.Trim())).ToArray();
+        var generation = await session.GenerateWithStatsAsync(messages, cancellationToken);
+        return await AddChatExchangeAsync(id, request.Content.Trim(), generation, request.ModelPath, cancellationToken);
+    }
+
+    private static ClientModelLoadStatus ToClientStatus(Esi.AI.Core.ModelLoading.ModelLoadStatus status) =>
+        new(status.ModelPath, status.Backend, status.GpuLayerCount, status.ContextSize, status.ModelSizeInBytes,
+            status.FoundVulkanGpuCount,
+            status.VulkanDevices.Select(device => new ClientVulkanDeviceStatus(device.Name, device.Description, device.AssignedLayerCount, device.ModelBufferMiB)).ToArray(),
+            status.CpuModelBufferMiB, status.LoadLog, status.VulkanDeviceWeights, status.IsModelLoaded,
+            status.LoadedModels.Select(model => new ClientLoadedModelStatus(model.ModelPath, model.Backend, model.GpuLayerCount, model.ContextSize, model.ModelSizeInBytes,
+                model.VulkanDevices.Select(device => new ClientVulkanDeviceStatus(device.Name, device.Description, device.AssignedLayerCount, device.ModelBufferMiB)).ToArray(), model.CpuModelBufferMiB)).ToArray());
+
     private static PersistedChat ToChat(ChatConversationEntity chat) => new(chat.Id, chat.Title, chat.CreatedAtUtc, chat.UpdatedAtUtc,
         chat.Messages.OrderBy(message => message.CreatedAtUtc).ThenBy(message => message.Id).Select(message => new PersistedChatMessage(message.Role, message.Content, message.CreatedAtUtc, message.ModelPath, message.TokenCount, message.TokensPerSecond)).ToArray());
 
@@ -216,15 +395,17 @@ public sealed class DataService(
             DeserializeVulkanDevices(entity.VulkanDeviceWeightsJson),
             DeserializeAdvancedSettings(entity.AdvancedSettingsJson), entity.ConfigurationProfileId);
 
-    private static LlamaConfigurationProfile ToProfile(LlamaConfigurationProfileEntity entity) =>
+    private static ModelConfigurationProfile ToProfile(ModelConfigurationProfileEntity entity) =>
         new(entity.Id, entity.Name, entity.Description, entity.ModelPath, entity.IsDefault, entity.SchemaVersion,
-            entity.ConfigurationJson, entity.CreatedAtUtc, entity.UpdatedAtUtc);
+            entity.ConfigurationJson, entity.CreatedAtUtc, entity.UpdatedAtUtc, entity.Backend);
 
     private static LlamaModel ToModel(LlamaModelEntity entity) =>
-        new(entity.Id, entity.Name, entity.Path, entity.SizeInBytes, entity.LastWriteTimeUtc);
+        new(entity.Id, entity.Name, entity.Path, entity.SizeInBytes, entity.LastWriteTimeUtc, entity.ConfigurationProfileId);
 
-    private static void ValidateProfile(LlamaConfigurationProfile profile)
+    private static void ValidateProfile(ModelConfigurationProfile profile)
     {
+        if (!Enum.IsDefined(profile.Backend))
+            throw new ArgumentException("A valid configuration backend is required.", nameof(profile));
         if (string.IsNullOrWhiteSpace(profile.Name))
             throw new ArgumentException("A configuration profile name is required.", nameof(profile));
         if (profile.Name.Trim().Length > 120)
@@ -248,7 +429,7 @@ public sealed class DataService(
         Guid selectedId,
         CancellationToken cancellationToken)
     {
-        await db.LlamaConfigurationProfiles
+        await db.ModelConfigurationProfiles
             .Where(item => item.Id != selectedId && item.IsDefault)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(item => item.IsDefault, false)

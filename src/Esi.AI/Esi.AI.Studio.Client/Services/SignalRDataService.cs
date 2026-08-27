@@ -1,11 +1,14 @@
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.Components;
+using Esi.AI.Models;
 
 namespace Esi.AI.Studio.Client.Services;
 
-public sealed class SignalRDataService : IDataService, ILlamaControlService, IAsyncDisposable
+public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IAsyncDisposable
 {
     private readonly HubConnection connection;
+
+    public event Func<ModelDownloadUpdate, Task>? ModelDownloadUpdated;
 
     public SignalRDataService(NavigationManager navigationManager)
     {
@@ -13,6 +16,12 @@ public sealed class SignalRDataService : IDataService, ILlamaControlService, IAs
             .WithUrl(navigationManager.ToAbsoluteUri("/hubs/data"))
             .WithAutomaticReconnect()
             .Build();
+        connection.On<ModelDownloadUpdate>("ModelDownloadUpdated", async update =>
+        {
+            var handler = ModelDownloadUpdated;
+            if (handler is not null)
+                await handler(update);
+        });
     }
 
     public async Task<LlamaSettings?> GetLlamaSettingsAsync(CancellationToken cancellationToken = default)
@@ -45,34 +54,40 @@ public sealed class SignalRDataService : IDataService, ILlamaControlService, IAs
         await connection.InvokeAsync("SyncLlamaModels", models, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<LlamaConfigurationProfile>> GetLlamaConfigurationProfilesAsync(CancellationToken cancellationToken = default)
+    public async Task SetModelConfigurationProfileAsync(string modelPath, Guid? profileId, CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
-        return await connection.InvokeAsync<IReadOnlyList<LlamaConfigurationProfile>>("GetLlamaConfigurationProfiles", cancellationToken);
+        await connection.InvokeAsync("SetModelConfigurationProfile", modelPath, profileId, cancellationToken);
     }
 
-    public async Task<LlamaConfigurationProfile?> GetLlamaConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ModelConfigurationProfile>> GetModelConfigurationProfilesAsync(CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
-        return await connection.InvokeAsync<LlamaConfigurationProfile?>("GetLlamaConfigurationProfile", id, cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<ModelConfigurationProfile>>("GetModelConfigurationProfiles", cancellationToken);
     }
 
-    public async Task<LlamaConfigurationProfile> SaveLlamaConfigurationProfileAsync(LlamaConfigurationProfile profile, CancellationToken cancellationToken = default)
+    public async Task<ModelConfigurationProfile?> GetModelConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
-        return await connection.InvokeAsync<LlamaConfigurationProfile>("SaveLlamaConfigurationProfile", profile, cancellationToken);
+        return await connection.InvokeAsync<ModelConfigurationProfile?>("GetModelConfigurationProfile", id, cancellationToken);
     }
 
-    public async Task DeleteLlamaConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<ModelConfigurationProfile> SaveModelConfigurationProfileAsync(ModelConfigurationProfile profile, CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
-        await connection.InvokeAsync("DeleteLlamaConfigurationProfile", id, cancellationToken);
+        return await connection.InvokeAsync<ModelConfigurationProfile>("SaveModelConfigurationProfile", profile, cancellationToken);
     }
 
-    public async Task SetDefaultLlamaConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task DeleteModelConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
-        await connection.InvokeAsync("SetDefaultLlamaConfigurationProfile", id, cancellationToken);
+        await connection.InvokeAsync("DeleteModelConfigurationProfile", id, cancellationToken);
+    }
+
+    public async Task SetDefaultModelConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("SetDefaultModelConfigurationProfile", id, cancellationToken);
     }
 
     public async Task<ModelLoadStatus> GetModelStatusAsync(CancellationToken cancellationToken = default)
@@ -97,6 +112,84 @@ public sealed class SignalRDataService : IDataService, ILlamaControlService, IAs
     {
         await EnsureConnectedAsync(cancellationToken);
         return await connection.InvokeAsync<ModelLoadStatus>("UnloadModelByPath", modelPath, cancellationToken);
+    }
+
+    public async Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<OpenVinoDiagnosticsDto>("GetOpenVinoDiagnostics", cancellationToken);
+    }
+
+    public async Task<OpenVinoSolveResultDto> SolveDiagnosticAsync(string checkId, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<OpenVinoSolveResultDto>("SolveOpenVinoDiagnostic", checkId, cancellationToken);
+    }
+
+    public async Task<OpenVinoLoadResultDto> LoadModelAsync(OpenVinoLoadRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<OpenVinoLoadResultDto>("LoadOpenVinoModel", request, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LocalModel>> ScanLocalModelsAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<LocalModel>>("ScanLocalModels", cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<string>> GetModelDirectoriesAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<string>>("GetModelDirectories", cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<HuggingFaceModel>> SearchModelsAsync(string query, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<HuggingFaceModel>>("SearchModels", query, cancellationToken);
+    }
+
+    public async Task<Guid> StartModelDownloadAsync(ModelDownloadRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<Guid>("StartModelDownload", request, cancellationToken);
+    }
+
+    public async Task<DownloadStatus?> GetModelDownloadAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<DownloadStatus?>("GetModelDownload", id, cancellationToken);
+    }
+
+    public async Task<ModelStatus> SelectModelAsync(SelectModelRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<ModelStatus>("SelectModel", request, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ChatSummary>> GetChatSummariesAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<ChatSummary>>("GetChatSummaries", cancellationToken);
+    }
+
+    public async Task<PersistedChat> CreateChatAsync(CreateChatRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<PersistedChat>("CreateChat", request, cancellationToken);
+    }
+
+    public async Task<PersistedChat?> GetChatAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<PersistedChat?>("GetChat", id, cancellationToken);
+    }
+
+    public async Task<PersistedChat?> AddChatExchangeAsync(Guid id, ChatExchangeRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<PersistedChat?>("AddChatExchange", id, request, cancellationToken);
     }
 
     private async Task EnsureConnectedAsync(CancellationToken cancellationToken)

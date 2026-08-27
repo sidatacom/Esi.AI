@@ -5,3 +5,12 @@
 [submodule "origins/localai"]
 	path = origins/localai
 	url = https://github.com/mudler/LocalAI.git
+
+[submodule "origins/sidatacom/LLamaSharp"]
+	path = origins/sidatacom/LLamaSharp
+	url = https://github.com/sidatacom/LLamaSharp.git
+
+[submodule "origins/sidatacom/OpenVINO-CSharp-API"]
+	path = origins/sidatacom/OpenVINO-CSharp-API
+	url = https://github.com/sidatacom/OpenVINO-CSharp-API.git
+	branch = csharp3.3

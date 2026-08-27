@@ -139,7 +139,7 @@ namespace Esi.AI.Studio.Migrations
                     b.ToTable("ChatMessages");
                 });
 
-            modelBuilder.Entity("Esi.AI.Studio.Data.LlamaConfigurationProfileEntity", b =>
+            modelBuilder.Entity("Esi.AI.Studio.Data.ModelConfigurationProfileEntity", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -154,6 +154,9 @@ namespace Esi.AI.Studio.Migrations
 
                     b.Property<string>("Description")
                         .HasColumnType("TEXT");
+
+                    b.Property<int>("Backend")
+                        .HasColumnType("INTEGER");
 
                     b.Property<bool>("IsDefault")
                         .HasColumnType("INTEGER");
@@ -181,6 +184,9 @@ namespace Esi.AI.Studio.Migrations
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("ConfigurationProfileId")
                         .HasColumnType("TEXT");
 
                     b.Property<DateTime>("LastWriteTimeUtc")

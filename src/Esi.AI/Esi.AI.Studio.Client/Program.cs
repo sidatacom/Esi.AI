@@ -10,7 +10,8 @@ builder.Services.AddScoped(sp => new HttpClient
 builder.Services.AddAuthorizationCore();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddAuthenticationStateDeserialization();
-builder.Services.AddScoped<IDataService, SignalRDataService>();
-builder.Services.AddScoped<ILlamaControlService>(sp => (SignalRDataService)sp.GetRequiredService<IDataService>());
+builder.Services.AddScoped<SignalRDataService>();
+builder.Services.AddScoped<IDataService>(services => services.GetRequiredService<SignalRDataService>());
+builder.Services.AddScoped<IModelDownloadEvents>(services => services.GetRequiredService<SignalRDataService>());
 
 await builder.Build().RunAsync();

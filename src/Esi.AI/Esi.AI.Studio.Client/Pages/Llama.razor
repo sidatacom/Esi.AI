@@ -2,8 +2,8 @@
 @rendermode InteractiveWebAssembly
 
 @using System.Text.Json
+@using Esi.AI.Models
 @inject IDataService DataService
-@inject ILlamaControlService LlamaControl
 
 <PageTitle>LLama</PageTitle>
 
@@ -295,8 +295,8 @@
                            checked="@GetDeviceSetting(device.Name).Enabled"
                               @onchange="async eventArgs => await SetDeviceEnabledAsync(device.Name, eventArgs.Value is true)" />
                     <label class="gpu-name" for="device-@device.Name">
-                        <strong>@device.Name</strong>
-                        <span>@(device.Description ?? "Unknown device")</span>
+                        <strong>@(device.Description ?? device.Name)</strong>
+                        <span>@device.Name</span>
                     </label>
                     </div>
                     <div class="weight-field">
@@ -394,7 +394,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private ModelLoadStatus? loadStatus;
     private readonly AdvancedForm advanced = new();
     private IReadOnlyList<LlamaModel> databaseModels = [];
-    private IReadOnlyList<LlamaConfigurationProfile> profiles = [];
+    private IReadOnlyList<ModelConfigurationProfile> profiles = [];
     private Guid? selectedProfileId;
     private Guid? assignSourceProfileId;
     private string profileTargetModelPath = string.Empty;
@@ -426,12 +426,12 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                     form.VulkanDevices[device.Key] = device.Value;
             }
             databaseModels = await DataService.GetLlamaModelsAsync();
-            profiles = await DataService.GetLlamaConfigurationProfilesAsync();
+            profiles = await DataService.GetModelConfigurationProfilesAsync();
             selectedProfileId = savedSettings?.ConfigurationProfileId is Guid profileId &&
                 profiles.Any(profile => profile.Id == profileId && string.Equals(profile.ModelPath, form.ModelPath, StringComparison.OrdinalIgnoreCase))
                 ? savedSettings.ConfigurationProfileId
                 : MatchingProfiles.OrderByDescending(profile => profile.IsDefault).ThenByDescending(profile => profile.UpdatedAtUtc).FirstOrDefault()?.Id;
-            loadStatus = await LlamaControl.GetModelStatusAsync();
+            loadStatus = await DataService.GetModelStatusAsync();
         }
         catch (Exception exception)
         {
@@ -463,7 +463,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 GetVulkanWeightsForLoad(),
                 advanced.ToSettings());
             await SaveSettingsAsync();
-            loadStatus = await LlamaControl.LoadModelAsync(request);
+            loadStatus = await DataService.LoadModelAsync(request);
             loadLog = loadStatus.LoadLog;
             SyncEnabledDevices();
             statusMessage = $"Loaded: {form.ModelPath}";
@@ -494,7 +494,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     {
         try
         {
-            loadStatus = await LlamaControl.UnloadModelAsync(modelPath);
+            loadStatus = await DataService.UnloadModelAsync(modelPath);
             loadLog = loadStatus.LoadLog;
             statusMessage = $"Unloaded: {Path.GetFileName(modelPath)}";
         }
@@ -531,7 +531,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             return;
         }
 
-        var profile = await DataService.GetLlamaConfigurationProfileAsync(profileId);
+        var profile = await DataService.GetModelConfigurationProfileAsync(profileId);
         if (profile is null)
             return;
 
@@ -597,7 +597,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             string.Equals(model.Path, profileTargetModelPath, StringComparison.OrdinalIgnoreCase))?.Name
             ?? Path.GetFileName(profileTargetModelPath);
         var copyName = GetAvailableProfileName($"{profile.Name} - {targetName}");
-        var saved = await DataService.SaveLlamaConfigurationProfileAsync(new LlamaConfigurationProfile(
+        var saved = await DataService.SaveModelConfigurationProfileAsync(new ModelConfigurationProfile(
             Guid.Empty,
             copyName,
             profile.Description,
@@ -688,7 +688,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             return;
         }
 
-        var saved = await DataService.SaveLlamaConfigurationProfileAsync(new LlamaConfigurationProfile(
+        var saved = await DataService.SaveModelConfigurationProfileAsync(new ModelConfigurationProfile(
             Guid.Empty, newProfileName.Trim(), null, form.ModelPath.Trim(), false, 1, SerializeCurrentSettings(), default, default));
         profiles = profiles.Append(saved).OrderByDescending(profile => profile.IsDefault).ThenBy(profile => profile.Name).ToArray();
         selectedProfileId = saved.Id;
@@ -705,7 +705,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         if (profile is null)
             return;
 
-        var saved = await DataService.SaveLlamaConfigurationProfileAsync(profile with
+        var saved = await DataService.SaveModelConfigurationProfileAsync(profile with
         {
             ModelPath = form.ModelPath.Trim(),
             ConfigurationJson = SerializeCurrentSettings()
@@ -716,8 +716,9 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
     private void CancelCreateProfile() => isCreatingProfile = false;
 
-    private IEnumerable<LlamaConfigurationProfile> MatchingProfiles =>
-        profiles.Where(profile => string.Equals(profile.ModelPath.Trim(), form.ModelPath.Trim(), StringComparison.OrdinalIgnoreCase));
+    private IEnumerable<ModelConfigurationProfile> MatchingProfiles =>
+        profiles.Where(profile => profile.Backend == ConfigurationBackend.Llama &&
+            string.Equals(profile.ModelPath.Trim(), form.ModelPath.Trim(), StringComparison.OrdinalIgnoreCase));
 
     private string SerializeCurrentSettings() => JsonSerializer.Serialize(new LlamaSettings(
         form.ModelPath,

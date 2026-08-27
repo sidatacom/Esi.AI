@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>netcoreapp3.1</TargetFramework>
+    <RootNamespace>Yolo26Det_netcoreapp3_1</RootNamespace>
+    <AssemblyName>Yolo26Det-netcoreapp3.1</AssemblyName>
+    <LangVersion>8.0</LangVersion>
+    <Nullable>annotations</Nullable>
+  </PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="OpenCvSharp4.Windows" Version="4.13.0.20260214" />
+		<PackageReference Include="OpenVINO.runtime.win" Version="2025.4.0" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\OpenVINO.CSharp.API\OpenVINO.CSharp.API.csproj" />
+	</ItemGroup>
+	<ItemGroup>
+		<!-- 模型文件是可选的，CI/CD 环境中可能不存在 / Model files are optional, may not exist in CI/CD -->
+		<None Include="..\..\model\yolo26n.xml" Condition="Exists('..\..\model\yolo26n.xml')">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>model\yolo26n.xml</Link>
+		</None>
+		<None Include="..\..\model\yolo26n.bin" Condition="Exists('..\..\model\yolo26n.bin')">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>model\yolo26n.bin</Link>
+		</None>
+		<None Include="..\..\images\bus.jpg" Condition="Exists('..\..\images\bus.jpg')">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>images\bus.jpg</Link>
+		</None>
+		<None Include="..\..\images\boy.jpg" Condition="Exists('..\..\images\boy.jpg')">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+			<Link>images\boy.jpg</Link>
+		</None>
+	</ItemGroup>
+
+</Project>

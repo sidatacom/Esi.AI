@@ -14,7 +14,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Esi.AI.Studio.Client\Esi.AI.Studio.Client.csproj" />
-    <ProjectReference Include="..\Esi.AI.LLama\Esi.AI.LLama.csproj" />
+    <ProjectReference Include="..\Esi.AI.Core\Esi.AI.Core.csproj" />
+    <ProjectReference Include="..\Esi.AI.Models\Esi.AI.Models.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.11" />
     <PackageReference Include="Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore" Version="10.0.11" />
     <PackageReference Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.11" />
@@ -24,6 +25,9 @@
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <!-- The upstream runtime publishes Ubuntu 24 x64 as its current Linux ABI target; it is used on Ubuntu 26.04. -->
+    <PackageReference Include="OpenVINO.runtime.ubuntu.24-x86_64" Version="2026.3.0" />
+    <PackageReference Include="JYPPX.OpenVINO.GenAI.runtime.ubuntu.24-x86_64" Version="2026.3.0" />
   </ItemGroup>
 
 </Project>

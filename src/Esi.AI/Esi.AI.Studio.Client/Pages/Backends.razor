@@ -1,0 +1,1651 @@
+@page "/backends"
+@rendermode InteractiveWebAssembly
+
+@using System.Text.Json
+@using Esi.AI.Models
+@inject IDataService DataService
+
+<PageTitle>Backends</PageTitle>
+
+<div class="llama-header">
+    <div>
+        <p class="eyebrow">LOCAL INFERENCE / CONTROL ROOM</p>
+        <h1>Backends</h1>
+        <p class="lede">Choose a runtime and tune the parameters that belong to it.</p>
+    </div>
+    <div class="backend-mark"><span></span> @ActiveBackendLabel</div>
+</div>
+
+<nav class="backend-tabs" aria-label="Inference backends">
+    <button class="backend-tab @(activeBackend == BackendTab.Llama ? "active" : "")" type="button" @onclick="() => SelectBackendAsync(BackendTab.Llama)">
+        <span>LLama</span>
+        <small>GGUF / LLamaSharp</small>
+    </button>
+    <button class="backend-tab @(activeBackend == BackendTab.OpenVino ? "active" : "")" type="button" @onclick="() => SelectBackendAsync(BackendTab.OpenVino)">
+        <span>OpenVINO</span>
+        <small>IR or ONNX / GenAI</small>
+    </button>
+</nav>
+
+@if (activeBackend == BackendTab.Llama)
+{
+<EditForm Model="form" FormName="LlamaModel" OnValidSubmit="LoadModelAsync" class="llama-workspace">
+    <DataAnnotationsValidator />
+    <ValidationSummary />
+
+    <section class="config-panel">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">MODEL INPUT</p>
+                <h2>Load configuration</h2>
+            </div>
+            <span class="step-label">01</span>
+        </div>
+
+        <section class="loaded-models" aria-labelledby="loaded-models-heading">
+            <div class="loaded-models-heading">
+                <div>
+                    <p class="eyebrow">ACTIVE RUNTIMES</p>
+                    <h3 id="loaded-models-heading">Loaded models</h3>
+                </div>
+                <div class="loaded-models-status">
+                    <div class="runtime-status @GetRuntimeStatusClass()" role="status" aria-live="polite">
+                        <span class="runtime-status-dot"></span>
+                        <div>
+                            <strong>@GetRuntimeStatusLabel()</strong>
+                            <span>@GetRuntimeStatusDetail()</span>
+                        </div>
+                    </div>
+                    <span class="device-count">@(loadStatus?.LoadedModels.Count ?? 0) active</span>
+                </div>
+            </div>
+            @if (loadStatus?.LoadedModels.Count > 0)
+            {
+                @foreach (var model in loadStatus.LoadedModels)
+                {
+                    <article class="loaded-model">
+                        <div class="loaded-model-topline">
+                            <div>
+                                <strong>@Path.GetFileName(model.ModelPath)</strong>
+                                <span>@model.Backend | @model.ContextSize tokens | @FormatBytes(model.ModelSizeInBytes)</span>
+                            </div>
+                            <button class="profile-button" type="button" @onclick="() => UnloadModelAsync(model.ModelPath)">Unload</button>
+                        </div>
+                        <div class="loaded-model-devices">
+                            @foreach (var device in model.VulkanDevices.Where(device => device.AssignedLayerCount > 0 || device.ModelBufferMiB is not null))
+                            {
+                                <span><b>@device.Name</b> @FormatMemory(device.ModelBufferMiB), @device.AssignedLayerCount layers</span>
+                            }
+                            @if (model.CpuModelBufferMiB is not null)
+                            {
+                                <span><b>CPU</b> @FormatMemory(model.CpuModelBufferMiB)</span>
+                            }
+                        </div>
+                    </article>
+                }
+            }
+            else
+            {
+                <p class="loaded-models-empty">No models loaded.</p>
+            }
+        </section>
+
+        <div class="model-load-row">
+            <div class="model-picker">
+                <label class="form-label" for="model-picker">Model from repository</label>
+                <select id="model-picker" class="form-select" value="@form.ModelPath" @onchange="SelectModelAsync">
+                    <option value="">Select a model...</option>
+                    @if (!string.IsNullOrWhiteSpace(form.ModelPath) && !databaseModels.Any(model => string.Equals(model.Path, form.ModelPath, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        <option value="@form.ModelPath">@Path.GetFileName(form.ModelPath) (saved path)</option>
+                    }
+                    @foreach (var model in databaseModels)
+                    {
+                        <option value="@model.Path">@model.Name</option>
+                    }
+                </select>
+                @if (databaseModels.Count == 0)
+                {
+                    <span class="picker-note">No models are stored in the database yet.</span>
+                }
+            </div>
+            <div class="model-actions">
+                <button class="load-button" type="submit" disabled="@(isLoading || string.IsNullOrWhiteSpace(form.ModelPath))">
+                    @(isLoading ? "Loading model..." : "Load model")
+                </button>
+            </div>
+        </div>
+
+        <div class="profile-toolbar">
+            <div class="profile-select">
+                <label class="form-label" for="configuration-profile">Configuration set</label>
+                <select id="configuration-profile" class="form-select" value="@selectedProfileId" @onchange="SelectProfileAsync">
+                    <option value="">Select a saved set...</option>
+                    @foreach (var profile in MatchingProfiles)
+                    {
+                        <option value="@profile.Id">@profile.Name</option>
+                    }
+                </select>
+            </div>
+            <div class="profile-actions">
+                <button class="profile-button" type="button" @onclick="CreateProfileAsync">Create</button>
+                <button class="profile-button" type="button" @onclick="UpdateProfileAsync" disabled="@(!selectedProfileId.HasValue)">Update</button>
+                <button class="profile-button" type="button" @onclick="OpenAssignProfileAsync">Assign</button>
+            </div>
+        </div>
+
+        @if (isAssigningProfile)
+        {
+            <div class="profile-create-row">
+                <label class="form-label" for="assign-source-profile">Configuration to copy</label>
+                <div class="profile-create-fields">
+                    <select id="assign-source-profile" class="form-select" value="@assignSourceProfileId" @onchange="SelectAssignSourceProfileAsync">
+                        <option value="">Select a configuration...</option>
+                        @foreach (var profile in profiles.OrderBy(profile => profile.Name))
+                        {
+                            <option value="@profile.Id">@profile.Name (@Path.GetFileName(profile.ModelPath))</option>
+                        }
+                    </select>
+                    <label class="form-label" for="assign-target-model">Target model</label>
+                    <select id="assign-target-model" class="form-select" value="@profileTargetModelPath" @onchange="SelectProfileTargetModelAsync">
+                        <option value="">Select a model...</option>
+                        @foreach (var model in databaseModels)
+                        {
+                            <option value="@model.Path">@model.Name</option>
+                        }
+                    </select>
+                    <button class="profile-button profile-button-primary" type="button" @onclick="AssignProfileToModelAsync" disabled="@(!assignSourceProfileId.HasValue || string.IsNullOrWhiteSpace(profileTargetModelPath))">Copy</button>
+                    <button class="profile-button" type="button" @onclick="CancelAssignProfile">Cancel</button>
+                </div>
+            </div>
+        }
+
+        @if (isCreatingProfile)
+        {
+            <div class="profile-create-row">
+                <label class="form-label" for="new-profile-name">Set name</label>
+                <div class="profile-create-fields">
+                    <InputText id="new-profile-name" class="form-control" @bind-Value="newProfileName" />
+                    <button class="profile-button profile-button-primary" type="button" @onclick="SaveNewProfileAsync">Save</button>
+                    <button class="profile-button" type="button" @onclick="CancelCreateProfile">Cancel</button>
+                </div>
+            </div>
+        }
+
+    <div class="settings-panels">
+        <details class="settings-panel">
+            <summary>Model loading</summary>
+            <div class="field-group">
+                <label class="form-label" for="model-path">GGUF model path</label>
+                <InputText id="model-path" class="form-control" @bind-Value="form.ModelPath" @bind-Value:after="SaveSettingsAsync" />
+            </div>
+            <div class="field-row">
+                <div class="field-group">
+                    <label class="form-label" for="backend">Backend</label>
+                    <InputSelect id="backend" class="form-select" @bind-Value="form.Backend" @bind-Value:after="SaveSettingsAsync">
+                        <option value="Vulkan">Vulkan</option>
+                        <option value="CPU">CPU</option>
+                    </InputSelect>
+                </div>
+
+                <div class="field-group">
+                    <label class="form-label" for="gpu-layers">GPU layers</label>
+                    <InputNumber id="gpu-layers" class="form-control" @bind-Value="form.GpuLayerCount" @bind-Value:after="SaveSettingsAsync" />
+                </div>
+
+                <div class="field-group">
+                    <label class="form-label" for="context-size">Context size</label>
+                    <InputSelect id="context-size" class="form-select" @bind-Value="form.ContextSize" @bind-Value:after="SaveSettingsAsync">
+                        @foreach (var size in ContextSizes)
+                        {
+                            <option value="@size.Value">@size.Label</option>
+                        }
+                    </InputSelect>
+                </div>
+            </div>
+        </details>
+
+        <details class="settings-panel">
+            <summary>GPU and memory</summary>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Main GPU</label><InputNumber class="form-control" @bind-Value="advanced.MainGpu" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Threads</label><InputNumber class="form-control" @bind-Value="advanced.Threads" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Batch threads</label><InputNumber class="form-control" @bind-Value="advanced.BatchThreads" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.UseMemorymap" @bind-Value:after="SaveSettingsAsync" /> Use memory mapping</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.UseDirectIO" @bind-Value:after="SaveSettingsAsync" /> Use direct I/O</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.UseMemoryLock" @bind-Value:after="SaveSettingsAsync" /> Lock model memory</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.OpOffload" @bind-Value:after="SaveSettingsAsync" /> Offload operations</label>
+        </details>
+
+        <details class="settings-panel">
+            <summary>Context and batching</summary>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Max sequences</label><InputNumber class="form-control" @bind-Value="advanced.SeqMax" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Batch size</label><InputNumber class="form-control" @bind-Value="advanced.BatchSize" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Physical batch size</label><InputNumber class="form-control" @bind-Value="advanced.UBatchSize" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.Embeddings" @bind-Value:after="SaveSettingsAsync" /> Embeddings mode</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.VocabOnly" @bind-Value:after="SaveSettingsAsync" /> Vocabulary only</label>
+        </details>
+
+        <details class="settings-panel">
+            <summary>Attention and cache</summary>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.NoKqvOffload" @bind-Value:after="SaveSettingsAsync" /> Keep K/Q/V on CPU</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.FlashAttention" @bind-Value:after="SaveSettingsAsync" /> Flash attention</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.SwaFull" @bind-Value:after="SaveSettingsAsync" /> Full sliding-window attention</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.KVUnified" @bind-Value:after="SaveSettingsAsync" /> Unified KV cache</label>
+        </details>
+
+        <details class="settings-panel">
+            <summary>LLamaSharp model options</summary>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Context type</label><InputSelect class="form-select" @bind-Value="advanced.ContextType" @bind-Value:after="SaveSettingsAsync"><option value="Default">Default</option><option value="Mtp">MTP</option></InputSelect></div>
+                <div class="field-group"><label class="form-label">KV type K</label><InputSelect class="form-select" @bind-Value="advanced.TypeK" @bind-Value:after="SaveSettingsAsync"><option value="">Model default</option><option value="F16">F16</option><option value="Q8_0">Q8_0</option><option value="Q4_K">Q4_K</option></InputSelect></div>
+                <div class="field-group"><label class="form-label">KV type V</label><InputSelect class="form-select" @bind-Value="advanced.TypeV" @bind-Value:after="SaveSettingsAsync"><option value="">Model default</option><option value="F16">F16</option><option value="Q8_0">Q8_0</option><option value="Q4_K">Q4_K</option></InputSelect></div>
+            </div>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Pooling type</label><InputSelect class="form-select" @bind-Value="advanced.PoolingType" @bind-Value:after="SaveSettingsAsync"><option value="Unspecified">Unspecified</option><option value="None">None</option><option value="Mean">Mean</option><option value="CLS">CLS</option><option value="Last">Last</option><option value="Rank">Rank</option></InputSelect></div>
+                <div class="field-group"><label class="form-label">Attention type</label><InputSelect class="form-select" @bind-Value="advanced.AttentionType" @bind-Value:after="SaveSettingsAsync"><option value="Unspecified">Unspecified</option><option value="Causal">Causal</option><option value="NonCausal">Non-causal</option></InputSelect></div>
+                <div class="field-group"><label class="form-label">YARN scaling type</label><InputSelect class="form-select" @bind-Value="advanced.YarnScalingType" @bind-Value:after="SaveSettingsAsync"><option value="">Model default</option><option value="Linear">Linear</option><option value="YaRN">YaRN</option></InputSelect></div>
+            </div>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.CheckTensors" @bind-Value:after="SaveSettingsAsync" /> Check tensors</label>
+        </details>
+
+        <details class="settings-panel">
+            <summary>Sampling and generation</summary>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Temperature</label><InputNumber class="form-control" @bind-Value="advanced.Temperature" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Top K</label><InputNumber class="form-control" @bind-Value="advanced.TopK" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Top P</label><InputNumber class="form-control" @bind-Value="advanced.TopP" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Min P</label><InputNumber class="form-control" @bind-Value="advanced.MinP" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Repeat penalty</label><InputNumber class="form-control" @bind-Value="advanced.RepeatPenalty" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Frequency penalty</label><InputNumber class="form-control" @bind-Value="advanced.FrequencyPenalty" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Presence penalty</label><InputNumber class="form-control" @bind-Value="advanced.PresencePenalty" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Penalty count</label><InputNumber class="form-control" @bind-Value="advanced.PenaltyCount" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">Max generated tokens</label><InputNumber class="form-control" @bind-Value="advanced.MaxTokens" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Tokens to keep</label><InputNumber class="form-control" @bind-Value="advanced.TokensKeep" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">Seed</label><InputNumber class="form-control" @bind-Value="advanced.Seed" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="advanced.DecodeSpecialTokens" @bind-Value:after="SaveSettingsAsync" /> Decode special tokens</label>
+        </details>
+
+        <details class="settings-panel">
+            <summary>RoPE and YARN scaling</summary>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label">RoPE frequency base</label><InputNumber class="form-control" @bind-Value="advanced.RopeFrequencyBase" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">RoPE frequency scale</label><InputNumber class="form-control" @bind-Value="advanced.RopeFrequencyScale" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">YARN original context</label><InputNumber class="form-control" @bind-Value="advanced.YarnOriginalContext" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">YARN extrapolation</label><InputNumber class="form-control" @bind-Value="advanced.YarnExtrapolationFactor" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">YARN attention factor</label><InputNumber class="form-control" @bind-Value="advanced.YarnAttentionFactor" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">YARN beta fast</label><InputNumber class="form-control" @bind-Value="advanced.YarnBetaFast" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label">YARN beta slow</label><InputNumber class="form-control" @bind-Value="advanced.YarnBetaSlow" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+        </details>
+
+        @if (!string.IsNullOrWhiteSpace(form.ModelPath) && string.Equals(form.Backend, "Vulkan", StringComparison.OrdinalIgnoreCase))
+        {
+    <section class="gpu-panel">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">DEVICE ROUTING</p>
+                <h2>Vulkan GPUs</h2>
+            </div>
+            <span class="device-count">@(loadStatus?.FoundVulkanGpuCount ?? 0) detected</span>
+        </div>
+        <p class="panel-note">Enable a device and assign its relative tensor split weight.</p>
+        @if (loadStatus?.VulkanDevices.Count > 0)
+        {
+            @foreach (var device in loadStatus.VulkanDevices)
+            {
+                <div class="gpu-row">
+                    <div class="gpu-identity">
+                    <input class="form-check-input" type="checkbox" id="device-@device.Name"
+                           checked="@GetDeviceSetting(device.Name).Enabled"
+                              @onchange="async eventArgs => await SetDeviceEnabledAsync(device.Name, eventArgs.Value is true)" />
+                    <label class="gpu-name" for="device-@device.Name">
+                        <strong>@(device.Description ?? device.Name)</strong>
+                        <span>@device.Name</span>
+                    </label>
+                    </div>
+                    <div class="weight-field">
+                    <label for="@($"weight-{device.Name}")">Weight</label>
+                          <input id="@($"weight-{device.Name}")" class="form-control" type="number" min="0" step="0.1"
+                              value="@GetDeviceSetting(device.Name).Weight.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)"
+                              @onchange="async eventArgs => await SetDeviceWeightAsync(device.Name, eventArgs.Value?.ToString())" />
+                    </div>
+                </div>
+            }
+        }
+        else
+        {
+            <p class="text-muted">Keine Vulkan-Geräte gefunden.</p>
+        }
+    </section>
+        }
+    </div>
+    </section>
+
+    <section class="telemetry-panel">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">NATIVE TELEMETRY</p>
+                <h2>Runtime status</h2>
+            </div>
+        </div>
+        @if (loadStatus is not null)
+        {
+        <dl class="telemetry-grid">
+        <dt>Backend</dt>
+        <dd>@loadStatus.Backend, @loadStatus.GpuLayerCount GPU layers, @loadStatus.ContextSize tokens</dd>
+        <dt>Found Vulkan GPUs</dt>
+        <dd>@loadStatus.FoundVulkanGpuCount</dd>
+        @foreach (var device in loadStatus.VulkanDevices)
+        {
+            <dt>@device.Name @(device.Description is null ? "" : $"({device.Description})")</dt>
+            <dd>@device.AssignedLayerCount layers, @(device.ModelBufferMiB?.ToString("F2") ?? "-") MiB model buffer</dd>
+        }
+        @if (loadStatus.IsModelLoaded && loadStatus.CpuModelBufferMiB is not null)
+        {
+            <dt>CPU model buffer</dt>
+            <dd>@loadStatus.CpuModelBufferMiB.Value.ToString("F2") MiB</dd>
+        }
+        @if (loadStatus.IsModelLoaded)
+        {
+            <dt>Model size</dt>
+            <dd>@(loadStatus.ModelSizeInBytes / 1024d / 1024d / 1024d).ToString("F2") GiB</dd>
+        }
+        </dl>
+        }
+        else
+        {
+            <p class="empty-state">Waiting for backend discovery.</p>
+        }
+    </section>
+</EditForm>
+}
+else
+{
+    <EditForm Model="openVinoForm" FormName="OpenVinoModel" OnValidSubmit="LoadOpenVinoModelAsync" class="llama-workspace openvino-workspace">
+        <DataAnnotationsValidator />
+        <ValidationSummary />
+
+        <details class="driver-validation-panel" open="@(!IsOpenVinoValidationReady)">
+            <summary class="section-heading driver-validation-summary">
+                <div>
+                    <p class="eyebrow">OPENVINO PREREQUISITES</p>
+                    <h2>Driver validation</h2>
+                </div>
+                <span class="validation-summary @(IsOpenVinoValidationReady ? "validation-summary-ok" : "validation-summary-error")">
+                    @(IsOpenVinoValidationReady ? "Ready" : "Needs attention")
+                </span>
+            </summary>
+            <div class="driver-validation-content">
+                <button class="profile-button" type="button" @onclick="RefreshOpenVinoDiagnosticsAsync" disabled="@isCheckingOpenVino">
+                    @(isCheckingOpenVino ? "Checking..." : "Recheck")
+                </button>
+            @if (openVinoDiagnostics is null)
+            {
+                <p class="empty-state">Checking the local Intel GPU and OpenVINO runtime...</p>
+            }
+            else
+            {
+                <ol class="validation-steps">
+                    @for (var index = 0; index < openVinoDiagnostics.Checks.Count; index++)
+                    {
+                        var check = openVinoDiagnostics.Checks[index];
+                        <li class="validation-step @(check.IsAvailable ? "validation-step-ok" : "validation-step-error")">
+                            <span class="validation-step-number">@((index + 1).ToString("00"))</span>
+                            <span class="validation-step-indicator" aria-hidden="true">@(check.IsAvailable ? "OK" : "!")</span>
+                            <span class="validation-step-copy">
+                                <strong>@check.Name</strong>
+                                <small>@check.Detail</small>
+                                @if (!check.IsAvailable && check.CanSolve)
+                                {
+                                    <button class="validation-solve-button" type="button" @onclick="() => SolveOpenVinoCheckAsync(check.Id)" disabled="@(solvingCheckId is not null)">
+                                        @(solvingCheckId == check.Id ? "Installing..." : "Solve")
+                                    </button>
+                                }
+                            </span>
+                        </li>
+                    }
+                </ol>
+                <p class="validation-summary @(openVinoDiagnostics.IsGpuReady || openVinoDiagnostics.IsNpuReady ? "validation-summary-ok" : "validation-summary-error")">
+                    @(openVinoDiagnostics.IsGpuReady || openVinoDiagnostics.IsNpuReady ? "OpenVINO accelerator backend ready." : "No compatible OpenVINO accelerator is ready. Model loading is disabled.")
+                </p>
+                @if (!string.IsNullOrWhiteSpace(openVinoDiagnostics.Error))
+                {
+                    <details class="solve-output">
+                        <summary>OpenVINO error details</summary>
+                        <textarea class="form-control log-output" rows="10" readonly>@openVinoDiagnostics.Error</textarea>
+                    </details>
+                }
+                @if (!string.IsNullOrWhiteSpace(openVinoInstallOutput))
+                {
+                    <details class="solve-output" open>
+                        <summary>Driver installation output</summary>
+                        <textarea class="form-control log-output" rows="10" readonly>@openVinoInstallOutput</textarea>
+                    </details>
+                }
+                @if (solveRequiresLogin)
+                {
+                    <p class="solve-auth-message">
+                        <a href="Account/Login?returnUrl=%2Fbackends">Sign in</a> to authorize driver installation, then run Solve again.
+                    </p>
+                }
+            }
+            </div>
+        </details>
+
+        <section class="config-panel">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">OPENVINO RUNTIME</p>
+                    <h2>Load configuration</h2>
+                </div>
+                <span class="step-label">01</span>
+            </div>
+
+            <section class="loaded-models" aria-labelledby="openvino-loaded-models-heading">
+                <div class="loaded-models-heading">
+                    <div>
+                        <p class="eyebrow">ACTIVE RUNTIMES</p>
+                        <h3 id="openvino-loaded-models-heading">Loaded models</h3>
+                    </div>
+                    <div class="loaded-models-status">
+                        <div class="runtime-status @(isOpenVinoModelLoaded ? "runtime-status-loaded" : "runtime-status-idle")" role="status" aria-live="polite">
+                            <span class="runtime-status-dot"></span>
+                            <div>
+                                <strong>@(isOpenVinoModelLoaded ? "MODEL LOADED" : "NO MODEL LOADED")</strong>
+                                <span>@(isOpenVinoModelLoaded ? $"{Path.GetFileName(openVinoForm.ModelPath)} | {openVinoForm.Device}" : "Load a model to start inference.")</span>
+                            </div>
+                        </div>
+                        <span class="device-count">@(isOpenVinoModelLoaded ? 1 : 0) active</span>
+                    </div>
+                </div>
+                @if (isOpenVinoModelLoaded)
+                {
+                    <article class="loaded-model">
+                        <div class="loaded-model-topline">
+                            <div>
+                                <strong>@Path.GetFileName(openVinoForm.ModelPath)</strong>
+                                <span>OpenVINO | @openVinoForm.Device</span>
+                            </div>
+                        </div>
+                    </article>
+                }
+                else
+                {
+                    <p class="loaded-models-empty">No models loaded.</p>
+                }
+            </section>
+
+            <div class="model-load-row">
+                <div class="model-picker">
+                    <label class="form-label" for="openvino-repository-model-picker">Model from repository</label>
+                    <select id="openvino-repository-model-picker" class="form-select" value="@openVinoForm.ModelPath" @onchange="SelectOpenVinoModelFromPickerAsync">
+                        <option value="">Select a model...</option>
+                        @if (!string.IsNullOrWhiteSpace(openVinoForm.ModelPath) && !databaseModels.Any(model => string.Equals(model.Path, openVinoForm.ModelPath, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            <option value="@openVinoForm.ModelPath">@Path.GetFileName(openVinoForm.ModelPath) (saved path)</option>
+                        }
+                        @foreach (var model in databaseModels)
+                        {
+                            <option value="@model.Path">@model.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="model-actions">
+                    <button class="load-button" type="submit" disabled="@(isOpenVinoLoading || (openVinoDiagnostics?.IsGpuReady != true && openVinoDiagnostics?.IsNpuReady != true) || string.IsNullOrWhiteSpace(openVinoForm.ModelPath) || string.IsNullOrWhiteSpace(openVinoForm.Device))">
+                        @(isOpenVinoLoading ? "Loading model..." : "Load model")
+                    </button>
+                </div>
+            </div>
+
+            <div class="profile-toolbar">
+                <div class="profile-select">
+                    <label class="form-label" for="openvino-configuration-profile">Configuration set</label>
+                    <select id="openvino-configuration-profile" class="form-select" value="@selectedProfileId" @onchange="SelectProfileAsync">
+                        <option value="">Select a saved set...</option>
+                        @foreach (var profile in MatchingProfiles)
+                        {
+                            <option value="@profile.Id">@profile.Name</option>
+                        }
+                    </select>
+                </div>
+                <div class="profile-actions">
+                    <button class="profile-button" type="button" @onclick="CreateProfileAsync">Create</button>
+                    <button class="profile-button" type="button" @onclick="UpdateProfileAsync" disabled="@(!selectedProfileId.HasValue)">Update</button>
+                    <button class="profile-button" type="button" @onclick="OpenAssignProfileAsync">Assign</button>
+                </div>
+            </div>
+
+            <div class="settings-panels">
+                @if (isAssigningProfile)
+                {
+                    <div class="profile-create-row">
+                        <label class="form-label" for="openvino-assign-source-profile">Configuration to copy</label>
+                        <div class="profile-create-fields">
+                            <select id="openvino-assign-source-profile" class="form-select" value="@assignSourceProfileId" @onchange="SelectAssignSourceProfileAsync">
+                                <option value="">Select a configuration...</option>
+                                @foreach (var profile in BackendProfiles.OrderBy(profile => profile.Name))
+                                {
+                                    <option value="@profile.Id">@profile.Name (@Path.GetFileName(profile.ModelPath))</option>
+                                }
+                            </select>
+                            <label class="form-label" for="openvino-assign-target-model">Target model</label>
+                            <select id="openvino-assign-target-model" class="form-select" value="@profileTargetModelPath" @onchange="SelectProfileTargetModelAsync">
+                                <option value="">Select a model...</option>
+                                @foreach (var model in databaseModels)
+                                {
+                                    <option value="@model.Path">@model.Name</option>
+                                }
+                            </select>
+                            <button class="profile-button profile-button-primary" type="button" @onclick="AssignProfileToModelAsync" disabled="@(!assignSourceProfileId.HasValue || string.IsNullOrWhiteSpace(profileTargetModelPath))">Copy</button>
+                            <button class="profile-button" type="button" @onclick="CancelAssignProfile">Cancel</button>
+                        </div>
+                    </div>
+                }
+
+                @if (isCreatingProfile)
+                {
+                    <div class="profile-create-row">
+                        <label class="form-label" for="openvino-new-profile-name">Set name</label>
+                        <div class="profile-create-fields">
+                            <InputText id="openvino-new-profile-name" class="form-control" @bind-Value="newProfileName" />
+                            <button class="profile-button profile-button-primary" type="button" @onclick="SaveNewProfileAsync">Save</button>
+                            <button class="profile-button" type="button" @onclick="CancelCreateProfile">Cancel</button>
+                        </div>
+                    </div>
+                }
+
+                <details class="settings-panel" open>
+                    <summary>Model loading</summary>
+                    <div class="field-group">
+                        <label class="form-label" for="openvino-model-path">Custom GGUF file or IR directory</label>
+                        <InputText id="openvino-model-path" class="form-control" @bind-Value="openVinoForm.ModelPath" @bind-Value:after="SelectOpenVinoModelAsync" />
+                        <span class="picker-note">Use a supported .gguf file directly, or an OpenVINO IR/GenAI model directory.</span>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-group">
+                            <label class="form-label">Active device route</label>
+                            <input class="form-control" value="@openVinoForm.Device" readonly />
+                        </div>
+                        <div class="field-group">
+                            <label class="form-label" for="openvino-cache">Cache directory</label>
+                            <InputText id="openvino-cache" class="form-control" @bind-Value="openVinoForm.CacheDirectory" />
+                        </div>
+                    </div>
+                </details>
+
+                <section class="gpu-panel">
+                    <div class="section-heading">
+                        <div>
+                            <p class="eyebrow">DEVICE ROUTING</p>
+                            <h2>OpenVINO devices</h2>
+                        </div>
+                        <span class="device-count">@(openVinoDiagnostics?.Devices.Count ?? 0) detected</span>
+                    </div>
+                        <p class="panel-note">Enable compatible GPUs for MULTI scheduling, or select the NPU as a separate route. Weight controls priority, not model-layer splitting.</p>
+                    @if (openVinoDiagnostics?.Devices.Count > 0)
+                    {
+                        @foreach (var device in openVinoDiagnostics.Devices)
+                        {
+                            <div class="gpu-row @(device.IsCompatible ? "" : "gpu-row-disabled")">
+                                <div class="gpu-identity">
+                                    <input class="form-check-input" type="checkbox" id="openvino-device-@device.Id"
+                                           checked="@(device.IsCompatible && GetOpenVinoDeviceSetting(device.Id).Enabled)"
+                                           disabled="@(!device.IsCompatible)"
+                                           @onchange="eventArgs => SetOpenVinoDeviceEnabled(device.Id, eventArgs.Value is true)" />
+                                    <label class="gpu-name" for="openvino-device-@device.Id">
+                                        <strong>@device.Name</strong>
+                                        <span>@device.Detail</span>
+                                    </label>
+                                </div>
+                                <div class="weight-field">
+                                    <label for="@($"openvino-weight-{device.Id}")">Priority</label>
+                                    <input id="@($"openvino-weight-{device.Id}")" class="form-control" type="number" min="0" step="0.1"
+                                           disabled="@(!device.IsCompatible)"
+                                           value="@GetOpenVinoDeviceSetting(device.Id).Weight.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)"
+                                           @onchange="eventArgs => SetOpenVinoDeviceWeight(device.Id, eventArgs.Value?.ToString())" />
+                                </div>
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <p class="text-muted">Keine OpenVINO-GPUs gefunden.</p>
+                    }
+                </section>
+
+                <details class="settings-panel" open>
+                    <summary>Generation</summary>
+                    <div class="field-row">
+                        <div class="field-group"><label class="form-label" for="openvino-max-tokens">Max new tokens</label><InputNumber id="openvino-max-tokens" class="form-control" @bind-Value="openVinoForm.MaxNewTokens" /></div>
+                        <div class="field-group"><label class="form-label" for="openvino-temperature">Temperature</label><InputNumber id="openvino-temperature" class="form-control" @bind-Value="openVinoForm.Temperature" /></div>
+                        <div class="field-group"><label class="form-label" for="openvino-top-p">Top P</label><InputNumber id="openvino-top-p" class="form-control" @bind-Value="openVinoForm.TopP" /></div>
+                    </div>
+                    <label class="setting-toggle"><InputCheckbox @bind-Value="openVinoForm.DoSample" /> Enable sampling</label>
+                </details>
+
+                @if (openVinoForm.Device.StartsWith("NPU", StringComparison.OrdinalIgnoreCase))
+                {
+                    <details class="settings-panel" open>
+                        <summary>NPU pipeline</summary>
+                        <p class="panel-note">NPU pipelines use a bounded prompt and response context. These properties apply only when the active route is NPU.</p>
+                        <div class="field-row">
+                            <div class="field-group"><label class="form-label" for="openvino-max-prompt">Max prompt tokens</label><InputNumber id="openvino-max-prompt" class="form-control" @bind-Value="openVinoForm.MaxPromptLength" /></div>
+                            <div class="field-group"><label class="form-label" for="openvino-min-response">Min response tokens</label><InputNumber id="openvino-min-response" class="form-control" @bind-Value="openVinoForm.MinResponseLength" /></div>
+                        </div>
+                        <div class="field-row">
+                            <div class="field-group">
+                                <label class="form-label" for="openvino-prefill-hint">Prefill hint</label>
+                                <InputSelect id="openvino-prefill-hint" class="form-select" @bind-Value="openVinoForm.PrefillHint">
+                                    <option value="DYNAMIC">Dynamic</option>
+                                    <option value="STATIC">Static</option>
+                                </InputSelect>
+                            </div>
+                            <div class="field-group">
+                                <label class="form-label" for="openvino-generate-hint">Generate hint</label>
+                                <InputSelect id="openvino-generate-hint" class="form-select" @bind-Value="openVinoForm.GenerateHint">
+                                    <option value="FAST_COMPILE">Fast compile</option>
+                                    <option value="BEST_PERF">Best performance</option>
+                                </InputSelect>
+                            </div>
+                        </div>
+                    </details>
+                }
+            </div>
+
+        </section>
+
+        <section class="telemetry-panel">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">RUNTIME TELEMETRY</p>
+                    <h2>OpenVINO status</h2>
+                </div>
+            </div>
+            <dl class="telemetry-grid">
+                @if (openVinoDiagnostics is not null)
+                {
+                    @foreach (var check in openVinoDiagnostics.Checks)
+                    {
+                        <dt>@check.Name</dt>
+                        <dd class="diagnostic-@(check.IsAvailable ? "ok" : "error")">@(check.IsAvailable ? "Available" : "Missing") - @check.Detail</dd>
+                    }
+                }
+                <dt>Device</dt>
+                <dd>@openVinoForm.Device</dd>
+                <dt>Model</dt>
+                <dd>@(string.IsNullOrWhiteSpace(openVinoForm.ModelPath) ? "Not selected" : Path.GetFileName(openVinoForm.ModelPath.TrimEnd(Path.DirectorySeparatorChar)))</dd>
+                <dt>Runtime</dt>
+                <dd>@(openVinoStatus ?? "Ready for model loading")</dd>
+            </dl>
+        </section>
+    </EditForm>
+}
+
+@if (activeBackend == BackendTab.Llama && isLoading)
+{
+    <p class="mt-3" role="status">Loading...</p>
+}
+else if (!string.IsNullOrWhiteSpace(statusMessage))
+{
+    <p class="mt-3" role="status">@statusMessage</p>
+}
+
+<section class="log-panel">
+    <div class="log-heading">
+        <div>
+            <p class="eyebrow">DEBUG STREAM</p>
+            <h2>LLamaSharp load output</h2>
+        </div>
+        <span>READ ONLY</span>
+    </div>
+    <textarea id="load-log" class="form-control log-output" rows="12" readonly>@(loadLog ?? loadStatus?.LoadLog ?? "Noch kein Modell geladen.")</textarea>
+</section>
+
+@code {
+    private BackendTab activeBackend = BackendTab.Llama;
+    private bool isOpenVinoLoading;
+    private bool isOpenVinoModelLoaded;
+    private bool isCheckingOpenVino;
+    private string? solvingCheckId;
+    private string? openVinoStatus;
+    private string? openVinoInstallOutput;
+    private bool solveRequiresLogin;
+    private OpenVinoDiagnosticsDto? openVinoDiagnostics;
+    private readonly OpenVinoForm openVinoForm = new();
+
+    private string ActiveBackendLabel => activeBackend == BackendTab.Llama ? "LLama / Vulkan" : $"OpenVINO / {openVinoForm.Device}";
+    private bool IsOpenVinoValidationReady => openVinoDiagnostics?.IsGpuReady == true || openVinoDiagnostics?.IsNpuReady == true;
+
+    private async Task LoadOpenVinoModelAsync()
+    {
+        if (openVinoDiagnostics?.IsGpuReady != true && openVinoDiagnostics?.IsNpuReady != true)
+        {
+            openVinoStatus = "No supported OpenVINO accelerator is available.";
+            return;
+        }
+
+        isOpenVinoLoading = true;
+        openVinoStatus = null;
+        try
+        {
+            var result = await DataService.LoadModelAsync(
+                new OpenVinoLoadRequest(
+                    openVinoForm.ModelPath,
+                    openVinoForm.Device,
+                    openVinoForm.CacheDirectory,
+                    openVinoForm.MaxNewTokens,
+                    openVinoForm.Temperature,
+                    openVinoForm.TopP,
+                    openVinoForm.DoSample,
+                    new OpenVinoNpuSettings(
+                        openVinoForm.MaxPromptLength,
+                        openVinoForm.MinResponseLength,
+                        openVinoForm.PrefillHint,
+                        openVinoForm.GenerateHint)));
+            isOpenVinoModelLoaded = result.Succeeded;
+            openVinoStatus = result.Message;
+        }
+        finally
+        {
+            isOpenVinoLoading = false;
+        }
+    }
+
+    private async Task RefreshOpenVinoDiagnosticsAsync()
+    {
+        isCheckingOpenVino = true;
+        try
+        {
+            openVinoDiagnostics = await DataService.GetDiagnosticsAsync();
+            SyncOpenVinoDevices();
+        }
+        finally
+        {
+            isCheckingOpenVino = false;
+        }
+    }
+
+    private void SyncOpenVinoDevices()
+    {
+        if (openVinoDiagnostics?.Devices is null)
+            return;
+
+        foreach (var device in openVinoDiagnostics.Devices.Where(device => device.IsCompatible))
+        {
+            if (!openVinoForm.Devices.ContainsKey(device.Id))
+                openVinoForm.Devices[device.Id] = new OpenVinoDeviceSetting(false, 0);
+        }
+
+        foreach (var device in openVinoForm.Devices.Keys.Except(openVinoDiagnostics.Devices.Where(device => device.IsCompatible).Select(device => device.Id), StringComparer.OrdinalIgnoreCase).ToArray())
+            openVinoForm.Devices.Remove(device);
+
+        UpdateOpenVinoDeviceRoute();
+    }
+
+    private OpenVinoDeviceSetting GetOpenVinoDeviceSetting(string device) =>
+        openVinoForm.Devices.TryGetValue(device, out var setting)
+            ? setting
+            : new OpenVinoDeviceSetting(false, 0);
+
+    private void SetOpenVinoDeviceEnabled(string device, bool enabled)
+    {
+        var setting = GetOpenVinoDeviceSetting(device);
+        if (enabled && device.StartsWith("NPU", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var npuDevice in openVinoForm.Devices.Keys
+                .Where(key => key.StartsWith("NPU", StringComparison.OrdinalIgnoreCase) && !string.Equals(key, device, StringComparison.OrdinalIgnoreCase))
+                .ToArray())
+                openVinoForm.Devices[npuDevice] = GetOpenVinoDeviceSetting(npuDevice) with { Enabled = false };
+        }
+        else if (enabled)
+        {
+            foreach (var npuDevice in openVinoForm.Devices.Keys
+                .Where(key => key.StartsWith("NPU", StringComparison.OrdinalIgnoreCase))
+                .ToArray())
+                openVinoForm.Devices[npuDevice] = GetOpenVinoDeviceSetting(npuDevice) with { Enabled = false };
+        }
+        openVinoForm.Devices[device] = enabled
+            ? new OpenVinoDeviceSetting(true, setting.Weight > 0 ? setting.Weight : 1)
+            : setting with { Enabled = false };
+        UpdateOpenVinoDeviceRoute();
+    }
+
+    private void SetOpenVinoDeviceWeight(string device, string? value)
+    {
+        _ = float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var weight);
+        var setting = GetOpenVinoDeviceSetting(device);
+        openVinoForm.Devices[device] = setting with { Weight = Math.Max(0, weight) };
+        UpdateOpenVinoDeviceRoute();
+    }
+
+    private void UpdateOpenVinoDeviceRoute()
+    {
+        var enabledDevices = openVinoForm.Devices
+            .Where(pair => pair.Value.Enabled && pair.Value.Weight > 0)
+            .OrderByDescending(pair => pair.Value.Weight)
+            .ThenBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var npuDevice = enabledDevices.FirstOrDefault(pair => pair.Key.StartsWith("NPU", StringComparison.OrdinalIgnoreCase));
+        var devices = npuDevice.Key is not null
+            ? [npuDevice]
+            : enabledDevices;
+        openVinoForm.Device = devices.Length switch
+        {
+            0 => string.Empty,
+            1 => devices[0].Key,
+            _ => $"MULTI:{string.Join(',', devices.Select(pair => pair.Key))}"
+        };
+    }
+
+    private async Task SelectBackendAsync(BackendTab backend)
+    {
+        activeBackend = backend;
+        isAssigningProfile = false;
+        isCreatingProfile = false;
+        var modelPath = backend == BackendTab.Llama ? form.ModelPath : openVinoForm.ModelPath;
+        var configurationBackend = backend == BackendTab.Llama
+            ? ConfigurationBackend.Llama
+            : ConfigurationBackend.OpenVino;
+        var profile = GetPreferredProfile(modelPath, configurationBackend);
+        if (profile is not null)
+            TryApplyProfile(profile);
+        else
+            selectedProfileId = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SolveOpenVinoCheckAsync(string checkId)
+    {
+        solvingCheckId = checkId;
+        solveRequiresLogin = false;
+        openVinoStatus = "Requesting administrator approval. Please complete the system authorization dialog...";
+        openVinoInstallOutput = $"Starting repair action: {checkId}{Environment.NewLine}Waiting for pkexec...";
+        try
+        {
+            var result = await DataService.SolveDiagnosticAsync(checkId);
+
+            var resultMessage = string.IsNullOrWhiteSpace(result?.Message)
+                ? "The installer returned no message. Check the command and exit code below."
+                : result.Message;
+            openVinoStatus = resultMessage;
+            openVinoInstallOutput = result is null
+                ? "The server returned no repair result."
+                : $"Action: {checkId}{Environment.NewLine}Result: {(result.Succeeded ? "SUCCESS" : "FAILED")}{Environment.NewLine}Message: {resultMessage}{Environment.NewLine}{result.Output}";
+            await RefreshOpenVinoDiagnosticsAsync();
+        }
+        catch (Exception exception)
+        {
+            openVinoStatus = $"Driver repair failed: {exception.Message}";
+            openVinoInstallOutput = $"Action: {checkId}{Environment.NewLine}ERROR{Environment.NewLine}{exception}";
+        }
+        finally
+        {
+            solvingCheckId = null;
+        }
+    }
+
+    private enum BackendTab
+    {
+        Llama,
+        OpenVino
+    }
+
+    private sealed class OpenVinoForm
+    {
+        public string ModelPath { get; set; } = string.Empty;
+        public string Device { get; set; } = "CPU";
+        public Dictionary<string, OpenVinoDeviceSetting> Devices { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public string CacheDirectory { get; set; } = string.Empty;
+        public int MaxNewTokens { get; set; } = 512;
+        public float Temperature { get; set; } = 0.7f;
+        public float TopP { get; set; } = 0.9f;
+        public bool DoSample { get; set; } = true;
+        public int MaxPromptLength { get; set; } = 1024;
+        public int MinResponseLength { get; set; } = 128;
+        public string PrefillHint { get; set; } = "DYNAMIC";
+        public string GenerateHint { get; set; } = "FAST_COMPILE";
+
+        public OpenVinoSettings ToSettings(Guid? profileId = null) => new(
+            ModelPath,
+            Device,
+            Devices,
+            CacheDirectory,
+            MaxNewTokens,
+            Temperature,
+            TopP,
+            DoSample,
+            profileId,
+            new OpenVinoNpuSettings(MaxPromptLength, MinResponseLength, PrefillHint, GenerateHint));
+
+        public void Load(OpenVinoSettings settings)
+        {
+            ModelPath = settings.ModelPath;
+            Device = settings.Device;
+            CacheDirectory = settings.CacheDirectory;
+            MaxNewTokens = settings.MaxNewTokens;
+            Temperature = settings.Temperature;
+            TopP = settings.TopP;
+            DoSample = settings.DoSample;
+            MaxPromptLength = settings.Npu?.MaxPromptLength ?? 1024;
+            MinResponseLength = settings.Npu?.MinResponseLength ?? 128;
+            PrefillHint = settings.Npu?.PrefillHint ?? "DYNAMIC";
+            GenerateHint = settings.Npu?.GenerateHint ?? "FAST_COMPILE";
+            Devices.Clear();
+            foreach (var device in settings.Devices ?? new Dictionary<string, OpenVinoDeviceSetting>(StringComparer.OrdinalIgnoreCase))
+                Devices[device.Key] = device.Value;
+        }
+    }
+
+    private static readonly (string Label, uint Value)[] ContextSizes =
+    [
+        ("32k", 32768), ("40k", 40960), ("48k", 49152), ("56k", 57344),
+        ("64k", 65536), ("72k", 73728), ("80k", 81920), ("88k", 90112),
+        ("96k", 98304), ("104k", 106496), ("112k", 114688), ("120k", 122880),
+        ("128k", 131072), ("136k", 139264), ("144k", 147456), ("152k", 155648),
+        ("160k", 163840), ("168k", 172032), ("176k", 180224), ("184k", 188416),
+        ("192k", 196608), ("200k", 204800), ("208k", 212992), ("216k", 221184),
+        ("224k", 229376), ("232k", 237568), ("240k", 245760), ("248k", 253952),
+        ("256k", 262144), ("512k", 524288), ("1m", 1048576)
+    ];
+
+    private readonly ModelForm form = new() { GpuLayerCount = 20, ContextSize = 131072 };
+    private bool isLoading;
+    private bool isInitializing = true;
+    private string? statusMessage;
+    private string? loadLog;
+    private ModelLoadStatus? loadStatus;
+    private readonly AdvancedForm advanced = new();
+    private IReadOnlyList<LlamaModel> databaseModels = [];
+    private IReadOnlyList<ModelConfigurationProfile> profiles = [];
+    private Guid? selectedProfileId;
+    private Guid? assignSourceProfileId;
+    private string profileTargetModelPath = string.Empty;
+    private bool isAssigningProfile;
+    private bool isCreatingProfile;
+    private bool isApplyingProfile;
+    private string newProfileName = string.Empty;
+
+    protected override Task OnInitializedAsync()
+    {
+        _ = InitializeAsync();
+        return Task.CompletedTask;
+    }
+
+    private async Task InitializeAsync()
+    {
+        try
+        {
+            var savedSettings = await DataService.GetLlamaSettingsAsync();
+            openVinoDiagnostics = await DataService.GetDiagnosticsAsync();
+            SyncOpenVinoDevices();
+            if (savedSettings is not null)
+            {
+                form.ModelPath = savedSettings.ModelPath;
+                form.Backend = savedSettings.Backend;
+                form.GpuLayerCount = savedSettings.GpuLayerCount;
+                form.ContextSize = savedSettings.ContextSize;
+                advanced.Load(savedSettings.Advanced);
+                form.VulkanDevices.Clear();
+                foreach (var device in savedSettings.VulkanDevices)
+                    form.VulkanDevices[device.Key] = device.Value;
+            }
+            databaseModels = await DataService.ScanLlamaModelsAsync();
+            profiles = await DataService.GetModelConfigurationProfilesAsync();
+            selectedProfileId = GetPreferredProfile(form.ModelPath, ConfigurationBackend.Llama)?.Id
+                ?? (savedSettings?.ConfigurationProfileId is Guid profileId &&
+                    profiles.Any(profile => profile.Id == profileId && string.Equals(profile.ModelPath, form.ModelPath, StringComparison.OrdinalIgnoreCase))
+                    ? savedSettings.ConfigurationProfileId
+                    : null);
+            loadStatus = await DataService.GetModelStatusAsync();
+        }
+        catch (Exception exception)
+        {
+            statusMessage = $"Initialization failed: {exception.Message}";
+        }
+        isInitializing = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadModelAsync()
+    {
+        if (string.IsNullOrWhiteSpace(form.ModelPath))
+        {
+            statusMessage = "Select or enter a GGUF model path first.";
+            return;
+        }
+
+        isLoading = true;
+        statusMessage = null;
+        loadLog = string.Empty;
+
+        try
+        {
+            var request = new LoadModelRequest(
+                form.ModelPath,
+                form.Backend,
+                form.GpuLayerCount,
+                form.ContextSize,
+                GetVulkanWeightsForLoad(),
+                advanced.ToSettings());
+            await SaveSettingsAsync();
+            loadStatus = await DataService.LoadModelAsync(request);
+            loadLog = loadStatus.LoadLog;
+            SyncEnabledDevices();
+            statusMessage = $"Loaded: {form.ModelPath}";
+        }
+        catch (OperationCanceledException)
+        {
+            statusMessage = "Loading was cancelled.";
+        }
+        catch (ArgumentException)
+        {
+            statusMessage = "Enter a valid GGUF model path and GPU layer count.";
+        }
+        catch (FileNotFoundException)
+        {
+            statusMessage = "The specified model file was not found.";
+        }
+        catch (Exception)
+        {
+            statusMessage = "The model could not be loaded.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task UnloadModelAsync(string modelPath)
+    {
+        try
+        {
+            loadStatus = await DataService.UnloadModelAsync(modelPath);
+            loadLog = loadStatus.LoadLog;
+            statusMessage = $"Unloaded: {Path.GetFileName(modelPath)}";
+        }
+        catch (Exception)
+        {
+            statusMessage = "The selected model could not be unloaded.";
+        }
+    }
+
+    private static string FormatBytes(ulong bytes) => $"{bytes / 1024d / 1024d / 1024d:F2} GiB";
+
+    private static string FormatMemory(double? memoryMiB) => memoryMiB is null ? "- VRAM" : $"{memoryMiB.Value:F2} MiB VRAM";
+
+    private async Task SaveSettingsAsync()
+    {
+        if (isInitializing || isApplyingProfile)
+            return;
+
+        if (activeBackend == BackendTab.OpenVino)
+        {
+            await PersistSelectedProfileAsync(openVinoForm.ModelPath, selectedProfileId);
+            return;
+        }
+
+        await DataService.SaveLlamaSettingsAsync(new LlamaSettings(
+            form.ModelPath,
+            form.Backend,
+            form.GpuLayerCount,
+            form.ContextSize,
+            form.VulkanDevices,
+            advanced.ToSettings(),
+            selectedProfileId));
+    }
+
+    private async Task SelectProfileAsync(ChangeEventArgs args)
+    {
+        if (!Guid.TryParse(args.Value?.ToString(), out var profileId))
+        {
+            selectedProfileId = null;
+            await PersistSelectedProfileAsync(CurrentModelPath, null);
+            return;
+        }
+
+        var profile = await DataService.GetModelConfigurationProfileAsync(profileId);
+        if (profile is null)
+            return;
+
+        if (!TryApplyProfile(profile))
+            return;
+
+        statusMessage = $"Selected: {profile.Name}";
+        await PersistSelectedProfileAsync(profile.ModelPath, profile.Id);
+        await SaveSettingsAsync();
+    }
+
+    private Task OpenAssignProfileAsync()
+    {
+        assignSourceProfileId = selectedProfileId ?? BackendProfiles.FirstOrDefault()?.Id;
+        profileTargetModelPath = CurrentModelPath;
+        isAssigningProfile = true;
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private void SelectAssignSourceProfileAsync(ChangeEventArgs args) =>
+        assignSourceProfileId = Guid.TryParse(args.Value?.ToString(), out var profileId) ? profileId : null;
+
+    private void SelectProfileTargetModelAsync(ChangeEventArgs args) =>
+        profileTargetModelPath = args.Value?.ToString() ?? string.Empty;
+
+    private void CancelAssignProfile()
+    {
+        isAssigningProfile = false;
+        assignSourceProfileId = null;
+    }
+
+    private async Task AssignProfileToModelAsync()
+    {
+        if (!assignSourceProfileId.HasValue || string.IsNullOrWhiteSpace(profileTargetModelPath))
+            return;
+
+        var profile = profiles.FirstOrDefault(item => item.Id == assignSourceProfileId.Value);
+        if (profile is null)
+            return;
+
+        if (string.Equals(profile.ModelPath, profileTargetModelPath, StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = "The configuration is already assigned to this model.";
+            return;
+        }
+
+        var targetName = databaseModels.FirstOrDefault(model =>
+            string.Equals(model.Path, profileTargetModelPath, StringComparison.OrdinalIgnoreCase))?.Name
+            ?? Path.GetFileName(profileTargetModelPath);
+        var copyName = GetAvailableProfileName($"{profile.Name} - {targetName}");
+        var configurationJson = profile.Backend == ConfigurationBackend.OpenVino
+            ? SerializeSettingsForModel(JsonSerializer.Deserialize<OpenVinoSettings>(profile.ConfigurationJson) ?? throw new JsonException(), profileTargetModelPath)
+            : SerializeSettingsForModel(JsonSerializer.Deserialize<LlamaSettings>(profile.ConfigurationJson) ?? throw new JsonException(), profileTargetModelPath);
+        var saved = await DataService.SaveModelConfigurationProfileAsync(new ModelConfigurationProfile(
+            Guid.Empty,
+            copyName,
+            profile.Description,
+            profileTargetModelPath,
+            false,
+            profile.SchemaVersion,
+            configurationJson,
+            default,
+            default,
+            profile.Backend));
+        profiles = profiles.Append(saved).ToArray();
+        profileTargetModelPath = saved.ModelPath;
+        assignSourceProfileId = saved.Id;
+        await PersistSelectedProfileAsync(saved.ModelPath, saved.Id);
+        isAssigningProfile = false;
+        statusMessage = $"Configuration copied to {Path.GetFileName(saved.ModelPath)}.";
+    }
+
+    private string GetAvailableProfileName(string baseName)
+    {
+        var name = baseName;
+        var suffix = 2;
+        while (profiles.Any(profile => profile.Backend == CurrentProfileBackend &&
+            string.Equals(profile.Name, name, StringComparison.OrdinalIgnoreCase)))
+            name = $"{baseName} ({suffix++})";
+        return name;
+    }
+
+    private async Task SelectModelAsync(ChangeEventArgs args)
+    {
+        var modelPath = args.Value?.ToString();
+        form.ModelPath = modelPath ?? string.Empty;
+        var configurationInvalid = false;
+        var profile = GetPreferredProfile(form.ModelPath, ConfigurationBackend.Llama);
+
+        if (profile is null)
+        {
+            selectedProfileId = null;
+            ResetModelConfiguration();
+        }
+        else
+        {
+            if (!TryApplyProfile(profile))
+            {
+                selectedProfileId = null;
+                ResetModelConfiguration();
+                configurationInvalid = true;
+            }
+            else
+            {
+                form.ModelPath = modelPath ?? string.Empty;
+            }
+        }
+
+        await SaveSettingsAsync();
+        await PersistSelectedProfileAsync(form.ModelPath, selectedProfileId);
+        if (configurationInvalid)
+        {
+            statusMessage = "The model configuration is invalid.";
+            return;
+        }
+
+        statusMessage = string.IsNullOrWhiteSpace(modelPath)
+            ? "No model selected."
+            : $"Model selected: {databaseModels.FirstOrDefault(model => model.Path == modelPath)?.Name ?? modelPath}; configuration applied.";
+    }
+
+    private async Task CreateProfileAsync()
+    {
+        newProfileName = string.Empty;
+        isCreatingProfile = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SaveNewProfileAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newProfileName))
+        {
+            statusMessage = "Enter a name for the configuration set.";
+            return;
+        }
+
+        try
+        {
+            var saved = await DataService.SaveModelConfigurationProfileAsync(new ModelConfigurationProfile(
+                Guid.Empty, newProfileName.Trim(), null, CurrentModelPath.Trim(), false, 1, SerializeCurrentSettings(), default, default, CurrentProfileBackend));
+            profiles = profiles.Append(saved).OrderByDescending(profile => profile.IsDefault).ThenBy(profile => profile.Name).ToArray();
+            selectedProfileId = saved.Id;
+            isCreatingProfile = false;
+            await PersistSelectedProfileAsync(saved.ModelPath, saved.Id);
+            statusMessage = $"Created: {saved.Name}";
+        }
+        catch (Exception exception)
+        {
+            statusMessage = $"Could not create configuration set: {exception.Message}";
+        }
+    }
+
+    private async Task UpdateProfileAsync()
+    {
+        if (!selectedProfileId.HasValue)
+            return;
+
+        var profile = profiles.FirstOrDefault(item => item.Id == selectedProfileId.Value);
+        if (profile is null)
+            return;
+
+        try
+        {
+            var saved = await DataService.SaveModelConfigurationProfileAsync(profile with
+            {
+                ModelPath = CurrentModelPath.Trim(),
+                ConfigurationJson = SerializeCurrentSettings(),
+                Backend = CurrentProfileBackend
+            });
+            profiles = profiles.Select(item => item.Id == saved.Id ? saved : item).ToArray();
+            await PersistSelectedProfileAsync(saved.ModelPath, saved.Id);
+            statusMessage = $"Updated: {saved.Name}";
+        }
+        catch (Exception exception)
+        {
+            statusMessage = $"Could not update configuration set: {exception.Message}";
+        }
+    }
+
+    private void CancelCreateProfile() => isCreatingProfile = false;
+
+    private string CurrentModelPath => activeBackend == BackendTab.Llama ? form.ModelPath : openVinoForm.ModelPath;
+
+    private ConfigurationBackend CurrentProfileBackend => activeBackend == BackendTab.Llama
+        ? ConfigurationBackend.Llama
+        : ConfigurationBackend.OpenVino;
+
+    private IEnumerable<ModelConfigurationProfile> BackendProfiles =>
+        profiles.Where(profile => profile.Backend == CurrentProfileBackend);
+
+    private IEnumerable<ModelConfigurationProfile> MatchingProfiles =>
+        BackendProfiles.Where(profile => string.Equals(profile.ModelPath.Trim(), CurrentModelPath.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    private ModelConfigurationProfile? GetPreferredProfile(string modelPath, ConfigurationBackend backend)
+    {
+        var model = databaseModels.FirstOrDefault(item =>
+            string.Equals(item.Path, modelPath.Trim(), StringComparison.OrdinalIgnoreCase));
+        var storedProfile = model?.ConfigurationProfileId is Guid profileId
+            ? profiles.FirstOrDefault(profile => profile.Id == profileId && profile.Backend == backend &&
+                string.Equals(profile.ModelPath.Trim(), modelPath.Trim(), StringComparison.OrdinalIgnoreCase))
+            : null;
+        var matchingProfiles = profiles
+            .Where(profile => profile.Backend == backend &&
+                string.Equals(profile.ModelPath.Trim(), modelPath.Trim(), StringComparison.OrdinalIgnoreCase));
+        return storedProfile ?? matchingProfiles
+            .OrderByDescending(profile => profile.IsDefault)
+            .ThenByDescending(profile => profile.UpdatedAtUtc)
+            .FirstOrDefault()
+            ?? (string.IsNullOrWhiteSpace(modelPath)
+                ? profiles.Where(profile => profile.Backend == backend)
+                    .OrderByDescending(profile => profile.IsDefault)
+                    .ThenByDescending(profile => profile.UpdatedAtUtc)
+                    .FirstOrDefault()
+                : null);
+    }
+
+    private bool TryApplyProfile(ModelConfigurationProfile profile)
+    {
+        try
+        {
+            isApplyingProfile = true;
+            selectedProfileId = profile.Id;
+            profileTargetModelPath = profile.ModelPath;
+            activeBackend = profile.Backend == ConfigurationBackend.OpenVino ? BackendTab.OpenVino : BackendTab.Llama;
+            if (profile.Backend == ConfigurationBackend.OpenVino)
+            {
+                var settings = JsonSerializer.Deserialize<OpenVinoSettings>(profile.ConfigurationJson)
+                    ?? throw new JsonException();
+                openVinoForm.Load(settings);
+                UpdateOpenVinoDeviceRoute();
+            }
+            else
+            {
+                var settings = JsonSerializer.Deserialize<LlamaSettings>(profile.ConfigurationJson)
+                    ?? throw new JsonException();
+                ApplySettings(settings);
+            }
+            return true;
+        }
+        catch (JsonException)
+        {
+            selectedProfileId = null;
+            if (profile.Backend == ConfigurationBackend.OpenVino)
+                openVinoStatus = "The selected OpenVINO configuration set is invalid.";
+            else
+                statusMessage = "The selected configuration set is invalid.";
+            return false;
+        }
+        finally
+        {
+            isApplyingProfile = false;
+        }
+    }
+
+    private async Task PersistSelectedProfileAsync(string modelPath, Guid? profileId)
+    {
+        if (string.IsNullOrWhiteSpace(modelPath))
+            return;
+
+        await DataService.SetModelConfigurationProfileAsync(modelPath, profileId);
+        databaseModels = databaseModels.Select(model =>
+            string.Equals(model.Path, modelPath.Trim(), StringComparison.OrdinalIgnoreCase)
+                ? model with { ConfigurationProfileId = profileId }
+                : model).ToArray();
+    }
+
+    private static string SerializeSettingsForModel(LlamaSettings settings, string modelPath) =>
+        JsonSerializer.Serialize(settings with { ModelPath = modelPath });
+
+    private static string SerializeSettingsForModel(OpenVinoSettings settings, string modelPath) =>
+        JsonSerializer.Serialize(settings with { ModelPath = modelPath });
+
+    private async Task SelectOpenVinoModelAsync()
+    {
+        if (isInitializing || isApplyingProfile)
+            return;
+
+        var profile = GetPreferredProfile(openVinoForm.ModelPath, ConfigurationBackend.OpenVino);
+        if (profile is null)
+        {
+            selectedProfileId = null;
+            ResetOpenVinoConfiguration();
+        }
+        else if (!TryApplyProfile(profile))
+            ResetOpenVinoConfiguration();
+        await PersistSelectedProfileAsync(openVinoForm.ModelPath, selectedProfileId);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task SelectOpenVinoModelFromPickerAsync(ChangeEventArgs args)
+    {
+        openVinoForm.ModelPath = args.Value?.ToString() ?? string.Empty;
+        await SelectOpenVinoModelAsync();
+    }
+
+    private void ResetOpenVinoConfiguration()
+    {
+        openVinoForm.Device = string.Empty;
+        openVinoForm.CacheDirectory = string.Empty;
+        openVinoForm.MaxNewTokens = 512;
+        openVinoForm.Temperature = .7f;
+        openVinoForm.TopP = .9f;
+        openVinoForm.DoSample = true;
+        openVinoForm.MaxPromptLength = 1024;
+        openVinoForm.MinResponseLength = 128;
+        openVinoForm.PrefillHint = "DYNAMIC";
+        openVinoForm.GenerateHint = "FAST_COMPILE";
+        openVinoForm.Devices.Clear();
+        SyncOpenVinoDevices();
+    }
+
+    private string SerializeCurrentSettings() => activeBackend == BackendTab.Llama
+        ? JsonSerializer.Serialize(new LlamaSettings(
+            form.ModelPath,
+            form.Backend,
+            form.GpuLayerCount,
+            form.ContextSize,
+            form.VulkanDevices,
+            advanced.ToSettings()))
+        : JsonSerializer.Serialize(openVinoForm.ToSettings());
+
+    private void ApplySettings(LlamaSettings settings)
+    {
+        form.ModelPath = settings.ModelPath;
+        form.Backend = settings.Backend;
+        form.GpuLayerCount = settings.GpuLayerCount;
+        form.ContextSize = settings.ContextSize;
+        advanced.Load(settings.Advanced);
+        form.VulkanDevices.Clear();
+        foreach (var device in settings.VulkanDevices)
+            form.VulkanDevices[device.Key] = device.Value;
+    }
+
+    private void ResetModelConfiguration()
+    {
+        form.Backend = "Vulkan";
+        form.GpuLayerCount = 20;
+        form.ContextSize = 131072;
+        advanced.Load(new LlamaAdvancedSettings());
+        form.VulkanDevices.Clear();
+    }
+
+    private VulkanDeviceSetting GetDeviceSetting(string deviceName) =>
+        form.VulkanDevices.TryGetValue(deviceName, out var setting) && setting is not null
+            ? setting
+            : new VulkanDeviceSetting(false, 0);
+
+    private IReadOnlyDictionary<string, float> GetVulkanWeightsForLoad() =>
+        form.VulkanDevices.ToDictionary(
+            pair => pair.Key,
+            pair => pair.Value.Enabled ? pair.Value.Weight : 0,
+            StringComparer.OrdinalIgnoreCase);
+
+    private async Task SetDeviceEnabledAsync(string deviceName, bool enabled)
+    {
+        if (enabled)
+        {
+            var setting = GetDeviceSetting(deviceName);
+            form.VulkanDevices[deviceName] = new VulkanDeviceSetting(true, setting.Weight > 0 ? setting.Weight : 1);
+        }
+        else
+        {
+            var setting = GetDeviceSetting(deviceName);
+            form.VulkanDevices[deviceName] = setting with { Enabled = false };
+        }
+        await SaveSettingsAsync();
+    }
+
+    private async Task SetDeviceWeightAsync(string deviceName, string? value)
+    {
+        if (float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var weight))
+        {
+            var setting = GetDeviceSetting(deviceName);
+            form.VulkanDevices[deviceName] = new VulkanDeviceSetting(setting.Enabled, Math.Max(0, weight));
+        }
+        await SaveSettingsAsync();
+    }
+
+    private void SyncEnabledDevices()
+    {
+        if (loadStatus is null)
+            return;
+
+        var detectedDeviceNames = loadStatus.VulkanDevices
+            .Select(device => device.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var deviceName in form.VulkanDevices.Keys.Except(detectedDeviceNames, StringComparer.OrdinalIgnoreCase).ToArray())
+            form.VulkanDevices.Remove(deviceName);
+
+        foreach (var device in loadStatus.VulkanDevices)
+        {
+            if (!form.VulkanDevices.ContainsKey(device.Name))
+                form.VulkanDevices[device.Name] = new VulkanDeviceSetting(false, 0);
+        }
+    }
+
+    private string GetRuntimeStatusClass() =>
+        isLoading ? "runtime-status-loading" :
+        loadStatus?.IsModelLoaded == true ? "runtime-status-loaded" :
+        IsLoadError() ? "runtime-status-error" : "runtime-status-idle";
+
+    private string GetRuntimeStatusLabel() =>
+        isLoading ? "LOADING MODEL" :
+        loadStatus?.IsModelLoaded == true ? "MODEL LOADED" :
+        IsLoadError() ? "LOAD FAILED" : "NO MODEL LOADED";
+
+    private string GetRuntimeStatusDetail()
+    {
+        if (isLoading)
+            return "Reading model tensors and preparing the context...";
+
+        if (loadStatus?.IsModelLoaded == true)
+            return $"{Path.GetFileName(loadStatus.ModelPath)} | {loadStatus.GpuLayerCount} GPU layers";
+
+        return IsLoadError() ? statusMessage! : "Load a model to start inference.";
+    }
+
+    private bool IsLoadError() =>
+        !string.IsNullOrWhiteSpace(statusMessage) &&
+        (statusMessage.Contains("could not", StringComparison.OrdinalIgnoreCase) ||
+         statusMessage.Contains("not found", StringComparison.OrdinalIgnoreCase) ||
+         statusMessage.Contains("valid", StringComparison.OrdinalIgnoreCase) ||
+         statusMessage.Contains("cancelled", StringComparison.OrdinalIgnoreCase));
+
+    private sealed class ModelForm
+    {
+        public string ModelPath { get; set; } = string.Empty;
+
+        public string Backend { get; set; } = "Vulkan";
+
+        public int GpuLayerCount { get; set; }
+
+        public uint ContextSize { get; set; }
+
+        public Dictionary<string, VulkanDeviceSetting> VulkanDevices { get; } = new(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private sealed class AdvancedForm
+    {
+        public int MainGpu { get; set; }
+        public int SeqMax { get; set; } = 1;
+        public int RecurrentRollbackSnapshots { get; set; }
+        public bool UseMemorymap { get; set; } = true;
+        public bool UseDirectIO { get; set; }
+        public bool UseMemoryLock { get; set; }
+        public int? Threads { get; set; }
+        public int? BatchThreads { get; set; }
+        public int BatchSize { get; set; } = 512;
+        public int UBatchSize { get; set; } = 512;
+        public bool Embeddings { get; set; }
+        public bool NoKqvOffload { get; set; }
+        public bool FlashAttention { get; set; }
+        public bool VocabOnly { get; set; }
+        public bool OpOffload { get; set; }
+        public bool SwaFull { get; set; }
+        public bool KVUnified { get; set; }
+        public float? RopeFrequencyBase { get; set; }
+        public float? RopeFrequencyScale { get; set; }
+        public float? YarnExtrapolationFactor { get; set; }
+        public float? YarnAttentionFactor { get; set; }
+        public float? YarnBetaFast { get; set; }
+        public float? YarnBetaSlow { get; set; }
+        public int? YarnOriginalContext { get; set; }
+        public string ContextType { get; set; } = "Default";
+        public string? TypeK { get; set; }
+        public string? TypeV { get; set; }
+        public string PoolingType { get; set; } = "Unspecified";
+        public string AttentionType { get; set; } = "Unspecified";
+        public string? YarnScalingType { get; set; }
+        public bool CheckTensors { get; set; }
+        public float Temperature { get; set; } = .75f;
+        public int TopK { get; set; } = 40;
+        public float TopP { get; set; } = .9f;
+        public float MinP { get; set; } = .1f;
+        public float RepeatPenalty { get; set; } = 1f;
+        public float FrequencyPenalty { get; set; }
+        public float PresencePenalty { get; set; }
+        public int PenaltyCount { get; set; } = 64;
+        public int MaxTokens { get; set; } = -1;
+        public int TokensKeep { get; set; }
+        public int Seed { get; set; }
+        public bool DecodeSpecialTokens { get; set; }
+
+        public void Load(LlamaAdvancedSettings? settings)
+        {
+            if (settings is null)
+                return;
+            MainGpu = settings.MainGpu;
+            SeqMax = (int)settings.SeqMax;
+            RecurrentRollbackSnapshots = (int)settings.RecurrentRollbackSnapshots;
+            UseMemorymap = settings.UseMemorymap;
+            UseDirectIO = settings.UseDirectIO;
+            UseMemoryLock = settings.UseMemoryLock;
+            Threads = settings.Threads;
+            BatchThreads = settings.BatchThreads;
+            BatchSize = (int)settings.BatchSize;
+            UBatchSize = (int)settings.UBatchSize;
+            Embeddings = settings.Embeddings;
+            NoKqvOffload = settings.NoKqvOffload;
+            FlashAttention = settings.FlashAttention ?? false;
+            VocabOnly = settings.VocabOnly;
+            OpOffload = settings.OpOffload ?? false;
+            SwaFull = settings.SwaFull ?? false;
+            KVUnified = settings.KVUnified ?? false;
+            RopeFrequencyBase = settings.RopeFrequencyBase;
+            RopeFrequencyScale = settings.RopeFrequencyScale;
+            YarnExtrapolationFactor = settings.YarnExtrapolationFactor;
+            YarnAttentionFactor = settings.YarnAttentionFactor;
+            YarnBetaFast = settings.YarnBetaFast;
+            YarnBetaSlow = settings.YarnBetaSlow;
+            YarnOriginalContext = settings.YarnOriginalContext.HasValue ? (int)settings.YarnOriginalContext.Value : null;
+            ContextType = settings.ContextType;
+            TypeK = settings.TypeK;
+            TypeV = settings.TypeV;
+            PoolingType = settings.PoolingType;
+            AttentionType = settings.AttentionType;
+            YarnScalingType = settings.YarnScalingType;
+            CheckTensors = settings.CheckTensors;
+            Temperature = settings.Temperature;
+            TopK = settings.TopK;
+            TopP = settings.TopP;
+            MinP = settings.MinP;
+            RepeatPenalty = settings.RepeatPenalty;
+            FrequencyPenalty = settings.FrequencyPenalty;
+            PresencePenalty = settings.PresencePenalty;
+            PenaltyCount = settings.PenaltyCount;
+            MaxTokens = settings.MaxTokens;
+            TokensKeep = settings.TokensKeep;
+            Seed = settings.Seed > int.MaxValue ? int.MaxValue : (int)settings.Seed;
+            DecodeSpecialTokens = settings.DecodeSpecialTokens;
+        }
+
+        public LlamaAdvancedSettings ToSettings() => new(MainGpu, (uint)Math.Max(1, SeqMax), (uint)Math.Max(0, RecurrentRollbackSnapshots), UseMemorymap, UseDirectIO, UseMemoryLock, Threads, BatchThreads, (uint)Math.Max(1, BatchSize), (uint)Math.Max(1, UBatchSize), Embeddings, NoKqvOffload, FlashAttention, VocabOnly, OpOffload, SwaFull, KVUnified, RopeFrequencyBase, RopeFrequencyScale, YarnExtrapolationFactor, YarnAttentionFactor, YarnBetaFast, YarnBetaSlow, YarnOriginalContext.HasValue ? (uint?)Math.Max(1, YarnOriginalContext.Value) : null, ContextType, TypeK, TypeV, PoolingType, AttentionType, YarnScalingType, CheckTensors, Temperature, TopK, TopP, MinP, RepeatPenalty, FrequencyPenalty, PresencePenalty, PenaltyCount, MaxTokens, TokensKeep, (uint)Math.Max(0, Seed), DecodeSpecialTokens);
+    }
+
+}

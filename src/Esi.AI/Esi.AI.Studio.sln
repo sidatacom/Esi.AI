@@ -7,7 +7,9 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Esi.AI.Studio", "Esi.AI.Stu
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Esi.AI.Studio.Client", "Esi.AI.Studio.Client\Esi.AI.Studio.Client.csproj", "{284B153D-0CC7-4872-90E5-5054523801BC}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.LLama", "Esi.AI.LLama\Esi.AI.LLama.csproj", "{B20D1496-F7C9-47C9-A70A-4C996C3FFE7B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Core", "Esi.AI.Core\Esi.AI.Core.csproj", "{B20D1496-F7C9-47C9-A70A-4C996C3FFE7B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Models", "Esi.AI.Models\Esi.AI.Models.csproj", "{7170197B-4094-4135-A3CE-38F661FCCF34}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -55,6 +57,18 @@ Global
 		{B20D1496-F7C9-47C9-A70A-4C996C3FFE7B}.Release|x64.Build.0 = Release|Any CPU
 		{B20D1496-F7C9-47C9-A70A-4C996C3FFE7B}.Release|x86.ActiveCfg = Release|Any CPU
 		{B20D1496-F7C9-47C9-A70A-4C996C3FFE7B}.Release|x86.Build.0 = Release|Any CPU
+		{7170197B-4094-4135-A3CE-38F661FCCF34}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7170197B-4094-4135-A3CE-38F661FCCF34}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7170197B-4094-4135-A3CE-38F661FCCF34}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{7170197B-4094-4135-A3CE-38F661FCCF34}.Debug|x64.Build.0 = Debug|Any CPU
+		{7170197B-4094-4135-A3CE-38F661FCCF34}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{7170197B-4094-4135-A3CE-38F661FCCF34}.Debug|x86.Build.0 = Debug|Any CPU
+		{7170197B-4094-4135-A3CE-38F661FCCF34}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7170197B-4094-4135-A3CE-38F661FCCF34}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7170197B-4094-4135-A3CE-38F661FCCF34}.Release|x64.ActiveCfg = Release|Any CPU
+		{7170197B-4094-4135-A3CE-38F661FCCF34}.Release|x64.Build.0 = Release|Any CPU
+		{7170197B-4094-4135-A3CE-38F661FCCF34}.Release|x86.ActiveCfg = Release|Any CPU
+		{7170197B-4094-4135-A3CE-38F661FCCF34}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

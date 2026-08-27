@@ -13,4 +13,6 @@ public sealed class LlamaModelEntity
     public DateTime LastWriteTimeUtc { get; set; }
 
     public DateTime UpdatedAtUtc { get; set; }
+
+    public Guid? ConfigurationProfileId { get; set; }
 }

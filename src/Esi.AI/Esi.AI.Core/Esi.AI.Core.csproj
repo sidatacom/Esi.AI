@@ -1,0 +1,30 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Esi.AI.Core</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../../origins/sidatacom/LLamaSharp/LLama/LLamaSharp.csproj" />
+    <ProjectReference Include="../../../origins/sidatacom/OpenVINO-CSharp-API/src/OpenVINO.CSharp.API/OpenVINO.CSharp.API.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../../origins/sidatacom/LLamaSharp/LLama/runtimes/deps/vulkan/*"
+          Link="runtimes/linux-x64/native/vulkan/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+        <None Include="../../../origins/sidatacom/LLamaSharp/LLama/runtimes/deps/avx2/libggml-cpu.so"
+          Link="runtimes/linux-x64/native/vulkan/libggml-cpu.so"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+        <None Include="../../../origins/sidatacom/LLamaSharp/LLama/runtimes/deps/avx2/libggml-cpu.so"
+          Link="runtimes/linux-x64/native/avx2/libggml-cpu.so"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

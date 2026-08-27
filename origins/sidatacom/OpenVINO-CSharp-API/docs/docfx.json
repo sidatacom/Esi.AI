@@ -1,0 +1,88 @@
+{
+  "metadata": [
+    {
+      "src": [
+        {
+          "files": [ "**/*.csproj" ],
+          "src": "../src/OpenVINO.CSharp.API"
+        }
+      ],
+      "dest": "api",
+      "includePrivateMembers": false,
+      "disableGitFeatures": false,
+      "disableDefaultFilter": false,
+      "noRestore": true,
+      "namespaceLayout": "flattened",
+      "memberLayout": "samePage",
+      "enumSortOrder": "alphabetic",
+      "allowCompilationErrors": false,
+      "properties": {
+        "TargetFramework": "net8.0"
+      }
+    }
+  ],
+  "build": {
+    "content": [
+      {
+        "files": [ "**/*.yml" ],
+        "src": "api",
+        "dest": "api"
+      },
+      {
+        "files": [
+          "articles/**/*.md",
+          "articles/**/*.yml",
+          "release-notes/**/*.md",
+          "release-notes/**/*.yml",
+          "*.md",
+          "toc.yml"
+        ]
+      }
+    ],
+    "resource": [
+      {
+        "files": [ "images/**", "favicon.ico", "logo.svg", "LICENSE" ]
+      }
+    ],
+    "overwrite": [
+      {
+        "files": [ "apidoc/**.md" ],
+        "exclude": [ "obj/**", "_site/**" ]
+      }
+    ],
+    "globalMetadata": {
+      "_appTitle": "OpenVINO C# API \u6587\u6863",
+      "_appName": "OpenVINO C# API",
+      "_appFooter": "<span>&copy; 2024-2026 Guojin Yan &middot; Licensed under Apache-2.0</span>",
+      "_enableSearch": true,
+      "_disableNavbar": false,
+      "_disableBreadcrumb": false,
+      "_disableToc": false,
+      "_disableAffix": false,
+      "_disableContribution": false,
+      "_gitContribute": {
+        "repo": "https://github.com/guojin-yan/OpenVINO-CSharp-API",
+        "branch": "csharp3.3"
+      },
+      "_gitUrlPattern": "github",
+      "_noindex": false
+    },
+    "dest": "../_site",
+    "template": [ "default" ],
+    "markdownEngineName": "markdig",
+    "markdownEngineProperties": {
+      "markdigExtensions": [
+        "attributes",
+        "customcontainers"
+      ]
+    },
+    "noLangKeyword": false,
+    "keepFileLink": false,
+    "cleanupCacheHistory": false,
+    "disableGitFeatures": false,
+    "sitemap": {
+      "baseUrl": "https://guojin-yan.github.io/OpenVINO-CSharp-API",
+      "changefreq": "weekly"
+    }
+  }
+}
