@@ -7,6 +7,7 @@
 - The controller is reserved for the OpenAI-compatible API contract. Keep browser application functionality out of it.
 - All other client-to-server application communication goes through the central SignalR hub `DataHub` at `/hubs/data`.
 - The client accesses server functionality through `IDataService` and its `SignalRDataService` implementation. Add new operations to this service and the corresponding `DataHub` method instead of introducing direct HTTP calls.
+- Do not introduce application forms or form-submit handlers for client-to-server operations. Use the central `IDataService`/`SignalRDataService` path and the corresponding `DataHub` method for all such actions.
 - Hub methods should delegate application work to the existing server-side services, especially `DataService`, rather than duplicating business logic in the hub.
 - Blazor pages and components should depend on the client-side service abstraction, not directly on `HubConnection`, controllers, or server implementations.
 - All DTOs, including request, response, status, and SignalR contract types, belong in `Esi.AI.Models`.

@@ -13,18 +13,17 @@ public sealed class OpenVinoDiagnosticsService
 
         try
         {
-            LoadLinuxOpenVinoRuntime();
+            OpenVinoModelLoader.InitializeRuntime();
             using var core = new OpenVinoSharp.Core();
             var devices = core.GetAvailableDevices();
             var acceleratorDevices = devices
-                .Where(device => device.StartsWith("GPU.", StringComparison.OrdinalIgnoreCase)
-                    || device.StartsWith("NPU", StringComparison.OrdinalIgnoreCase))
+                .Where(device => IsOpenVinoGpuDevice(device) || IsOpenVinoNpuDevice(device))
                 .Select(device =>
                 {
                     var fullDeviceName = GetPropertyOrFallback(
                         core,
                         device,
-                        OpenVinoSharp.PropertyKeys.DeviceFullName,
+                        "FULL_DEVICE_NAME",
                         device);
                     var deviceId = GetPropertyOrFallback(core, device, "DEVICE_ID", string.Empty);
                     var displayName = ResolveDeviceName(fullDeviceName, deviceId);
@@ -42,7 +41,7 @@ public sealed class OpenVinoDiagnosticsService
                     })
                 .ToList();
             var gpuDevices = acceleratorDevices
-                .Where(device => device.Id.StartsWith("GPU.", StringComparison.OrdinalIgnoreCase))
+                .Where(device => IsOpenVinoGpuDevice(device.Id))
                 .ToList();
             var npuDevices = acceleratorDevices
                 .Where(device => device.Id.StartsWith("NPU", StringComparison.OrdinalIgnoreCase))
@@ -54,7 +53,7 @@ public sealed class OpenVinoDiagnosticsService
                 gpuDevices.Any(device => device.IsCompatible),
                 gpuDevices.Any(device => device.IsCompatible)
                     ? $"OpenVINO detected: {string.Join(", ", gpuDevices.Select(device => device.Name))}"
-                    : "OpenVINO did not detect a GPU device.",
+                    : $"OpenVINO did not detect a GPU device. Available devices: {FormatDeviceList(devices)}",
                 false));
 
             checks.Add(new OpenVinoDiagnosticCheck(
@@ -63,7 +62,7 @@ public sealed class OpenVinoDiagnosticsService
                 npuDevices.Any(device => device.IsCompatible),
                 npuDevices.Any(device => device.IsCompatible)
                     ? $"OpenVINO detected: {string.Join(", ", npuDevices.Select(device => device.Name))}"
-                    : "OpenVINO did not detect an NPU device.",
+                    : $"OpenVINO did not detect an NPU device. Available devices: {FormatDeviceList(devices)}",
                 false));
 
             return new OpenVinoDiagnostics(
@@ -78,23 +77,6 @@ public sealed class OpenVinoDiagnosticsService
             var detail = exception.ToString();
             checks.Add(new OpenVinoDiagnosticCheck("openvino-runtime", "OpenVINO runtime", false, detail, false));
             return new OpenVinoDiagnostics(false, false, [], checks, detail);
-        }
-    }
-
-    private static void LoadLinuxOpenVinoRuntime()
-    {
-        if (!OperatingSystem.IsLinux())
-            return;
-
-        var runtimeDirectory = Path.Combine(AppContext.BaseDirectory, "runtimes", "linux-x64", "native");
-        var runtimeLibrary = Path.Combine(runtimeDirectory, "libopenvino.so.2630");
-        if (File.Exists(runtimeLibrary))
-        {
-            var tbbLibrary = Path.Combine(runtimeDirectory, "libtbb.so.12");
-            if (File.Exists(tbbLibrary))
-                NativeLibrary.Load(tbbLibrary);
-
-            NativeLibrary.Load(runtimeLibrary);
         }
     }
 
@@ -119,6 +101,17 @@ public sealed class OpenVinoDiagnosticsService
 
         return fullDeviceName;
     }
+
+    private static bool IsOpenVinoGpuDevice(string device) =>
+        device.Equals("GPU", StringComparison.OrdinalIgnoreCase) ||
+        device.StartsWith("GPU.", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsOpenVinoNpuDevice(string device) =>
+        device.Equals("NPU", StringComparison.OrdinalIgnoreCase) ||
+        device.StartsWith("NPU.", StringComparison.OrdinalIgnoreCase);
+
+    private static string FormatDeviceList(IReadOnlyList<string> devices) =>
+        devices.Count == 0 ? "none" : string.Join(", ", devices);
 
     private static void AddLinuxDriverChecks(ICollection<OpenVinoDiagnosticCheck> checks)
     {

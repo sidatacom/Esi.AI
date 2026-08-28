@@ -29,9 +29,7 @@
 
 @if (activeBackend == BackendTab.Llama)
 {
-<EditForm Model="form" FormName="LlamaModel" OnValidSubmit="LoadModelAsync" class="llama-workspace">
-    <DataAnnotationsValidator />
-    <ValidationSummary />
+<div class="llama-workspace">
 
     <section class="config-panel">
         <div class="section-heading">
@@ -95,22 +93,22 @@
                 <label class="form-label" for="model-picker">Model from repository</label>
                 <select id="model-picker" class="form-select" value="@form.ModelPath" @onchange="SelectModelAsync">
                     <option value="">Select a model...</option>
-                    @if (!string.IsNullOrWhiteSpace(form.ModelPath) && !databaseModels.Any(model => string.Equals(model.Path, form.ModelPath, StringComparison.OrdinalIgnoreCase)))
+                    @if (!string.IsNullOrWhiteSpace(form.ModelPath) && !LlamaModels.Any(model => string.Equals(model.Path, form.ModelPath, StringComparison.OrdinalIgnoreCase)))
                     {
                         <option value="@form.ModelPath">@Path.GetFileName(form.ModelPath) (saved path)</option>
                     }
-                    @foreach (var model in databaseModels)
+                    @foreach (var model in LlamaModels)
                     {
                         <option value="@model.Path">@model.Name</option>
                     }
                 </select>
-                @if (databaseModels.Count == 0)
+                @if (LlamaModels.Count == 0)
                 {
                     <span class="picker-note">No models are stored in the database yet.</span>
                 }
             </div>
             <div class="model-actions">
-                <button class="load-button" type="submit" disabled="@(isLoading || string.IsNullOrWhiteSpace(form.ModelPath))">
+                    <button class="load-button" type="button" @onclick="LoadModelAsync" disabled="@(isLoading || string.IsNullOrWhiteSpace(form.ModelPath))">
                     @(isLoading ? "Loading model..." : "Load model")
                 </button>
             </div>
@@ -119,7 +117,7 @@
         <div class="profile-toolbar">
             <div class="profile-select">
                 <label class="form-label" for="configuration-profile">Configuration set</label>
-                <select id="configuration-profile" class="form-select" value="@selectedProfileId" @onchange="SelectProfileAsync">
+                <select id="configuration-profile" class="form-select" value="@selectedProfileId" @onchange="SelectProfileAsync" disabled="@string.IsNullOrWhiteSpace(CurrentModelPath)">
                     <option value="">Select a saved set...</option>
                     @foreach (var profile in MatchingProfiles)
                     {
@@ -128,7 +126,7 @@
                 </select>
             </div>
             <div class="profile-actions">
-                <button class="profile-button" type="button" @onclick="CreateProfileAsync">Create</button>
+                <button class="profile-button" type="button" @onclick="CreateProfileAsync" disabled="@string.IsNullOrWhiteSpace(CurrentModelPath)">Create</button>
                 <button class="profile-button" type="button" @onclick="UpdateProfileAsync" disabled="@(!selectedProfileId.HasValue)">Update</button>
                 <button class="profile-button" type="button" @onclick="OpenAssignProfileAsync">Assign</button>
             </div>
@@ -149,10 +147,6 @@
                     <label class="form-label" for="assign-target-model">Target model</label>
                     <select id="assign-target-model" class="form-select" value="@profileTargetModelPath" @onchange="SelectProfileTargetModelAsync">
                         <option value="">Select a model...</option>
-                        @foreach (var model in databaseModels)
-                        {
-                            <option value="@model.Path">@model.Name</option>
-                        }
                     </select>
                     <button class="profile-button profile-button-primary" type="button" @onclick="AssignProfileToModelAsync" disabled="@(!assignSourceProfileId.HasValue || string.IsNullOrWhiteSpace(profileTargetModelPath))">Copy</button>
                     <button class="profile-button" type="button" @onclick="CancelAssignProfile">Cancel</button>
@@ -366,13 +360,11 @@
             <p class="empty-state">Waiting for backend discovery.</p>
         }
     </section>
-</EditForm>
+</div>
 }
 else
 {
-    <EditForm Model="openVinoForm" FormName="OpenVinoModel" OnValidSubmit="LoadOpenVinoModelAsync" class="llama-workspace openvino-workspace">
-        <DataAnnotationsValidator />
-        <ValidationSummary />
+    <div class="llama-workspace openvino-workspace">
 
         <details class="driver-validation-panel" open="@(!IsOpenVinoValidationReady)">
             <summary class="section-heading driver-validation-summary">
@@ -500,7 +492,7 @@ else
                     </select>
                 </div>
                 <div class="model-actions">
-                    <button class="load-button" type="submit" disabled="@(isOpenVinoLoading || (openVinoDiagnostics?.IsGpuReady != true && openVinoDiagnostics?.IsNpuReady != true) || string.IsNullOrWhiteSpace(openVinoForm.ModelPath) || string.IsNullOrWhiteSpace(openVinoForm.Device))">
+                    <button class="load-button" type="button" @onclick="LoadOpenVinoModelAsync" disabled="@(isOpenVinoLoading || (openVinoDiagnostics?.IsGpuReady != true && openVinoDiagnostics?.IsNpuReady != true) || string.IsNullOrWhiteSpace(openVinoForm.ModelPath) || string.IsNullOrWhiteSpace(openVinoForm.Device))">
                         @(isOpenVinoLoading ? "Loading model..." : "Load model")
                     </button>
                 </div>
@@ -509,7 +501,7 @@ else
             <div class="profile-toolbar">
                 <div class="profile-select">
                     <label class="form-label" for="openvino-configuration-profile">Configuration set</label>
-                    <select id="openvino-configuration-profile" class="form-select" value="@selectedProfileId" @onchange="SelectProfileAsync">
+                    <select id="openvino-configuration-profile" class="form-select" value="@selectedProfileId" @onchange="SelectProfileAsync" disabled="@string.IsNullOrWhiteSpace(CurrentModelPath)">
                         <option value="">Select a saved set...</option>
                         @foreach (var profile in MatchingProfiles)
                         {
@@ -518,7 +510,7 @@ else
                     </select>
                 </div>
                 <div class="profile-actions">
-                    <button class="profile-button" type="button" @onclick="CreateProfileAsync">Create</button>
+                    <button class="profile-button" type="button" @onclick="CreateProfileAsync" disabled="@string.IsNullOrWhiteSpace(CurrentModelPath)">Create</button>
                     <button class="profile-button" type="button" @onclick="UpdateProfileAsync" disabled="@(!selectedProfileId.HasValue)">Update</button>
                     <button class="profile-button" type="button" @onclick="OpenAssignProfileAsync">Assign</button>
                 </div>
@@ -566,9 +558,9 @@ else
                 <details class="settings-panel" open>
                     <summary>Model loading</summary>
                     <div class="field-group">
-                        <label class="form-label" for="openvino-model-path">Custom GGUF file or IR directory</label>
+                            <label class="form-label" for="openvino-model-path">Custom GGUF file or IR directory</label>
                         <InputText id="openvino-model-path" class="form-control" @bind-Value="openVinoForm.ModelPath" @bind-Value:after="SelectOpenVinoModelAsync" />
-                        <span class="picker-note">Use a supported .gguf file directly, or an OpenVINO IR/GenAI model directory.</span>
+                            <span class="picker-note">Use a supported .gguf file directly, or an OpenVINO IR/GenAI model directory.</span>
                     </div>
                     <div class="field-row">
                         <div class="field-group">
@@ -600,7 +592,7 @@ else
                                     <input class="form-check-input" type="checkbox" id="openvino-device-@device.Id"
                                            checked="@(device.IsCompatible && GetOpenVinoDeviceSetting(device.Id).Enabled)"
                                            disabled="@(!device.IsCompatible)"
-                                           @onchange="eventArgs => SetOpenVinoDeviceEnabled(device.Id, eventArgs.Value is true)" />
+                                         @onchange="async eventArgs => await SetOpenVinoDeviceEnabledAsync(device.Id, eventArgs.Value is true)" />
                                     <label class="gpu-name" for="openvino-device-@device.Id">
                                         <strong>@device.Name</strong>
                                         <span>@device.Detail</span>
@@ -611,7 +603,7 @@ else
                                     <input id="@($"openvino-weight-{device.Id}")" class="form-control" type="number" min="0" step="0.1"
                                            disabled="@(!device.IsCompatible)"
                                            value="@GetOpenVinoDeviceSetting(device.Id).Weight.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)"
-                                           @onchange="eventArgs => SetOpenVinoDeviceWeight(device.Id, eventArgs.Value?.ToString())" />
+                                           @onchange="async eventArgs => await SetOpenVinoDeviceWeightAsync(device.Id, eventArgs.Value?.ToString())" />
                                 </div>
                             </div>
                         }
@@ -627,7 +619,9 @@ else
                     <div class="field-row">
                         <div class="field-group"><label class="form-label" for="openvino-max-tokens">Max new tokens</label><InputNumber id="openvino-max-tokens" class="form-control" @bind-Value="openVinoForm.MaxNewTokens" /></div>
                         <div class="field-group"><label class="form-label" for="openvino-temperature">Temperature</label><InputNumber id="openvino-temperature" class="form-control" @bind-Value="openVinoForm.Temperature" /></div>
+                        <div class="field-group"><label class="form-label" for="openvino-top-k">Top K</label><InputNumber id="openvino-top-k" class="form-control" @bind-Value="openVinoForm.TopK" /></div>
                         <div class="field-group"><label class="form-label" for="openvino-top-p">Top P</label><InputNumber id="openvino-top-p" class="form-control" @bind-Value="openVinoForm.TopP" /></div>
+                        <div class="field-group"><label class="form-label" for="openvino-repetition-penalty">Repetition penalty</label><InputNumber id="openvino-repetition-penalty" class="form-control" @bind-Value="openVinoForm.RepetitionPenalty" /></div>
                     </div>
                     <label class="setting-toggle"><InputCheckbox @bind-Value="openVinoForm.DoSample" /> Enable sampling</label>
                 </details>
@@ -687,7 +681,7 @@ else
                 <dd>@(openVinoStatus ?? "Ready for model loading")</dd>
             </dl>
         </section>
-    </EditForm>
+    </div>
 }
 
 @if (activeBackend == BackendTab.Llama && isLoading)
@@ -724,6 +718,9 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
     private string ActiveBackendLabel => activeBackend == BackendTab.Llama ? "LLama / Vulkan" : $"OpenVINO / {openVinoForm.Device}";
     private bool IsOpenVinoValidationReady => openVinoDiagnostics?.IsGpuReady == true || openVinoDiagnostics?.IsNpuReady == true;
+    private IReadOnlyList<LlamaModel> LlamaModels => databaseModels
+        .Where(model => string.Equals(Path.GetExtension(model.Path), ".gguf", StringComparison.OrdinalIgnoreCase))
+        .ToArray();
 
     private async Task LoadOpenVinoModelAsync()
     {
@@ -750,9 +747,12 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                         openVinoForm.MaxPromptLength,
                         openVinoForm.MinResponseLength,
                         openVinoForm.PrefillHint,
-                        openVinoForm.GenerateHint)));
+                        openVinoForm.GenerateHint),
+                    openVinoForm.TopK,
+                    openVinoForm.RepetitionPenalty));
             isOpenVinoModelLoaded = result.Succeeded;
             openVinoStatus = result.Message;
+            statusMessage = result.Succeeded ? null : "The model could not be loaded.";
         }
         finally
         {
@@ -796,7 +796,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             ? setting
             : new OpenVinoDeviceSetting(false, 0);
 
-    private void SetOpenVinoDeviceEnabled(string device, bool enabled)
+    private async Task SetOpenVinoDeviceEnabledAsync(string device, bool enabled)
     {
         var setting = GetOpenVinoDeviceSetting(device);
         if (enabled && device.StartsWith("NPU", StringComparison.OrdinalIgnoreCase))
@@ -817,14 +817,16 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             ? new OpenVinoDeviceSetting(true, setting.Weight > 0 ? setting.Weight : 1)
             : setting with { Enabled = false };
         UpdateOpenVinoDeviceRoute();
+        await SaveSettingsAsync();
     }
 
-    private void SetOpenVinoDeviceWeight(string device, string? value)
+    private async Task SetOpenVinoDeviceWeightAsync(string device, string? value)
     {
         _ = float.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var weight);
         var setting = GetOpenVinoDeviceSetting(device);
         openVinoForm.Devices[device] = setting with { Weight = Math.Max(0, weight) };
         UpdateOpenVinoDeviceRoute();
+        await SaveSettingsAsync();
     }
 
     private void UpdateOpenVinoDeviceRoute()
@@ -849,9 +851,21 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private async Task SelectBackendAsync(BackendTab backend)
     {
         activeBackend = backend;
+        statusMessage = null;
         isAssigningProfile = false;
         isCreatingProfile = false;
         var modelPath = backend == BackendTab.Llama ? form.ModelPath : openVinoForm.ModelPath;
+        if (string.IsNullOrWhiteSpace(modelPath))
+        {
+            selectedProfileId = null;
+            if (backend == BackendTab.OpenVino)
+                ResetOpenVinoConfiguration();
+            else
+                ResetModelConfiguration();
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
         var configurationBackend = backend == BackendTab.Llama
             ? ConfigurationBackend.Llama
             : ConfigurationBackend.OpenVino;
@@ -859,7 +873,13 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         if (profile is not null)
             TryApplyProfile(profile);
         else
+        {
             selectedProfileId = null;
+            if (backend == BackendTab.OpenVino)
+                ResetOpenVinoConfiguration();
+            else
+                ResetModelConfiguration();
+        }
         await InvokeAsync(StateHasChanged);
     }
 
@@ -909,6 +929,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         public float Temperature { get; set; } = 0.7f;
         public float TopP { get; set; } = 0.9f;
         public bool DoSample { get; set; } = true;
+        public int TopK { get; set; } = 50;
+        public float RepetitionPenalty { get; set; } = 1.2f;
         public int MaxPromptLength { get; set; } = 1024;
         public int MinResponseLength { get; set; } = 128;
         public string PrefillHint { get; set; } = "DYNAMIC";
@@ -923,6 +945,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             Temperature,
             TopP,
             DoSample,
+            TopK,
+            RepetitionPenalty,
             profileId,
             new OpenVinoNpuSettings(MaxPromptLength, MinResponseLength, PrefillHint, GenerateHint));
 
@@ -935,6 +959,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             Temperature = settings.Temperature;
             TopP = settings.TopP;
             DoSample = settings.DoSample;
+            TopK = settings.TopK;
+            RepetitionPenalty = settings.RepetitionPenalty;
             MaxPromptLength = settings.Npu?.MaxPromptLength ?? 1024;
             MinResponseLength = settings.Npu?.MinResponseLength ?? 128;
             PrefillHint = settings.Npu?.PrefillHint ?? "DYNAMIC";
@@ -974,10 +1000,9 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private bool isApplyingProfile;
     private string newProfileName = string.Empty;
 
-    protected override Task OnInitializedAsync()
+    protected override async Task OnInitializedAsync()
     {
-        _ = InitializeAsync();
-        return Task.CompletedTask;
+        await InitializeAsync();
     }
 
     private async Task InitializeAsync()
@@ -985,9 +1010,10 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         try
         {
             var savedSettings = await DataService.GetLlamaSettingsAsync();
+            var savedOpenVinoSettings = await DataService.GetOpenVinoSettingsAsync();
             openVinoDiagnostics = await DataService.GetDiagnosticsAsync();
             SyncOpenVinoDevices();
-            if (savedSettings is not null)
+            if (savedSettings is not null && !IsOpenVinoModelPath(savedSettings.ModelPath))
             {
                 form.ModelPath = savedSettings.ModelPath;
                 form.Backend = savedSettings.Backend;
@@ -1000,11 +1026,25 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             }
             databaseModels = await DataService.ScanLlamaModelsAsync();
             profiles = await DataService.GetModelConfigurationProfilesAsync();
-            selectedProfileId = GetPreferredProfile(form.ModelPath, ConfigurationBackend.Llama)?.Id
-                ?? (savedSettings?.ConfigurationProfileId is Guid profileId &&
-                    profiles.Any(profile => profile.Id == profileId && string.Equals(profile.ModelPath, form.ModelPath, StringComparison.OrdinalIgnoreCase))
-                    ? savedSettings.ConfigurationProfileId
-                    : null);
+            if (savedOpenVinoSettings is not null)
+                openVinoForm.Load(savedOpenVinoSettings);
+
+            var legacyOpenVinoPath = savedOpenVinoSettings?.ModelPath ??
+                (savedSettings is not null && IsOpenVinoModelPath(savedSettings.ModelPath) ? savedSettings.ModelPath : string.Empty);
+            if (savedOpenVinoSettings is null && !string.IsNullOrWhiteSpace(legacyOpenVinoPath))
+            {
+                openVinoForm.ModelPath = legacyOpenVinoPath;
+                await DataService.SaveOpenVinoSettingsAsync(openVinoForm.ToSettings());
+            }
+
+            var savedOpenVinoPath = !string.IsNullOrWhiteSpace(openVinoForm.ModelPath);
+            activeBackend = savedOpenVinoPath ? BackendTab.OpenVino : BackendTab.Llama;
+            var activeModelPath = activeBackend == BackendTab.OpenVino ? openVinoForm.ModelPath : form.ModelPath;
+            var preferredProfile = GetPreferredProfile(activeModelPath, activeBackend == BackendTab.OpenVino ? ConfigurationBackend.OpenVino : ConfigurationBackend.Llama);
+            if (preferredProfile is not null)
+                TryApplyProfile(preferredProfile);
+            else
+                selectedProfileId = null;
             loadStatus = await DataService.GetModelStatusAsync();
         }
         catch (Exception exception)
@@ -1017,9 +1057,9 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
     private async Task LoadModelAsync()
     {
-        if (string.IsNullOrWhiteSpace(form.ModelPath))
+        if (string.IsNullOrWhiteSpace(form.ModelPath) || !string.Equals(Path.GetExtension(form.ModelPath), ".gguf", StringComparison.OrdinalIgnoreCase))
         {
-            statusMessage = "Select or enter a GGUF model path first.";
+            statusMessage = "Select or enter a .gguf model path first.";
             return;
         }
 
@@ -1089,6 +1129,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
         if (activeBackend == BackendTab.OpenVino)
         {
+            await DataService.SaveOpenVinoSettingsAsync(openVinoForm.ToSettings(selectedProfileId));
+            await PersistCurrentProfileSettingsAsync();
             await PersistSelectedProfileAsync(openVinoForm.ModelPath, selectedProfileId);
             return;
         }
@@ -1101,10 +1143,17 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             form.VulkanDevices,
             advanced.ToSettings(),
             selectedProfileId));
+        await PersistCurrentProfileSettingsAsync();
     }
 
     private async Task SelectProfileAsync(ChangeEventArgs args)
     {
+        if (string.IsNullOrWhiteSpace(CurrentModelPath))
+        {
+            selectedProfileId = null;
+            return;
+        }
+
         if (!Guid.TryParse(args.Value?.ToString(), out var profileId))
         {
             selectedProfileId = null;
@@ -1320,13 +1369,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         return storedProfile ?? matchingProfiles
             .OrderByDescending(profile => profile.IsDefault)
             .ThenByDescending(profile => profile.UpdatedAtUtc)
-            .FirstOrDefault()
-            ?? (string.IsNullOrWhiteSpace(modelPath)
-                ? profiles.Where(profile => profile.Backend == backend)
-                    .OrderByDescending(profile => profile.IsDefault)
-                    .ThenByDescending(profile => profile.UpdatedAtUtc)
-                    .FirstOrDefault()
-                : null);
+            .FirstOrDefault();
     }
 
     private bool TryApplyProfile(ModelConfigurationProfile profile)
@@ -1379,6 +1422,26 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 : model).ToArray();
     }
 
+    private async Task PersistCurrentProfileSettingsAsync()
+    {
+        if (!selectedProfileId.HasValue || string.IsNullOrWhiteSpace(CurrentModelPath))
+            return;
+
+        var profile = profiles.FirstOrDefault(item => item.Id == selectedProfileId.Value &&
+            item.Backend == CurrentProfileBackend &&
+            string.Equals(item.ModelPath.Trim(), CurrentModelPath.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (profile is null)
+            return;
+
+        var saved = await DataService.SaveModelConfigurationProfileAsync(profile with
+        {
+            ModelPath = CurrentModelPath.Trim(),
+            ConfigurationJson = SerializeCurrentSettings(),
+            Backend = CurrentProfileBackend
+        });
+        profiles = profiles.Select(item => item.Id == saved.Id ? saved : item).ToArray();
+    }
+
     private static string SerializeSettingsForModel(LlamaSettings settings, string modelPath) =>
         JsonSerializer.Serialize(settings with { ModelPath = modelPath });
 
@@ -1390,6 +1453,14 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         if (isInitializing || isApplyingProfile)
             return;
 
+        if (string.IsNullOrWhiteSpace(openVinoForm.ModelPath))
+        {
+            selectedProfileId = null;
+            ResetOpenVinoConfiguration();
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
         var profile = GetPreferredProfile(openVinoForm.ModelPath, ConfigurationBackend.OpenVino);
         if (profile is null)
         {
@@ -1398,7 +1469,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         }
         else if (!TryApplyProfile(profile))
             ResetOpenVinoConfiguration();
-        await PersistSelectedProfileAsync(openVinoForm.ModelPath, selectedProfileId);
+        await SaveSettingsAsync();
         await InvokeAsync(StateHasChanged);
     }
 
@@ -1536,6 +1607,10 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
          statusMessage.Contains("not found", StringComparison.OrdinalIgnoreCase) ||
          statusMessage.Contains("valid", StringComparison.OrdinalIgnoreCase) ||
          statusMessage.Contains("cancelled", StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsOpenVinoModelPath(string modelPath) =>
+        !string.IsNullOrWhiteSpace(modelPath) &&
+        !string.Equals(Path.GetExtension(modelPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), ".gguf", StringComparison.OrdinalIgnoreCase);
 
     private sealed class ModelForm
     {

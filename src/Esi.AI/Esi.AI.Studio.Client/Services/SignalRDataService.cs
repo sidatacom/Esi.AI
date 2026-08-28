@@ -4,11 +4,12 @@ using Esi.AI.Models;
 
 namespace Esi.AI.Studio.Client.Services;
 
-public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IAsyncDisposable
+public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IModelRuntimeEvents, IAsyncDisposable
 {
     private readonly HubConnection connection;
 
     public event Func<ModelDownloadUpdate, Task>? ModelDownloadUpdated;
+    public event Func<Task>? ModelRuntimeStatusUpdated;
 
     public SignalRDataService(NavigationManager navigationManager)
     {
@@ -22,6 +23,12 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IAs
             if (handler is not null)
                 await handler(update);
         });
+            connection.On("ModelRuntimeStatusUpdated", async () =>
+            {
+                var handler = ModelRuntimeStatusUpdated;
+                if (handler is not null)
+                await handler();
+            });
     }
 
     public async Task<LlamaSettings?> GetLlamaSettingsAsync(CancellationToken cancellationToken = default)
@@ -34,6 +41,18 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IAs
     {
         await EnsureConnectedAsync(cancellationToken);
         await connection.InvokeAsync("SaveLlamaSettings", settings, cancellationToken);
+    }
+
+    public async Task<OpenVinoSettings?> GetOpenVinoSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<OpenVinoSettings?>("GetOpenVinoSettings", cancellationToken);
+    }
+
+    public async Task SaveOpenVinoSettingsAsync(OpenVinoSettings settings, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("SaveOpenVinoSettings", settings, cancellationToken);
     }
 
     public async Task<IReadOnlyList<LlamaModel>> GetLlamaModelsAsync(CancellationToken cancellationToken = default)
@@ -130,6 +149,12 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IAs
     {
         await EnsureConnectedAsync(cancellationToken);
         return await connection.InvokeAsync<OpenVinoLoadResultDto>("LoadOpenVinoModel", request, cancellationToken);
+    }
+
+    public async Task<OpenVinoModelStatusDto> GetOpenVinoModelStatusAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<OpenVinoModelStatusDto>("GetOpenVinoModelStatus", cancellationToken);
     }
 
     public async Task<IReadOnlyList<LocalModel>> ScanLocalModelsAsync(CancellationToken cancellationToken = default)

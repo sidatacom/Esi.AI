@@ -84,6 +84,28 @@ public sealed class DataService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
+    public async Task<OpenVinoSettings?> GetOpenVinoSettingsAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var entity = await db.OpenVinoSettings.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
+        if (entity is null)
+            return null;
+
+        return JsonSerializer.Deserialize<OpenVinoSettings>(entity.SettingsJson)
+            ?? throw new InvalidOperationException("The persisted OpenVINO settings are invalid.");
+    }
+
+    public async Task SaveOpenVinoSettingsAsync(OpenVinoSettings settings, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var entity = await db.OpenVinoSettings.SingleOrDefaultAsync(cancellationToken);
+        entity ??= new OpenVinoSettingsEntity { Id = 1 };
+        entity.SettingsJson = JsonSerializer.Serialize(settings);
+        if (entity.Id == 1 && db.Entry(entity).State == EntityState.Detached)
+            db.OpenVinoSettings.Add(entity);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<LlamaModel>> GetLlamaModelsAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
@@ -270,14 +292,17 @@ public sealed class DataService(
         return chat is null ? null : ToChat(chat);
     }
 
-    public async Task<PersistedChat?> AddChatExchangeAsync(Guid id, string userContent, LlamaGenerationResult generation, string modelPath, CancellationToken cancellationToken = default)
+    public async Task<PersistedChat?> AddChatExchangeAsync(Guid id, string userContent, LlamaGenerationResult generation, string modelPath, string backend, CancellationToken cancellationToken = default) =>
+        await AddChatExchangeAsync(id, userContent, generation.Text, modelPath, backend, generation.TokenCount, generation.TokensPerSecond, cancellationToken);
+
+    private async Task<PersistedChat?> AddChatExchangeAsync(Guid id, string userContent, string assistantContent, string modelPath, string backend, int? tokenCount, double? tokensPerSecond, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var chat = await db.ChatConversations.Include(item => item.Messages).SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
         if (chat is null) return null;
         var now = DateTime.UtcNow;
         chat.Messages.Add(new ChatMessageEntity { Role = "user", Content = userContent, CreatedAtUtc = now });
-        chat.Messages.Add(new ChatMessageEntity { Role = "assistant", Content = generation.Text, ModelPath = modelPath, TokenCount = generation.TokenCount, TokensPerSecond = generation.TokensPerSecond, CreatedAtUtc = now });
+        chat.Messages.Add(new ChatMessageEntity { Role = "assistant", Content = assistantContent, ModelPath = modelPath, Backend = backend, TokenCount = tokenCount, TokensPerSecond = tokensPerSecond, CreatedAtUtc = now });
         chat.UpdatedAtUtc = now;
         if (chat.Title == "Neuer Chat") chat.Title = userContent.Length > 60 ? userContent[..60] : userContent;
         await db.SaveChangesAsync(cancellationToken);
@@ -289,6 +314,10 @@ public sealed class DataService(
 
     public async Task<ClientModelLoadStatus> LoadModelAsync(LoadModelRequest request, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(request.ModelPath) ||
+            !string.Equals(Path.GetExtension(request.ModelPath), ".gguf", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("LLama loading requires a .gguf model path.", nameof(request));
+
         var advanced = request.Advanced;
         await llamaModelLoader.LoadAsync(request.ModelPath, request.Backend, request.GpuLayerCount, request.ContextSize,
             request.VulkanDeviceWeights,
@@ -350,7 +379,7 @@ public sealed class DataService(
                 request.ModelPath,
                 request.Device,
                 cancellationToken,
-                new OpenVinoGenerationOptions(request.MaxNewTokens, request.Temperature, request.TopP, request.DoSample),
+                new OpenVinoGenerationOptions(request.MaxNewTokens, request.Temperature, request.TopP, request.DoSample, request.TopK, request.RepetitionPenalty),
                 request.CacheDirectory,
                 new OpenVinoNpuOptions(
                     request.Npu?.MaxPromptLength ?? 1024,
@@ -365,18 +394,48 @@ public sealed class DataService(
         }
     }
 
+    public Task<OpenVinoModelStatusDto> GetOpenVinoModelStatusAsync(CancellationToken cancellationToken = default)
+    {
+        var status = openVinoModelLoader.GetStatus();
+        var modelSizeInBytes = status.ModelPath is not null && File.Exists(status.ModelPath)
+            ? (ulong)new FileInfo(status.ModelPath).Length
+            : 0;
+        return Task.FromResult(new OpenVinoModelStatusDto(status.ModelPath, status.Device, status.IsModelLoaded, modelSizeInBytes));
+    }
+
     public async Task<PersistedChat?> AddChatExchangeAsync(Guid id, ChatExchangeRequest request, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.Content) || string.IsNullOrWhiteSpace(request.ModelPath))
             return null;
+        var backend = request.Backend?.Trim();
+        if (!string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(backend, "Vulkan", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(backend, "CPU", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException($"Unsupported chat backend '{request.Backend}'.", nameof(request));
         var chat = await GetChatAsync(id, cancellationToken);
         if (chat is null)
             return null;
+
+        if (string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase))
+        {
+            var modelPath = Path.GetFullPath(request.ModelPath);
+            var openVinoStatus = openVinoModelLoader.GetStatus();
+            if (!openVinoStatus.IsModelLoaded || !string.Equals(openVinoStatus.ModelPath, modelPath, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The selected OpenVINO model is not loaded.");
+
+            using var openVinoSession = openVinoModelLoader.CreateChatSession();
+            var openVinoGeneration = openVinoSession.GenerateWithStats(request.Content.Trim());
+            return await AddChatExchangeAsync(id, request.Content.Trim(), openVinoGeneration.Text, modelPath, "OpenVINO", openVinoGeneration.TokenCount, openVinoGeneration.TokensPerSecond, cancellationToken);
+        }
+
+        if (!string.Equals(Path.GetExtension(request.ModelPath), ".gguf", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("LLama chat requires a .gguf model path.", nameof(request));
+
         using var session = llamaModelLoader.CreateChatSession("You are a helpful assistant.", request.ModelPath);
         var messages = chat.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content))
             .Append(new LlamaChatMessage("user", request.Content.Trim())).ToArray();
         var generation = await session.GenerateWithStatsAsync(messages, cancellationToken);
-        return await AddChatExchangeAsync(id, request.Content.Trim(), generation, request.ModelPath, cancellationToken);
+        return await AddChatExchangeAsync(id, request.Content.Trim(), generation, request.ModelPath, backend!, cancellationToken);
     }
 
     private static ClientModelLoadStatus ToClientStatus(Esi.AI.Core.ModelLoading.ModelLoadStatus status) =>
@@ -388,7 +447,7 @@ public sealed class DataService(
                 model.VulkanDevices.Select(device => new ClientVulkanDeviceStatus(device.Name, device.Description, device.AssignedLayerCount, device.ModelBufferMiB)).ToArray(), model.CpuModelBufferMiB)).ToArray());
 
     private static PersistedChat ToChat(ChatConversationEntity chat) => new(chat.Id, chat.Title, chat.CreatedAtUtc, chat.UpdatedAtUtc,
-        chat.Messages.OrderBy(message => message.CreatedAtUtc).ThenBy(message => message.Id).Select(message => new PersistedChatMessage(message.Role, message.Content, message.CreatedAtUtc, message.ModelPath, message.TokenCount, message.TokensPerSecond)).ToArray());
+        chat.Messages.OrderBy(message => message.CreatedAtUtc).ThenBy(message => message.Id).Select(message => new PersistedChatMessage(message.Role, message.Content, message.CreatedAtUtc, message.ModelPath, message.Backend, message.TokenCount, message.TokensPerSecond)).ToArray());
 
     private static LlamaSettings ToSettings(LlamaSettingsEntity entity) =>
         new(entity.ModelPath, entity.Backend, entity.GpuLayerCount, entity.ContextSize,

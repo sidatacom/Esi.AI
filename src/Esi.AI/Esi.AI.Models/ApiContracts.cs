@@ -25,7 +25,7 @@ public sealed record ChatResponse(string Content);
 
 public sealed record CreateChatRequest(string? Title = null);
 
-public sealed record ChatExchangeRequest(string Content, string? ModelPath = null);
+public sealed record ChatExchangeRequest(string Content, string? ModelPath = null, string? Backend = null);
 
 public sealed record ModelDownloadRequest(string ModelId, string? FileName = null);
 
@@ -85,6 +85,8 @@ public sealed record OpenVinoSettings(
     float Temperature = .7f,
     float TopP = .9f,
     bool DoSample = true,
+    int TopK = 50,
+    float RepetitionPenalty = 1.2f,
     Guid? ConfigurationProfileId = null,
     OpenVinoNpuSettings? Npu = null);
 
@@ -98,7 +100,9 @@ public sealed record OpenVinoLoadRequest(
     float Temperature = .7f,
     float TopP = .9f,
     bool DoSample = true,
-    OpenVinoNpuSettings? Npu = null);
+    OpenVinoNpuSettings? Npu = null,
+    int TopK = 50,
+    float RepetitionPenalty = 1.2f);
 
 public sealed record OpenVinoNpuSettings(
     int MaxPromptLength = 1024,
@@ -107,3 +111,9 @@ public sealed record OpenVinoNpuSettings(
     string GenerateHint = "FAST_COMPILE");
 
 public sealed record OpenVinoLoadResultDto(bool Succeeded, string Message, string Device);
+
+public sealed record OpenVinoModelStatusDto(
+    string? ModelPath,
+    string? Device,
+    bool IsModelLoaded,
+    ulong ModelSizeInBytes);

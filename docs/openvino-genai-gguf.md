@@ -94,6 +94,25 @@ GGUF bedeutet nicht automatisch, dass jede GGUF-Datei mit OpenVINO GenAI geladen
 
 Ein Fehler beim direkten GGUF-Laden ist daher nicht automatisch ein Treiberfehler. Er kann auch bedeuten, dass die Architektur in der Preview nicht unterstützt wird. In diesem Fall sollte das ursprüngliche Hugging-Face-Modell in OpenVINO IR exportiert werden.
 
+### Qwen3.8 aus dem lokalen LocalAI-Bestand
+
+Im LocalAI-Modellbestand liegen Qwen3.8-GGUF-Dateien, zum Beispiel `Qwen3.8-9B-Q8_0.gguf` und `Qwen3.8-27B-Q4_K_M.gguf`. Ihre GGUF-Metadaten melden die Architektur `qwen35`. Ein realer Esi.AI-Test mit `Qwen3.8-9B-Q8_0.gguf` auf `GPU.1` scheitert in OpenVINO 2026.3 beim Erzeugen der `LLMPipeline` mit Status `-17`.
+
+Das ist nicht das Artefakt aus dem Intel-Beitrag. Der dort verlinkte Download `OpenVINO/Qwen3.8-27B-int4-ov` ist ein vor-konvertiertes OpenVINO-IR-Modell für `VLMPipeline`; seine Model Card nennt OpenVINO 2026.4.0 beziehungsweise GenAI-Nightly-Builds ab August 2026 als Kompatibilitätsvoraussetzung. Die aktuelle Esi.AI-Runtime verwendet OpenVINO und GenAI 2026.3.0. Für Qwen3.8 muss daher entweder die passende IR-Version mit einer kompatiblen Runtime eingesetzt oder eine Runtime mit expliziter `qwen35`-GGUF-Unterstützung verwendet werden.
+
+Der vollständige IR-Bestand wurde unter `/home/llm/.cache/esi-ai/models/Qwen3.8-27B-int4-ov` geprüft. Das Verzeichnis enthält neben Sprachmodell, Tokenizer und Detokenizer auch `openvino_vision_embeddings_model.xml`, `openvino_vision_embeddings_pos_model.xml` und `openvino_vision_embeddings_merger_model.xml`. Esi.AI erkennt diese Vision-Komponente und verwendet dafür automatisch `VLMPipeline`; reine Text-IR-Verzeichnisse verwenden weiterhin `LLMPipeline`.
+
+Für einen lokalen Ubuntu-26-Test wurden die OpenVINO-2026.4-Nightly-Bibliotheken aus den offiziellen Archiven geladen. Der GenAI-Build muss bei diesem Modell vom 14. August 2026 oder neuer sein:
+
+```bash
+runtime=/path/to/openvino_genai_ubuntu26_2026.4.0.0.dev20260814_x86_64/runtime
+export OPENVINO_RUNTIME_DIR="$runtime/lib/intel64"
+export OPENVINO_GENAI_C_LIBRARY="$runtime/lib/intel64/libopenvino_genai_c.so"
+export LD_LIBRARY_PATH="$runtime/lib/intel64:$runtime/3rdparty/tbb/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+```
+
+Die stabilen Esi.AI-NuGet-Referenzen bleiben bei 2026.3.0, da die geprüften 2026.4-Artefakte native Nightly-Tarballs und keine passenden stabilen NuGet-Pakete sind. Ein realer Test mit dem 14.-August-GenAI-Nightly, `GPU.1` und dem genannten Modell lud das Modell und erzeugte erfolgreich Text. Der Lauf mit dem 14.-Juli-GenAI-Nightly sowie der Lauf mit `LLMPipeline` wurden wegen der Modell-/Runtime-Inkompatibilität nicht als gültige Integration gewertet.
+
 ## Alternative: Hugging-Face-Modell nach OpenVINO IR exportieren
 
 Für Architekturen außerhalb der direkten GGUF-Unterstützung wird das ursprüngliche Hugging-Face-Modell mit Optimum Intel exportiert:
@@ -110,16 +129,16 @@ Das exportierte Verzeichnis enthält die OpenVINO-Modelldateien sowie die für G
 
 ## Relevanz für Esi.AI
 
-Der aktuelle Esi.AI-Loader verwendet bereits die richtige GenAI-Abstraktion:
+Der aktuelle Esi.AI-Loader verwendet die passende GenAI-Abstraktion abhängig von der Modellstruktur:
 
 ```csharp
-var pipeline = new LLMPipeline(modelPath, device);
+var pipeline = new VLMPipeline(modelPath, device); // bei vorhandener Vision-Komponente
 ```
 
 Der Loader akzeptiert deshalb beide Formen:
 
 - eine `.gguf`-Datei für den direkten GGUF-Weg;
-- ein Verzeichnis für ein OpenVINO-IR-/GenAI-Modell.
+- ein Verzeichnis für ein OpenVINO-IR-/GenAI-Modell; Vision-IR-Verzeichnisse werden als VLM geladen.
 
 Die Validierung prüft für GGUF `File.Exists(modelPath)` und die Endung `.gguf`; für IR-Modelle bleibt `Directory.Exists(modelPath)` bestehen. Der gespeicherte Profilwert enthält den exakten GGUF-Dateipfad, nicht nur das übergeordnete Verzeichnis. Für den 2025.2-Kompatibilitätsweg muss zusätzlich ein Tokenizer-Verzeichnis konfigurierbar sein; bei neueren Runtimes kann dieses Feld entfallen.
 

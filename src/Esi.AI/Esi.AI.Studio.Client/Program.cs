@@ -13,5 +13,6 @@ builder.Services.AddAuthenticationStateDeserialization();
 builder.Services.AddScoped<SignalRDataService>();
 builder.Services.AddScoped<IDataService>(services => services.GetRequiredService<SignalRDataService>());
 builder.Services.AddScoped<IModelDownloadEvents>(services => services.GetRequiredService<SignalRDataService>());
+builder.Services.AddScoped<IModelRuntimeEvents>(services => services.GetRequiredService<SignalRDataService>());
 
 await builder.Build().RunAsync();

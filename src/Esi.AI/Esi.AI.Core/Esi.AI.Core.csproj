@@ -25,6 +25,18 @@
           Link="runtimes/linux-x64/native/avx2/libggml-cpu.so"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest" />
+        <None Include="../../../origins/sidatacom/LLamaSharp/LLama/runtimes/deps/avx2/libggml-base.so"
+          Link="runtimes/linux-x64/native/avx2/libggml-base.so"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+        <None Include="../../../origins/sidatacom/LLamaSharp/LLama/runtimes/deps/avx2/libggml.so"
+          Link="runtimes/linux-x64/native/avx2/libggml.so"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+        <None Include="../../../origins/sidatacom/LLamaSharp/LLama/runtimes/deps/avx2/libllama.so"
+          Link="runtimes/linux-x64/native/avx2/libllama.so"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

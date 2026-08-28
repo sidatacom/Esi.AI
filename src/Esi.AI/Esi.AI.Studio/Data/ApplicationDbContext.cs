@@ -6,6 +6,7 @@ namespace Esi.AI.Studio.Data;
 public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options) : IdentityDbContext<ApplicationUser>(options)
 {
 	public DbSet<LlamaSettingsEntity> LlamaSettings => Set<LlamaSettingsEntity>();
+	public DbSet<OpenVinoSettingsEntity> OpenVinoSettings => Set<OpenVinoSettingsEntity>();
 	public DbSet<ModelConfigurationProfileEntity> ModelConfigurationProfiles => Set<ModelConfigurationProfileEntity>();
 	public DbSet<LlamaModelEntity> LlamaModels => Set<LlamaModelEntity>();
 	public DbSet<ChatConversationEntity> ChatConversations => Set<ChatConversationEntity>();

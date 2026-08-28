@@ -1,6 +1,6 @@
 using Esi.AI.Studio.Client.Services;
-using Esi.AI.Core.ModelLoading;
 using Esi.AI.Core.Chat;
+using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
 using Esi.AI.Studio.Services;
 using Microsoft.AspNetCore.SignalR;
@@ -11,7 +11,6 @@ namespace Esi.AI.Studio.Hubs;
 
 public sealed class DataHub(
     DataService dataService,
-    LlamaModelLoader modelLoader,
     OpenVinoDiagnosticsService openVinoDiagnostics,
     OpenVinoDriverInstaller openVinoInstaller,
     ModelLibraryService modelLibrary) : Hub
@@ -19,6 +18,10 @@ public sealed class DataHub(
     public Task<LlamaSettings?> GetLlamaSettings() => dataService.GetLlamaSettingsAsync(Context.ConnectionAborted);
 
     public Task SaveLlamaSettings(LlamaSettings settings) => dataService.SaveLlamaSettingsAsync(settings, Context.ConnectionAborted);
+
+    public Task<OpenVinoSettings?> GetOpenVinoSettings() => dataService.GetOpenVinoSettingsAsync(Context.ConnectionAborted);
+
+    public Task SaveOpenVinoSettings(OpenVinoSettings settings) => dataService.SaveOpenVinoSettingsAsync(settings, Context.ConnectionAborted);
 
     public Task<IReadOnlyList<LlamaModel>> GetLlamaModels() => dataService.GetLlamaModelsAsync(Context.ConnectionAborted);
 
@@ -44,33 +47,16 @@ public sealed class DataHub(
     public Task SetDefaultModelConfigurationProfile(Guid id) =>
         dataService.SetDefaultModelConfigurationProfileAsync(id, Context.ConnectionAborted);
 
-    public ClientModelLoadStatus GetModelStatus() => ToClientStatus(modelLoader.GetStatus());
+    public Task<ClientModelLoadStatus> GetModelStatus() => dataService.GetModelStatusAsync(Context.ConnectionAborted);
 
-    public async Task<ClientModelLoadStatus> LoadModel(ClientLoadModelRequest request)
-    {
-        var advanced = request.Advanced;
-        await modelLoader.LoadAsync(request.ModelPath, request.Backend, request.GpuLayerCount, request.ContextSize,
-            request.VulkanDeviceWeights,
-            new LlamaLoadOptions(advanced.MainGpu, advanced.SeqMax, advanced.RecurrentRollbackSnapshots, advanced.UseMemorymap,
-                advanced.UseDirectIO, advanced.UseMemoryLock, advanced.Threads, advanced.BatchThreads, advanced.BatchSize,
-                advanced.UBatchSize, advanced.Embeddings, advanced.NoKqvOffload, advanced.FlashAttention, advanced.VocabOnly,
-                advanced.OpOffload, advanced.SwaFull, advanced.KVUnified, advanced.RopeFrequencyBase, advanced.RopeFrequencyScale,
-                advanced.YarnExtrapolationFactor, advanced.YarnAttentionFactor, advanced.YarnBetaFast, advanced.YarnBetaSlow,
-                advanced.YarnOriginalContext), Context.ConnectionAborted);
-        return ToClientStatus(modelLoader.GetStatus());
-    }
+    public Task<ClientModelLoadStatus> LoadModel(ClientLoadModelRequest request) =>
+        dataService.LoadModelAsync(request, Context.ConnectionAborted);
 
-    public async Task<ClientModelLoadStatus> UnloadModel()
-    {
-        await modelLoader.StopAsync(Context.ConnectionAborted);
-        return ToClientStatus(modelLoader.GetStatus());
-    }
+    public Task<ClientModelLoadStatus> UnloadModel() =>
+        dataService.UnloadModelAsync(Context.ConnectionAborted);
 
-    public async Task<ClientModelLoadStatus> UnloadModelByPath(string modelPath)
-    {
-        await modelLoader.UnloadAsync(modelPath, Context.ConnectionAborted);
-        return ToClientStatus(modelLoader.GetStatus());
-    }
+    public Task<ClientModelLoadStatus> UnloadModelByPath(string modelPath) =>
+        dataService.UnloadModelAsync(modelPath, Context.ConnectionAborted);
 
     public OpenVinoDiagnosticsDto GetOpenVinoDiagnostics()
     {
@@ -130,6 +116,9 @@ public sealed class DataHub(
     public Task<OpenVinoLoadResultDto> LoadOpenVinoModel(OpenVinoLoadRequest request) =>
         dataService.LoadModelAsync(request, Context.ConnectionAborted);
 
+    public Task<OpenVinoModelStatusDto> GetOpenVinoModelStatus() =>
+        dataService.GetOpenVinoModelStatusAsync(Context.ConnectionAborted);
+
     public async Task<IReadOnlyList<LocalModel>> ScanLocalModels() =>
         await dataService.ScanLocalModelsAsync(Context.ConnectionAborted);
 
@@ -158,27 +147,7 @@ public sealed class DataHub(
 
     public async Task<PersistedChat?> AddChatExchange(Guid id, ChatExchangeRequest request)
     {
-        if (string.IsNullOrWhiteSpace(request.Content) || string.IsNullOrWhiteSpace(request.ModelPath))
-            return null;
-        var chat = await dataService.GetChatAsync(id, Context.ConnectionAborted);
-        if (chat is null)
-            return null;
-        using var session = modelLoader.CreateChatSession("You are a helpful assistant.", request.ModelPath);
-        var messages = chat.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content))
-            .Append(new LlamaChatMessage("user", request.Content.Trim())).ToArray();
-        var generation = await session.GenerateWithStatsAsync(messages, Context.ConnectionAborted);
-        return await dataService.AddChatExchangeAsync(id, request.Content.Trim(), generation, request.ModelPath, Context.ConnectionAborted);
+        return await dataService.AddChatExchangeAsync(id, request, Context.ConnectionAborted);
     }
 
-    private static ClientModelLoadStatus ToClientStatus(Esi.AI.Core.ModelLoading.ModelLoadStatus status) =>
-        new(status.ModelPath, status.Backend, status.GpuLayerCount, status.ContextSize, status.ModelSizeInBytes,
-            status.FoundVulkanGpuCount,
-            status.VulkanDevices.Select(device => new Esi.AI.Studio.Client.Services.VulkanDeviceStatus(device.Name, device.Description, device.AssignedLayerCount, device.ModelBufferMiB)).ToArray(),
-            status.CpuModelBufferMiB, status.LoadLog, status.VulkanDeviceWeights, status.IsModelLoaded,
-            status.LoadedModels.Select(ToClientLoadedModelStatus).ToArray());
-
-    private static Esi.AI.Studio.Client.Services.LoadedModelStatus ToClientLoadedModelStatus(Esi.AI.Core.ModelLoading.LoadedModelStatus model) =>
-        new(model.ModelPath, model.Backend, model.GpuLayerCount, model.ContextSize, model.ModelSizeInBytes,
-            model.VulkanDevices.Select(device => new Esi.AI.Studio.Client.Services.VulkanDeviceStatus(device.Name, device.Description, device.AssignedLayerCount, device.ModelBufferMiB)).ToArray(),
-            model.CpuModelBufferMiB);
 }

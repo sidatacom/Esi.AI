@@ -18,15 +18,16 @@ description: 'See process Copilot is following where you can edit this to reshap
 
 # Phase 1: Initialization
 
-- Create file `./Copilot-Processing.md` in workspace root
-- Populate `./Copilot-Processing.md` with user request details
+- Create directory `./Copilot-Processing/` if it does not exist
+- Create a new file `./Copilot-Processing/YYYYMMDD-HHmmss.md` for every session; never append to a previous session log
+- Populate the new session file with user request details
 - Work silently without announcements until complete.
 - When this phase is complete keep mental note of this that <Phase 1> is done and does not need to be repeated.
 
 # Phase 2: Planning
 
-- Generate an action plan into the `./Copilot-Processing.md` file.
-- Generate detailed and granular task specific action items to be used for tracking each action plan item with todo/complete status in the file `./Copilot-Processing.md`.
+- Generate an action plan into the current session log file.
+- Generate detailed and granular task specific action items to be used for tracking each action plan item with todo/complete status in the current session log file.
 - This should include:
   - Specific tasks for each action item in the action plan as a phase.
   - Clear descriptions of what needs to be done
@@ -39,17 +40,17 @@ description: 'See process Copilot is following where you can edit this to reshap
 
 - Execute action items from the action plan in logical groupings/phases
 - Work silently without announcements until complete.
-- Update file `./Copilot-Processing.md` and mark the action item(s) as complete in the tracking.
-- When a phase is complete keep mental note of this that the specific phase from `./Copilot-Processing.md` is done and does not need to be repeated.
+- Update the current session log file and mark the action item(s) as complete in the tracking.
+- When a phase is complete keep mental note of this that the specific phase from the current session log is done and does not need to be repeated.
 - Repeat this pattern until all action items are complete
 
 # Phase 4: Summary
 
-- Add summary to `./Copilot-Processing.md`
+- Add summary to the current session log file
 - Work silently without announcements until complete.
 - Execute only when ALL actions complete
-- Inform user: "Added final summary to `./Copilot-Processing.md`."
-- Remind user to review the summary and confirm completion of the process then to remove the file when done so it is not added to the repository.
+- Inform user of the current session log file path.
+- Remind user to review the summary and confirm completion of the process, then remove the session log when done so it is not added to the repository.
 
 **ENFORCEMENT RULES:**
 - NEVER write "# Phase X" headers in responses

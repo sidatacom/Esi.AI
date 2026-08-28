@@ -7,6 +7,11 @@ public interface IModelDownloadEvents
     event Func<ModelDownloadUpdate, Task>? ModelDownloadUpdated;
 }
 
+public interface IModelRuntimeEvents
+{
+    event Func<Task>? ModelRuntimeStatusUpdated;
+}
+
 public interface IDataService
 {
     Task<PersistedChat> CreateChatAsync(CreateChatRequest request, CancellationToken cancellationToken = default);
@@ -15,6 +20,10 @@ public interface IDataService
     Task<LlamaSettings?> GetLlamaSettingsAsync(CancellationToken cancellationToken = default);
 
     Task SaveLlamaSettingsAsync(LlamaSettings settings, CancellationToken cancellationToken = default);
+
+    Task<OpenVinoSettings?> GetOpenVinoSettingsAsync(CancellationToken cancellationToken = default);
+
+    Task SaveOpenVinoSettingsAsync(OpenVinoSettings settings, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<LlamaModel>> GetLlamaModelsAsync(CancellationToken cancellationToken = default);
 
@@ -54,13 +63,14 @@ public interface IDataService
     Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default);
     Task<OpenVinoSolveResultDto> SolveDiagnosticAsync(string checkId, CancellationToken cancellationToken = default);
     Task<OpenVinoLoadResultDto> LoadModelAsync(OpenVinoLoadRequest request, CancellationToken cancellationToken = default);
+    Task<OpenVinoModelStatusDto> GetOpenVinoModelStatusAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed record ChatSummary(Guid Id, string Title, DateTime UpdatedAtUtc, int MessageCount);
 
 public sealed record PersistedChat(Guid Id, string Title, DateTime CreatedAtUtc, DateTime UpdatedAtUtc, IReadOnlyList<PersistedChatMessage> Messages);
 
-public sealed record PersistedChatMessage(string Role, string Content, DateTime CreatedAtUtc, string? ModelPath = null, int? TokenCount = null, double? TokensPerSecond = null);
+public sealed record PersistedChatMessage(string Role, string Content, DateTime CreatedAtUtc, string? ModelPath = null, string? Backend = null, int? TokenCount = null, double? TokensPerSecond = null);
 
 public sealed record LlamaSettings(
     string ModelPath,

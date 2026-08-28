@@ -15,15 +15,7 @@ using Esi.AI.Core.ModelLoading;
 using Esi.AI.Core.Chat;
 using Esi.AI.Models;
 
-var openVinoNativeDirectory = Path.Combine(AppContext.BaseDirectory, "runtimes", "linux-x64", "native");
-if (OperatingSystem.IsLinux() && Directory.Exists(openVinoNativeDirectory))
-{
-    var currentLibraryPath = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
-    var libraryPath = string.IsNullOrWhiteSpace(currentLibraryPath)
-        ? openVinoNativeDirectory
-        : $"{openVinoNativeDirectory}{Path.PathSeparator}{currentLibraryPath}";
-    Environment.SetEnvironmentVariable("LD_LIBRARY_PATH", libraryPath);
-}
+OpenVinoModelLoader.InitializeRuntime();
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseStaticWebAssets();
@@ -106,6 +98,7 @@ builder.Services.AddSingleton<OpenVinoDiagnosticsService>();
 builder.Services.AddSingleton<OpenVinoDriverInstaller>();
 builder.Services.AddSingleton<OpenVinoModelLoader>();
 builder.Services.AddScoped<IModelDownloadEvents, ServerModelDownloadEvents>();
+builder.Services.AddScoped<IModelRuntimeEvents, ServerModelDownloadEvents>();
 builder.Services.AddHttpClient("HuggingFace", client =>
 {
     client.BaseAddress = new Uri("https://huggingface.co/");

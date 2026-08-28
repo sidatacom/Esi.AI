@@ -17,6 +17,7 @@ public sealed class ChatMessageEntity
     public string Role { get; set; } = string.Empty;
     public string Content { get; set; } = string.Empty;
     public string? ModelPath { get; set; }
+    public string? Backend { get; set; }
     public int? TokenCount { get; set; }
     public double? TokensPerSecond { get; set; }
     public DateTime CreatedAtUtc { get; set; }
