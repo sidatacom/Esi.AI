@@ -78,7 +78,7 @@ builder.Services.AddAuthentication(options =>
 
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 builder.Services.AddDbContextFactory<ApplicationDbContext>(options =>
-    options.UseSqlite(connectionString), ServiceLifetime.Scoped);
+    options.UseSqlite(connectionString));
 builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 
 builder.Services.AddIdentityCore<ApplicationUser>(options =>
@@ -93,6 +93,7 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
 builder.Services.AddSingleton<OpenVinoDiagnosticsService>();
 builder.Services.AddSingleton<OpenVinoDriverInstaller>();
+builder.Services.AddSingleton<BackendPrerequisiteProvisioner>();
 builder.Services.AddSingleton<ModelRuntime>();
 builder.Services.AddHostedService(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddScoped<IModelDownloadEvents, ServerModelDownloadEvents>();
@@ -107,6 +108,7 @@ builder.Services.AddSingleton<ModelLibraryService>(services =>
     new ModelLibraryService(
         services.GetRequiredService<IHttpClientFactory>().CreateClient("HuggingFace"),
         services.GetRequiredService<IHubContext<DataHub>>(),
+        services.GetRequiredService<IDbContextFactory<ApplicationDbContext>>(),
         services.GetRequiredService<IOptions<ModelLibraryOptions>>()));
 builder.Services.AddScoped<DataService>();
     builder.Services.AddScoped<IDataService>(services => services.GetRequiredService<DataService>());
@@ -119,9 +121,10 @@ using (var scope = app.Services.CreateScope())
     db.Database.Migrate();
 
     var library = scope.ServiceProvider.GetRequiredService<ModelLibraryService>();
+    await library.RestoreDownloadsAsync();
     var dataService = scope.ServiceProvider.GetRequiredService<DataService>();
     var models = await library.ScanLocalModelsAsync();
-    await dataService.SyncLlamaModelsAsync(models.Select(model => new LlamaModel(
+    await dataService.SyncLlamaModelsAsync(models.Where(model => model.Format == ReferenceModelFormat.Gguf).Select(model => new LlamaModel(
         Guid.Empty, model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc)).ToArray());
 }
 

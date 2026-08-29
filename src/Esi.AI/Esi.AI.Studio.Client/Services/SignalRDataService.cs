@@ -16,6 +16,8 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         connection = new HubConnectionBuilder()
             .WithUrl(navigationManager.ToAbsoluteUri("/hubs/data"))
             .WithAutomaticReconnect()
+            .WithServerTimeout(TimeSpan.FromMinutes(15))
+            .WithKeepAliveInterval(TimeSpan.FromSeconds(10))
             .Build();
         connection.On<ModelDownloadUpdate>("ModelDownloadUpdated", async update =>
         {
@@ -59,6 +61,12 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     {
         await EnsureConnectedAsync(cancellationToken);
         return await connection.InvokeAsync<IReadOnlyList<LlamaModel>>("GetLlamaModels", cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<BackendModel>> GetBackendModelsAsync(ConfigurationBackend backend, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<BackendModel>>("GetBackendModels", backend, cancellationToken);
     }
 
     public async Task<IReadOnlyList<LlamaModel>> ScanLlamaModelsAsync(CancellationToken cancellationToken = default)
@@ -121,6 +129,18 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         return await connection.InvokeAsync<ModelLoadStatus>("LoadModel", request, cancellationToken);
     }
 
+    public async Task<ModelLoadStatus> LoadPythonModelAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<ModelLoadStatus>("LoadPythonModel", request, cancellationToken);
+    }
+
+    public async Task<ModelLoadStatus> LoadDotLlmModelAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<ModelLoadStatus>("LoadDotLlmModel", request, cancellationToken);
+    }
+
     public async Task<ModelLoadStatus> UnloadModelAsync(CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
@@ -151,6 +171,18 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         return await connection.InvokeAsync<OpenVinoSolveResultDto>("SolveOpenVinoDiagnostic", checkId, cancellationToken);
     }
 
+    public async Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<BackendPrerequisiteDiagnostics>("GetBackendPrerequisites", backend, pythonExecutable, cancellationToken);
+    }
+
+    public async Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<BackendPrerequisiteSolveResult>("PrepareBackend", backend, pythonExecutable, cancellationToken);
+    }
+
     public async Task<OpenVinoLoadResultDto> LoadModelAsync(OpenVinoLoadRequest request, CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
@@ -175,16 +207,34 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         return await connection.InvokeAsync<IReadOnlyList<string>>("GetModelDirectories", cancellationToken);
     }
 
-    public async Task<IReadOnlyList<HuggingFaceModel>> SearchModelsAsync(string query, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<HuggingFaceModel>> SearchModelsAsync(HuggingFaceSearchRequest request, CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
-        return await connection.InvokeAsync<IReadOnlyList<HuggingFaceModel>>("SearchModels", query, cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<HuggingFaceModel>>("SearchModels", request, cancellationToken);
     }
 
     public async Task<Guid> StartModelDownloadAsync(ModelDownloadRequest request, CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
         return await connection.InvokeAsync<Guid>("StartModelDownload", request, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<ModelDownloadOption>> GetModelDownloadOptionsAsync(string modelId, string library = "gguf", CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<ModelDownloadOption>>("GetModelDownloadOptions", modelId, library, cancellationToken);
+    }
+
+    public async Task PauseModelDownloadAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("PauseModelDownload", id, cancellationToken);
+    }
+
+    public async Task ResumeModelDownloadAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("ResumeModelDownload", id, cancellationToken);
     }
 
     public async Task<DownloadStatus?> GetModelDownloadAsync(Guid id, CancellationToken cancellationToken = default)
@@ -227,6 +277,12 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     {
         if (connection.State == HubConnectionState.Disconnected)
             await connection.StartAsync(cancellationToken);
+
+        while (connection.State is HubConnectionState.Connecting or HubConnectionState.Reconnecting)
+            await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
+
+        if (connection.State != HubConnectionState.Connected)
+            throw new InvalidOperationException("The data connection is not active.");
     }
 
     public async ValueTask DisposeAsync()

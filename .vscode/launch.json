@@ -15,7 +15,11 @@
       "env": {
         "ASPNETCORE_ENVIRONMENT": "Development",
         "ASPNETCORE_URLS": "http://localhost:7010",
-        "DOTNET_USE_POLLING_FILE_WATCHER": "1"
+        "DOTNET_USE_POLLING_FILE_WATCHER": "1",
+        "ESI_VLLM_PYTHON_EXECUTABLE": "/home/llm/.venvs/esi-ai-vllm/bin/python",
+        "ESI_SGLANG_PYTHON_EXECUTABLE": "/home/llm/.venvs/esi-ai-sglang/bin/python",
+        "VLLM_USE_FLASHINFER_SAMPLER": "0",
+        "CUDA_HOME": "/home/llm/.venvs/esi-ai-vllm/lib/python3.12/site-packages/nvidia/cu13"
       },
       "serverReadyAction": {
         "action": "openIntegratedBrowser",

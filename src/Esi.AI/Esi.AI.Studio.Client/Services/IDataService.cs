@@ -27,6 +27,8 @@ public interface IDataService
 
     Task<IReadOnlyList<LlamaModel>> GetLlamaModelsAsync(CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<BackendModel>> GetBackendModelsAsync(ConfigurationBackend backend, CancellationToken cancellationToken = default);
+
     Task<IReadOnlyList<LlamaModel>> ScanLlamaModelsAsync(CancellationToken cancellationToken = default);
 
     Task SyncLlamaModelsAsync(IReadOnlyList<LlamaModel> models, CancellationToken cancellationToken = default);
@@ -45,8 +47,11 @@ public interface IDataService
 
     Task<IReadOnlyList<LocalModel>> ScanLocalModelsAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<string>> GetModelDirectoriesAsync(CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<HuggingFaceModel>> SearchModelsAsync(string query, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<HuggingFaceModel>> SearchModelsAsync(HuggingFaceSearchRequest request, CancellationToken cancellationToken = default);
     Task<Guid> StartModelDownloadAsync(ModelDownloadRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ModelDownloadOption>> GetModelDownloadOptionsAsync(string modelId, string library = "gguf", CancellationToken cancellationToken = default);
+    Task PauseModelDownloadAsync(Guid id, CancellationToken cancellationToken = default);
+    Task ResumeModelDownloadAsync(Guid id, CancellationToken cancellationToken = default);
     Task<DownloadStatus?> GetModelDownloadAsync(Guid id, CancellationToken cancellationToken = default);
     Task<ModelStatus> SelectModelAsync(SelectModelRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<ChatSummary>> GetChatSummariesAsync(CancellationToken cancellationToken = default);
@@ -55,6 +60,8 @@ public interface IDataService
     Task<ModelLoadStatus> GetModelStatusAsync(CancellationToken cancellationToken = default);
 
     Task<ModelLoadStatus> LoadModelAsync(LoadModelRequest request, CancellationToken cancellationToken = default);
+    Task<ModelLoadStatus> LoadPythonModelAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default);
+    Task<ModelLoadStatus> LoadDotLlmModelAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default);
 
     Task<ModelLoadStatus> UnloadModelAsync(CancellationToken cancellationToken = default);
 
@@ -64,6 +71,8 @@ public interface IDataService
 
     Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default);
     Task<OpenVinoSolveResultDto> SolveDiagnosticAsync(string checkId, CancellationToken cancellationToken = default);
+    Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default);
+    Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default);
     Task<OpenVinoLoadResultDto> LoadModelAsync(OpenVinoLoadRequest request, CancellationToken cancellationToken = default);
     Task<OpenVinoModelStatusDto> GetOpenVinoModelStatusAsync(CancellationToken cancellationToken = default);
 }

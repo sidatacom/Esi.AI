@@ -111,6 +111,7 @@ h2 {
 .solve-auth-message { margin: .7rem 0 0; color: #8a1c1c; font-size: .78rem; }
 .solve-auth-message a { color: #8a1c1c; font-weight: 750; text-decoration: underline; }
 .validation-step-ok .validation-step-indicator { background: #d8f3ef; color: #087f5b; }
+.validation-step-info .validation-step-indicator { background: #e6f0f7; color: #486581; }
 .validation-step-error .validation-step-indicator { background: #fce4e4; color: #b42318; }
 .validation-summary { margin: 1rem 0 0; padding-top: .8rem; border-top: 1px solid #d9e0e5; font-size: .8rem; font-weight: 750; }
 .validation-summary-ok { color: #087f5b; }

@@ -11,6 +11,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 	public DbSet<LlamaModelEntity> LlamaModels => Set<LlamaModelEntity>();
 	public DbSet<ChatConversationEntity> ChatConversations => Set<ChatConversationEntity>();
 	public DbSet<ChatMessageEntity> ChatMessages => Set<ChatMessageEntity>();
+	public DbSet<ModelDownloadEntity> ModelDownloads => Set<ModelDownloadEntity>();
 
 	protected override void OnModelCreating(ModelBuilder modelBuilder)
 	{

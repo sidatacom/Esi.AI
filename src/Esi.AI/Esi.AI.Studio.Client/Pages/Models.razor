@@ -12,94 +12,207 @@
         <button class="primary-button" type="button" @onclick="ScanLocalAsync" disabled="@isBusy">Bibliothek aktualisieren</button>
     </header>
 
-    @if (status is not null)
+    @if (activeTab == ModelTab.HuggingFace && downloads.Count > 0)
     {
-        <section class="active-model">
-            <div><p class="eyebrow">ACTIVE MODEL</p><strong>@(status.IsModelLoaded ? "Modell geladen" : "Modell ausgewählt, aber nicht geladen")</strong><span>@(status.ModelPath ?? "Kein Modell ausgewählt")</span></div>
-            <div class="active-actions"><button class="secondary-button" type="button" @onclick="OpenConfiguration">Konfiguration</button><button class="primary-button" type="button" @onclick="OpenChat" disabled="@(!status.IsModelLoaded)">Chat öffnen</button></div>
+        <section class="library-section downloads-section" aria-live="polite"><div class="section-heading"><div><p class="eyebrow">TRANSFERS</p><h2>Downloads</h2></div></div>
+            @foreach (var download in downloads.Values.OrderByDescending(item => item.Id))
+            {
+                    <div class="download-row"><div class="download-heading"><strong>@download.FileName</strong><span>@download.ModelId</span></div>@if (!string.IsNullOrWhiteSpace(download.Error)) { <p class="error-message">@download.Error</p> } else { <progress max="100" value="@download.Percent"></progress><div class="download-footer"><span class="download-status">@(download.Completed ? "Download abgeschlossen" : download.Paused ? $"Pausiert · {FormatSize(download.BytesDownloaded)}" : download.Queued ? "Warteschlange" : $"{download.Percent:F0}% · {FormatSize(download.BytesDownloaded)}")</span>@if (!download.Completed) { <button class="secondary-button" type="button" @onclick="() => (download.Paused ? ResumeDownloadAsync(download.Id) : PauseDownloadAsync(download.Id))">@(download.Paused ? "Fortsetzen" : "Pausieren")</button> }</div>@if (download.Files is { Count: > 1 } files) { <details class="download-files"><summary>@files.Count Dateien</summary>@foreach (var file in files) { <div class="download-file"><span>@file.FileName</span><span>@(file.Completed ? "fertig" : $"{file.Percent:F0}% · {FormatSize(file.BytesDownloaded)}")</span><progress max="100" value="@file.Percent"></progress></div> } }</details> } }</div>
+            }
         </section>
     }
 
+    @if (status is not null)
+    {
+        <section class="runtime-status" aria-live="polite">
+            <div class="runtime-summary">
+                <p class="eyebrow">RUNTIME STATUS</p>
+                <div class="status-line"><span class="status-dot @GetStatusClass()" aria-hidden="true"></span><strong>@GetStatusTitle()</strong></div>
+                <span>@GetStatusDetail()</span>
+            </div>
+            <div class="runtime-actions"><button class="secondary-button" type="button" @onclick="OpenConfiguration">Backend konfigurieren</button><button class="primary-button" type="button" @onclick="OpenChat" disabled="@(!status.IsModelLoaded)">Chat öffnen</button></div>
+        </section>
+    }
+
+    <nav class="model-tabs" aria-label="Model library views">
+        <button class="model-tab @(activeTab == ModelTab.Library ? "active" : "")" type="button" @onclick="() => activeTab = ModelTab.Library">Meine Model Library</button>
+        <button class="model-tab @(activeTab == ModelTab.HuggingFace ? "active" : "")" type="button" @onclick="() => activeTab = ModelTab.HuggingFace">Hugging Face suchen</button>
+    </nav>
+
+    @if (activeTab == ModelTab.Library)
+    {
     <section class="library-section">
-        <div class="section-heading"><div><p class="eyebrow">LOCAL FILES</p><h2>Lokale Modelle</h2></div><span class="count-label">@localModels.Count GGUF</span></div>
+        <div class="search-row local-search-row"><span class="count-label">@localModels.Count(model => model.Format == ReferenceModelFormat.Gguf) GGUF · @localModels.Count(model => model.Format == ReferenceModelFormat.OpenVinoIr) OpenVINO</span></div>
         @if (modelDirectories.Count > 0) { <p class="directories">Suche in: @string.Join(" · ", modelDirectories)</p> }
-        @if (localModels.Count == 0) { <p class="empty-state">Keine GGUF-Dateien in den konfigurierten Ordnern gefunden.</p> }
+        @if (localModels.Count == 0) { <p class="empty-state">Keine unterstützten Modelle in den konfigurierten Ordnern gefunden.</p> }
         else
         {
             <div class="model-list">
                 @foreach (var model in localModels)
                 {
-                    <article class="model-row @(IsActive(model.Path) ? "selected" : "")"><div class="model-details"><strong>@model.Name</strong><span>@FormatSize(model.SizeInBytes) · @model.Path</span></div><button class="secondary-button" type="button" @onclick="() => SelectModelAsync(model.Path)">@(IsActive(model.Path) ? "Aktiv" : "Auswählen")</button></article>
+                    <article class="model-row @(IsActive(model.Path) ? "selected" : "")"><div class="model-details"><strong>@model.Name</strong><span>@model.Format · @FormatSize(model.SizeInBytes) · @model.Path</span></div>@if (model.Format == ReferenceModelFormat.Gguf) { <button class="secondary-button" type="button" @onclick="() => SelectModelAsync(model.Path)">@(IsActive(model.Path) ? "Aktiv" : "Auswählen")</button> } else { <button class="secondary-button" type="button" @onclick="OpenConfiguration">Konfigurieren</button> }</article>
                 }
             </div>
         }
     </section>
+    }
 
+    @if (activeTab == ModelTab.HuggingFace)
+    {
     <section class="library-section remote-section">
         <div class="section-heading"><div><p class="eyebrow">HUGGING FACE</p><h2>Modelle suchen</h2></div></div>
-        <div class="search-row"><InputText class="form-control" @bind-Value="searchQuery" placeholder="z. B. Qwen 3 GGUF" @onkeydown="HandleSearchKeyDown" /><button class="primary-button" type="button" @onclick="SearchAsync" disabled="@isSearching">@(isSearching ? "Suche ..." : "Suchen")</button></div>
+        <div class="search-row"><InputText class="form-control" @bind-Value="searchQuery" placeholder="z. B. Qwen 3" @onkeydown="HandleSearchKeyDown" /><button class="primary-button" type="button" @onclick="SearchAsync" disabled="@isSearching">@(isSearching ? "Suche ..." : "Suchen")</button></div>
+        <section class="hf-filter-panel" aria-label="Hugging Face Filter">
+            <nav class="hf-filter-tabs" aria-label="Filtergruppen">
+                @foreach (var group in Enum.GetValues<FilterGroup>())
+                {
+                    <button class="hf-filter-tab @(activeFilter == group ? "active" : "")" type="button" @onclick="() => activeFilter = group">@group</button>
+                }
+            </nav>
+            @if (activeFilter == FilterGroup.Main)
+            {
+                <div class="filter-columns">
+                    @FilterGroupView("Tasks", mainTaskOptions, searchTask, value => SelectFilter(FilterKind.Task, value))
+                    @FilterGroupView("Parameters", parameterOptions, searchParameterRange, value => SelectFilter(FilterKind.ParameterRange, value))
+                    @FilterGroupView("Libraries", mainLibraryOptions, searchLibrary, value => SelectFilter(FilterKind.Library, value))
+                    @FilterGroupView("Apps", appOptions, searchOther, value => SelectFilter(FilterKind.Other, value))
+                </div>
+                <div class="main-toggles"><label><input type="checkbox" @bind="baseOnly" /> Base only</label><label><input type="checkbox" @bind="inferenceAvailable" /> Inference Available</label><label class="sort-control">Sort <InputSelect @bind-Value="searchSort" @bind-Value:after="SearchAsync"><option value="trending">Trending</option><option value="downloads">Downloads</option><option value="likes">Likes</option><option value="lastModified">Recently updated</option></InputSelect></label></div>
+            }
+            else if (activeFilter == FilterGroup.Tasks)
+            {
+                @FilterGroupView("Tasks", taskOptions, searchTask, value => SelectFilter(FilterKind.Task, value))
+            }
+            else if (activeFilter == FilterGroup.Libraries)
+            {
+                @FilterGroupView("Libraries", libraryOptions, searchLibrary, value => SelectFilter(FilterKind.Library, value))
+            }
+            else if (activeFilter == FilterGroup.Languages)
+            {
+                @FilterGroupView("Languages", languageOptions, searchLanguage, value => SelectFilter(FilterKind.Language, value))
+            }
+            else if (activeFilter == FilterGroup.Licenses)
+            {
+                @FilterGroupView("Licenses", licenseOptions, searchLicense, value => SelectFilter(FilterKind.License, value))
+            }
+            else if (activeFilter == FilterGroup.Hardware)
+            {
+                @FilterGroupView("Hardware", hardwareOptions, searchHardware, value => SelectFilter(FilterKind.Hardware, value))
+            }
+            else
+            {
+                <div class="filter-columns">
+                    @FilterGroupView("Model Tree", modelTreeOptions, searchOther, value => SelectFilter(FilterKind.Other, value))
+                    @FilterGroupView("Apps", appOptions, searchOther, value => SelectFilter(FilterKind.Other, value))
+                    @FilterGroupView("Inference Providers", inferenceProviderOptions, searchInferenceProvider, value => SelectFilter(FilterKind.InferenceProvider, value))
+                    @FilterGroupView("One-click Deployment", deploymentOptions, searchOther, value => SelectFilter(FilterKind.Other, value))
+                    @FilterGroupView("Misc", miscOptions, searchOther, value => SelectFilter(FilterKind.Other, value))
+                </div>
+            }
+        </section>
         @if (searchResults.Count > 0)
         {
             <div class="model-list">
                 @foreach (var model in searchResults)
                 {
-                    <article class="model-row"><div class="model-details"><strong>@model.Id</strong><span>@model.Downloads Downloads · @model.Likes Likes · @(model.Author ?? "unbekannter Autor")</span></div><button class="secondary-button" type="button" @onclick="() => DownloadAsync(model.Id)" disabled="@isBusy">GGUF laden</button></article>
+                    <article class="model-row"><div class="model-details"><strong>@model.Id</strong><span>@model.Downloads Downloads · @model.Likes Likes · @(model.Author ?? "unbekannter Autor")</span>@if (downloadOptions.TryGetValue(model.Id, out var options)) { <div class="download-options"><span class="download-options-label">Version auswählen</span>@foreach (var option in options) { <button class="filter-option" type="button" @onclick="() => DownloadAsync(model.Id, option.FileName)" disabled="@isBusy">@option.Label</button> }</div> }</div>@if (searchLibrary is "gguf" or "openvino") { <button class="secondary-button" type="button" @onclick="() => ChooseDownloadAsync(model.Id)" disabled="@isBusy">@(searchLibrary == "openvino" ? "OpenVINO laden" : "Versionen anzeigen")</button> } else { <a class="secondary-button" href="https://huggingface.co/@model.Id" target="_blank" rel="noopener noreferrer">Auf Hugging Face öffnen</a> }</article>
                 }
             </div>
         }
         else if (hasSearched) { <p class="empty-state">Keine passenden Hugging-Face-Modelle gefunden.</p> }
     </section>
-
-    @if (downloads.Count > 0)
-    {
-        <section class="library-section downloads-section"><div class="section-heading"><div><p class="eyebrow">TRANSFERS</p><h2>Downloads</h2></div></div>
-            @foreach (var download in downloads.Values.OrderByDescending(item => item.Id))
-            {
-                <div class="download-row"><div class="download-heading"><strong>@download.FileName</strong><span>@download.ModelId</span></div>@if (!string.IsNullOrWhiteSpace(download.Error)) { <p class="error-message">@download.Error</p> } else { <progress max="100" value="@download.Percent"></progress><span class="download-status">@(download.Completed ? "Download abgeschlossen" : $"{download.Percent:F0}% · {FormatSize(download.BytesDownloaded)}")</span> }</div>
-            }
-        </section>
     }
+
     @if (!string.IsNullOrWhiteSpace(message)) { <p class="model-message" role="status">@message</p> }
 </div>
 
 <style>
     .models-shell { max-width: 1040px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
-    .models-header, .active-model, .section-heading, .search-row, .model-row, .download-heading { display: flex; justify-content: space-between; gap: 1rem; }
+    .models-header, .runtime-status, .section-heading, .search-row, .model-row, .download-heading, .download-footer { display: flex; justify-content: space-between; gap: 1rem; }
+    .model-tabs { display: flex; gap: .35rem; border-bottom: 1px solid #d9d4ca; margin-top: 1.5rem; }.model-tab { border: 0; border-bottom: 3px solid transparent; background: transparent; color: #756f65; cursor: pointer; font: inherit; font-weight: 700; padding: .8rem 1rem; }.model-tab.active { border-bottom-color: #236b70; color: #236b70; }
     .models-header { align-items: end; margin-bottom: 1.5rem; }
-    .active-model, .library-section { border: 1px solid #d9d4ca; background: #fbfaf6; padding: 1.25rem 1.5rem; }
-    .active-model { align-items: center; border-left: 4px solid #236b70; margin-bottom: 1.25rem; }
-    .active-model div:first-child, .model-details, .download-heading { display: grid; gap: .25rem; min-width: 0; }
-    .active-model span, .directories, .model-details span, .download-heading span { color: #756f65; overflow-wrap: anywhere; }
-    .active-actions { display: flex; flex-wrap: wrap; gap: .65rem; }
+    .runtime-status { align-items: center; border-top: 1px solid #d9d4ca; border-bottom: 1px solid #d9d4ca; margin-bottom: 1.25rem; padding: .85rem 0; }
+    .runtime-summary, .model-details, .download-heading { display: grid; gap: .25rem; min-width: 0; }
+    .runtime-summary .eyebrow { margin: 0; }.runtime-summary > span, .directories, .model-details span, .download-heading span { color: #756f65; overflow-wrap: anywhere; }
+    .status-line { align-items: center; display: flex; gap: .5rem; }.status-dot { background: #8b8377; border-radius: 50%; display: inline-block; flex: 0 0 auto; height: .6rem; width: .6rem; }.status-dot.selected { background: #b5792f; }.status-dot.ready { background: #236b70; }
+    .runtime-actions { display: flex; flex-wrap: wrap; gap: .65rem; }
     .library-section { margin-top: 1.25rem; }
     .section-heading { align-items: end; border-bottom: 1px solid #e1dbd1; padding-bottom: .9rem; }
     .section-heading h2 { margin: 0; }.count-label, .download-status { color: #756f65; font-size: .85rem; }.directories { font-size: .85rem; }
-    .model-list { display: grid; gap: .65rem; margin-top: 1rem; }.model-row { align-items: center; padding: .9rem 0; border-bottom: 1px solid #e1dbd1; }.model-row:last-child { border-bottom: 0; }.model-row.selected { border-left: 3px solid #236b70; padding-left: .75rem; }.model-details strong { overflow-wrap: anywhere; }
-    .search-row { margin-top: 1rem; }.search-row .form-control { flex: 1; }.remote-section { background: #f2eee7; }.downloads-section { background: #eef4f0; }.download-row { display: grid; gap: .4rem; padding: .8rem 0; border-bottom: 1px solid #d5dfd8; }progress { width: 100%; height: .7rem; accent-color: #236b70; }.empty-state, .model-message { color: #756f65; }.error-message { color: #7e311f; margin: 0; }
+    .model-list { display: grid; gap: .65rem; margin-top: 1rem; }.model-row { align-items: center; padding: .9rem 0; border-bottom: 1px solid #e1dbd1; }.model-row:last-child { border-bottom: 0; }.model-row.selected { border-left: 3px solid #236b70; padding-left: .75rem; }.model-details strong { overflow-wrap: anywhere; }.download-options { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .5rem; }
+    .search-row { margin-top: 1rem; }.search-row .form-control { flex: 1; }.remote-section { background: #f2eee7; }.downloads-section { background: #eef4f0; }.download-row { display: grid; gap: .4rem; padding: .8rem 0; border-bottom: 1px solid #d5dfd8; }.download-footer { align-items: center; }.download-footer .download-status { flex: 1; }progress { width: 100%; height: .7rem; accent-color: #236b70; }.empty-state, .model-message { color: #756f65; }.error-message { color: #7e311f; margin: 0; }.download-options-label { color: #756f65; display: block; font-size: .85rem; font-weight: 700; margin-bottom: .35rem; }
+    .download-files { border-top: 1px solid #d5dfd8; margin-top: .25rem; padding-top: .4rem; }.download-files summary { color: #236b70; cursor: pointer; font-size: .85rem; }.download-file { display: grid; gap: .2rem; margin-top: .55rem; }.download-file span { overflow-wrap: anywhere; }.download-file span:nth-child(2) { color: #756f65; font-size: .8rem; }
+    .hf-filter-panel { border-bottom: 1px solid #d9d4ca; }.hf-filter-tabs { display: flex; gap: .35rem; overflow-x: auto; padding: .7rem 0; }.hf-filter-tab { border: 0; border-radius: 999px; background: transparent; color: #756f65; cursor: pointer; font: inherit; padding: .35rem .65rem; white-space: nowrap; }.hf-filter-tab.active { background: #302d28; color: #fff; }.filter-columns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; padding: .75rem 0 1rem; }.filter-group { min-width: 0; }.filter-group h3 { color: #756f65; font-size: .85rem; font-weight: 500; margin: 0 0 .55rem; }.filter-options { display: flex; flex-wrap: wrap; gap: .45rem; }.filter-option { align-items: center; background: #fff; border: 1px solid #e2ddd5; border-radius: .5rem; color: #302d28; cursor: pointer; display: inline-flex; font-size: .85rem; gap: .35rem; padding: .42rem .6rem; }.filter-option.selected { border-color: #236b70; box-shadow: 0 0 0 1px #236b70; color: #236b70; }.filter-option input { display: none; }.main-toggles { align-items: center; border-top: 1px solid #e1dbd1; display: flex; flex-wrap: wrap; gap: 1rem; padding: .8rem 0 1rem; }.main-toggles label { align-items: center; display: inline-flex; gap: .4rem; font-size: .85rem; }.sort-control select { margin-left: .35rem; }.range-option { display: grid; gap: .35rem; min-width: 10rem; }.range-option span { color: #756f65; font-size: .8rem; }.range-option input { accent-color: #236b70; width: 100%; }
     .primary-button, .secondary-button { border: 0; padding: .7rem 1rem; font-weight: 700; cursor: pointer; }.primary-button { background: #236b70; color: white; }.secondary-button { background: #e7e1d7; color: #302d28; white-space: nowrap; }button:disabled { opacity: .55; cursor: not-allowed; }
-    @@media (max-width: 680px) { .models-header, .active-model, .model-row, .search-row { align-items: stretch; flex-direction: column; } .secondary-button, .primary-button { width: 100%; } }
+    @@media (max-width: 680px) { .models-header, .runtime-status, .model-row, .search-row { align-items: stretch; flex-direction: column; } .filter-columns { grid-template-columns: 1fr; }.secondary-button, .primary-button { width: 100%; } }
 </style>
 
 @code {
     private readonly List<LocalModel> localModels = [];
     private readonly List<HuggingFaceModel> searchResults = [];
     private readonly Dictionary<Guid, DownloadStatus> downloads = [];
+    private readonly Dictionary<string, IReadOnlyList<ModelDownloadOption>> downloadOptions = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> modelDirectories = [];
     private string searchQuery = string.Empty;
+    private string searchLibrary = "gguf";
+    private string searchTask = string.Empty;
+    private string searchLanguage = string.Empty;
+    private string searchLicense = string.Empty;
+    private string searchHardware = string.Empty;
+    private string searchOther = string.Empty;
+    private string searchInferenceProvider = string.Empty;
+    private string searchParameterRange = string.Empty;
+    private string searchSort = "trending";
+    private bool baseOnly, inferenceAvailable;
+    private FilterGroup activeFilter = FilterGroup.Main;
+    private ModelTab activeTab = ModelTab.Library;
     private bool isBusy, isSearching, hasSearched;
     private string? message;
     private ModelStatus? status;
 
     protected override async Task OnInitializedAsync() { DownloadEvents.ModelDownloadUpdated += HandleModelDownloadUpdatedAsync; await LoadStatusAsync(); await ScanLocalAsync(); modelDirectories.AddRange(await DataService.GetModelDirectoriesAsync()); }
     private async Task ScanLocalAsync() { try { var models = await DataService.ScanLocalModelsAsync(); localModels.Clear(); localModels.AddRange(models); } catch (Exception) { message = "Die lokalen Modelle konnten nicht gelesen werden."; } }
-    private async Task SearchAsync() { isSearching = true; hasSearched = true; message = null; try { searchResults.Clear(); searchResults.AddRange(await DataService.SearchModelsAsync(searchQuery.Trim())); } catch (Exception) { message = "Die Hugging-Face-Suche ist fehlgeschlagen."; } finally { isSearching = false; } }
-    private async Task DownloadAsync(string modelId) { isBusy = true; message = null; try { await DataService.StartModelDownloadAsync(new ModelDownloadRequest(modelId)); } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
+    private async Task SearchAsync() { isSearching = true; hasSearched = true; message = null; try { searchResults.Clear(); searchResults.AddRange(await DataService.SearchModelsAsync(new HuggingFaceSearchRequest(searchQuery.Trim(), searchLibrary, searchTask, searchParameterRange, searchLanguage, searchLicense, searchHardware, searchOther, searchInferenceProvider, baseOnly, inferenceAvailable, searchSort))); } catch (Exception) { message = "Die Hugging-Face-Suche ist fehlgeschlagen."; } finally { isSearching = false; } }
+    private async Task ChooseDownloadAsync(string modelId) { if (searchLibrary == "openvino") { await DownloadAsync(modelId, null); return; } try { isBusy = true; message = null; var options = await DataService.GetModelDownloadOptionsAsync(modelId, searchLibrary); if (options.Count == 1) await DownloadAsync(modelId, options[0].FileName); else downloadOptions[modelId] = options; } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
+    private async Task DownloadAsync(string modelId, string? fileName) { isBusy = true; message = null; try { await DataService.StartModelDownloadAsync(new ModelDownloadRequest(modelId, fileName, searchLibrary)); downloadOptions.Remove(modelId); } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
+    private async Task PauseDownloadAsync(Guid id) { try { await DataService.PauseModelDownloadAsync(id); } catch (Exception exception) { message = exception.Message; } }
+    private async Task ResumeDownloadAsync(Guid id) { try { await DataService.ResumeModelDownloadAsync(id); } catch (Exception exception) { message = exception.Message; } }
     private async Task HandleModelDownloadUpdatedAsync(ModelDownloadUpdate update) { await InvokeAsync(() => { downloads[update.Download.Id] = update.Download; if (update.LocalModels is not null) { localModels.Clear(); localModels.AddRange(update.LocalModels); } StateHasChanged(); }); }
     private async Task SelectModelAsync(string path) { try { status = await DataService.SelectModelAsync(new SelectModelRequest(path)); message = "Modell als aktives Chat-Modell ausgewählt. Jetzt unter LLama laden."; } catch (Exception) { message = "Das Modell konnte nicht ausgewählt werden."; } }
     private async Task LoadStatusAsync() { var modelStatus = await DataService.GetModelStatusAsync(); status = new ModelStatus(modelStatus.ModelPath, modelStatus.Backend, modelStatus.GpuLayerCount, modelStatus.ContextSize, modelStatus.FoundVulkanGpuCount, modelStatus.IsModelLoaded); }
+    private string GetStatusTitle() => status?.IsModelLoaded == true ? "Modell geladen" : status?.ModelPath is not null ? "Modell ausgewählt" : "Kein Modell geladen";
+    private string GetStatusDetail() => status?.ModelPath is { Length: > 0 } path ? $"{System.IO.Path.GetFileName(path)} · {status.Backend}" : "Wähle ein Modell aus der Library oder konfiguriere ein Backend.";
+    private string GetStatusClass() => status?.IsModelLoaded == true ? "ready" : status?.ModelPath is not null ? "selected" : "idle";
     private bool IsActive(string path) => string.Equals(status?.ModelPath, path, StringComparison.OrdinalIgnoreCase);
     private void OpenConfiguration() => NavigationManager.NavigateTo("backends"); private void OpenChat() => NavigationManager.NavigateTo("chats");
     private static string FormatSize(long bytes) => bytes switch { > 1024 * 1024 * 1024 => $"{bytes / 1024d / 1024d / 1024d:F2} GiB", > 1024 * 1024 => $"{bytes / 1024d / 1024d:F1} MiB", _ => $"{bytes / 1024d:F0} KiB" };
     private async Task HandleSearchKeyDown(KeyboardEventArgs args) { if (args.Key == "Enter") await SearchAsync(); }
+    private void SelectFilter(FilterKind kind, string value) { switch (kind) { case FilterKind.Library: searchLibrary = value; break; case FilterKind.Task: searchTask = value; break; case FilterKind.ParameterRange: searchParameterRange = value; break; case FilterKind.Language: searchLanguage = value; break; case FilterKind.License: searchLicense = value; break; case FilterKind.Hardware: searchHardware = value; break; case FilterKind.Other: searchOther = value; break; case FilterKind.InferenceProvider: searchInferenceProvider = value; break; } }
+    private static string FilterOptionClass(FilterOption option, string selectedValue) => option.Value == selectedValue ? "filter-option selected" : "filter-option";
     public ValueTask DisposeAsync() { DownloadEvents.ModelDownloadUpdated -= HandleModelDownloadUpdatedAsync; return ValueTask.CompletedTask; }
+    private enum ModelTab { Library, HuggingFace }
+    private enum FilterGroup { Main, Tasks, Libraries, Languages, Licenses, Hardware, Other }
+    private enum FilterKind { Library, Task, ParameterRange, Language, License, Hardware, Other, InferenceProvider }
+    private sealed record FilterOption(string Label, string Value);
+
+    private readonly FilterOption[] mainTaskOptions = [new("Text Generation", "text-generation"), new("Any-to-Any", "any-to-any"), new("Image-Text-to-Text", "image-text-to-text"), new("Image-to-Text", "image-to-text"), new("Image-to-Image", "image-to-image"), new("Text-to-Image", "text-to-image"), new("Text-to-Video", "text-to-video"), new("Text-to-Speech", "text-to-speech")];
+    private readonly FilterOption[] parameterOptions = [new("< 1B", "n<1B"), new("1B - 3B", "1B<n<3B"), new("3B - 6B", "3B<n<6B"), new("6B - 9B", "6B<n<9B"), new("9B - 12B", "9B<n<12B"), new("12B - 24B", "12B<n<24B"), new("24B - 32B", "24B<n<32B"), new("32B - 64B", "32B<n<64B"), new("64B - 128B", "64B<n<128B"), new("128B - 256B", "128B<n<256B"), new("256B - 500B", "256B<n<500B"), new("> 500B", "n>500B")];
+    private readonly FilterOption[] taskOptions = [.. new[] { ("Audio-Text-to-Text", "audio-text-to-text"), ("Image-Text-to-Text", "image-text-to-text"), ("Image-Text-to-Image", "image-text-to-image"), ("Image-Text-to-Video", "image-text-to-video"), ("Visual Question Answering", "visual-question-answering"), ("Document Question Answering", "document-question-answering"), ("Video-Text-to-Text", "video-text-to-text"), ("Any-to-Any", "any-to-any"), ("Depth Estimation", "depth-estimation"), ("Image Classification", "image-classification"), ("Object Detection", "object-detection"), ("Image Segmentation", "image-segmentation"), ("Text-to-Image", "text-to-image"), ("Image-to-Text", "image-to-text"), ("Image-to-Video", "image-to-video"), ("Video Classification", "video-classification"), ("Text-to-Video", "text-to-video"), ("Text Classification", "text-classification"), ("Token Classification", "token-classification"), ("Question Answering", "question-answering"), ("Translation", "translation"), ("Summarization", "summarization"), ("Feature Extraction", "feature-extraction"), ("Text Generation", "text-generation"), ("Fill-Mask", "fill-mask"), ("Sentence Similarity", "sentence-similarity") }.Select(item => new FilterOption(item.Item1, item.Item2)).ToArray()];
+    private readonly FilterOption[] mainLibraryOptions = [new("PyTorch", "pytorch"), new("TensorFlow", "tf"), new("JAX", "jax"), new("Transformers", "transformers"), new("Diffusers", "diffusers"), new("GGUF", "gguf"), new("MLX", "mlx"), new("Transformers.js", "transformers.js"), new("Safetensors", "safetensors")];
+    private readonly FilterOption[] libraryOptions = [.. new[] { ("PyTorch", "pytorch"), ("TensorFlow", "tf"), ("JAX", "jax"), ("Safetensors", "safetensors"), ("Transformers", "transformers"), ("PEFT", "peft"), ("GGUF", "gguf"), ("TensorBoard", "tensorboard"), ("Diffusers", "diffusers"), ("ONNX", "onnx"), ("stable-baselines3", "stable-baselines3"), ("sentence-transformers", "sentence-transformers"), ("MLX", "mlx"), ("Keras", "keras"), ("Transformers.js", "transformers.js"), ("Adapters", "adapter-transformers"), ("timm", "timm"), ("OpenVINO", "openvino"), ("Core ML", "coreml"), ("Rust", "rust"), ("llamafile", "llamafile"), ("PaddlePaddle", "paddlepaddle"), ("Fairseq", "fairseq"), ("Stanza", "stanza"), ("DDUF", "dduf") }.Select(item => new FilterOption(item.Item1, item.Item2)).ToArray()];
+    private readonly FilterOption[] languageOptions = [.. new[] { ("English", "en"), ("Chinese", "zh"), ("French", "fr"), ("Spanish", "es"), ("German", "de"), ("Japanese", "ja"), ("Korean", "ko"), ("Portuguese", "pt"), ("Italian", "it"), ("Russian", "ru"), ("Arabic", "ar"), ("Hindi", "hi"), ("Thai", "th"), ("multilingual", "multilingual"), ("Turkish", "tr"), ("Vietnamese", "vi"), ("Dutch", "nl"), ("Polish", "pl"), ("Indonesian", "id"), ("Swedish", "sv") }.Select(item => new FilterOption(item.Item1, item.Item2)).ToArray()];
+    private readonly FilterOption[] licenseOptions = [.. new[] { "apache-2.0", "mit", "other", "openrail", "creativeml-openrail-m", "cc-by-nc-4.0", "openrail++", "cc-by-4.0", "gemma", "llama2", "llama3", "llama3.1", "llama3.2", "cc-by-nc-sa-4.0", "afl-3.0", "cc-by-sa-4.0", "gpl-3.0", "bsd-3-clause", "llama3.3", "agpl-3.0" }.Select(value => new FilterOption(value, "license:" + value)).ToArray()];
+    private readonly FilterOption[] hardwareOptions = [new("CPU", "cpu"), new("NVIDIA CUDA", "cuda"), new("AMD ROCm", "rocm"), new("Intel GPU", "intel-gpu"), new("Intel NPU", "intel-npu"), new("Vulkan", "vulkan"), new("Apple Metal", "metal"), new("OpenVINO", "openvino")];
+    private readonly FilterOption[] modelTreeOptions = [new("Base", "base"), new("Adapters", "adapter"), new("Finetunes", "finetune"), new("Quantizations", "quantized"), new("Merges", "merge")];
+    private readonly FilterOption[] appOptions = [new("llama.cpp", "llama.cpp"), new("LM Studio", "lmstudio"), new("Jan", "jan"), new("Draw Things", "drawthings"), new("DiffusionBee", "diffusionbee"), new("JoyFusion", "joyfusion"), new("vLLM", "vllm"), new("Ollama", "ollama"), new("MLX LM", "mlx-lm"), new("Docker Model Runner", "docker-model-runner"), new("Lemonade", "lemonade"), new("SGLang", "sglang"), new("Unsloth Desktop", "unsloth"), new("Pi", "pi"), new("Hermes Agent", "hermes-agent"), new("Atomic Chat", "atomic-chat"), new("OpenClaw", "openclaw")];
+    private readonly FilterOption[] inferenceProviderOptions = [.. new[] { ("Groq", "groq"), ("Novita", "novita"), ("Cerebras", "cerebras"), ("Nscale", "nscale"), ("fal", "fal-ai"), ("Together AI", "together"), ("Fireworks", "fireworks-ai"), ("Featherless AI", "featherless-ai"), ("Zai", "zai-org"), ("Replicate", "replicate"), ("Cohere", "cohere"), ("Scaleway", "scaleway"), ("Public AI", "publicai"), ("Baseten", "baseten"), ("OVHcloud AI Endpoints", "ovhcloud"), ("HF Inference API", "hf-inference"), ("DeepInfra", "deepinfra"), ("WaveSpeed", "wavespeed") }.Select(item => new FilterOption(item.Item1, item.Item2)).ToArray()];
+    private readonly FilterOption[] deploymentOptions = [new("Inference Endpoints", "endpoints_compatible"), new("Microsoft Foundry", "deploy:azure"), new("Amazon SageMaker AI", "deploy:sagemaker")];
+    private readonly FilterOption[] miscOptions = [new("text-generation-inference", "text-generation-inference"), new("Eval Results (legacy)", "model-index"), new("text-embeddings-inference", "text-embeddings-inference"), new("custom_code", "custom_code"), new("4-bit precision", "4-bit"), new("Merge", "merge"), new("8-bit precision", "8-bit"), new("Mixture of Experts", "moe"), new("Carbon Emissions", "co2_eq_emissions"), new("Eval Results", "eval-results")];
+
+    [Parameter] public string Title { get; set; } = string.Empty;
+
+    private RenderFragment FilterGroupView(string title, IReadOnlyList<FilterOption> options, string selectedValue, Action<string> onSelected) => builder =>
+    {
+        builder.OpenElement(0, "div"); builder.AddAttribute(1, "class", "filter-group"); builder.OpenElement(2, "h3"); builder.AddContent(3, title); builder.CloseElement(); builder.OpenElement(4, "div"); builder.AddAttribute(5, "class", "filter-options"); var sequence = 6; foreach (var option in options) { builder.OpenElement(sequence++, "button"); builder.AddAttribute(sequence++, "class", FilterOptionClass(option, selectedValue)); builder.AddAttribute(sequence++, "type", "button"); builder.AddAttribute(sequence++, "onclick", EventCallback.Factory.Create(this, () => onSelected(option.Value))); builder.AddContent(sequence++, option.Label); builder.CloseElement(); } builder.CloseElement(); builder.CloseElement();
+    };
 }

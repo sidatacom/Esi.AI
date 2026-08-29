@@ -31,21 +31,35 @@ public sealed class OpenAiCompatibleController(ModelRuntime modelRuntime) : Cont
 
         try
         {
-            using var session = modelRuntime.CreateLlamaChatSession("You are a helpful assistant.");
             var messages = request.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content)).ToArray();
             var model = request.Model ?? "local-model";
+            var backend = modelRuntime.GetStatus().Backend;
+
+            if (backend is "vLLM" or "SGLang" or "dotLLM")
+            {
+                var generation = backend switch
+                {
+                    "dotLLM" => GenerateDotLlmAsync(messages, cancellationToken),
+                    _ => GeneratePythonAsync(messages, cancellationToken)
+                };
+                var result = await generation;
+                return Ok(CreateCompletion(result.Text, model));
+            }
+
+            if (backend == "OpenVINO")
+            {
+                using var openVinoSession = modelRuntime.CreateOpenVinoChatSession();
+                var prompt = messages[^1].Content;
+                var result = await Task.Run(() => openVinoSession.GenerateWithStats(prompt), cancellationToken);
+                return Ok(CreateCompletion(result.Text, model));
+            }
+
+            using var session = modelRuntime.CreateLlamaChatSession("You are a helpful assistant.");
 
             if (!request.Stream)
             {
                 var content = await session.GenerateAsync(messages, cancellationToken);
-                return Ok(new
-                {
-                    id = $"chatcmpl-{Guid.NewGuid():N}",
-                    @object = "chat.completion",
-                    created = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-                    model,
-                    choices = new[] { new { index = 0, message = new { role = "assistant", content }, finish_reason = "stop" } }
-                });
+                return Ok(CreateCompletion(content, model));
             }
 
             Response.StatusCode = StatusCodes.Status200OK;
@@ -79,6 +93,27 @@ public sealed class OpenAiCompatibleController(ModelRuntime modelRuntime) : Cont
             return BadRequest(new { error = new { message = exception.Message, type = "invalid_request_error" } });
         }
     }
+
+    private async Task<LlamaGenerationResult> GeneratePythonAsync(IReadOnlyList<LlamaChatMessage> messages, CancellationToken cancellationToken)
+    {
+        using var session = modelRuntime.CreatePythonChatSession();
+        return await session.GenerateWithStatsAsync(messages, cancellationToken);
+    }
+
+    private async Task<LlamaGenerationResult> GenerateDotLlmAsync(IReadOnlyList<LlamaChatMessage> messages, CancellationToken cancellationToken)
+    {
+        using var session = modelRuntime.CreateDotLlmChatSession();
+        return await session.GenerateWithStatsAsync(messages, cancellationToken);
+    }
+
+    private static object CreateCompletion(string content, string model) => new
+    {
+        id = $"chatcmpl-{Guid.NewGuid():N}",
+        @object = "chat.completion",
+        created = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+        model,
+        choices = new[] { new { index = 0, message = new { role = "assistant", content }, finish_reason = "stop" } }
+    };
 }
 
 public sealed record OpenAiChatRequest(string? Model, IReadOnlyList<OpenAiChatMessage> Messages, bool Stream = false);

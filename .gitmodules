@@ -14,3 +14,8 @@
 	path = origins/sidatacom/OpenVINO-CSharp-API
 	url = https://github.com/sidatacom/OpenVINO-CSharp-API.git
 	branch = csharp3.3
+
+[submodule "origins/sidatacom/dotLLM"]
+	path = origins/sidatacom/dotLLM
+	url = https://github.com/sidatacom/dotLLM.git
+	branch = main

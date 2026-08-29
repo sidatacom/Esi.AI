@@ -8,10 +8,29 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Include="Python\inference_server.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="Python\inference_pb2.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="Python\inference_pb2_grpc.py" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="Python\requirements.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="Python\vllm-requirements.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="Python\sglang-requirements.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../Esi.AI.Models/Esi.AI.Models.csproj" />
     <ProjectReference Include="../../../origins/sidatacom/LLamaSharp/LLama/LLamaSharp.csproj" />
     <ProjectReference Include="../../../origins/sidatacom/OpenVINO-CSharp-API/src/OpenVINO.CSharp.API/OpenVINO.CSharp.API.csproj" />
+    <ProjectReference Include="../../../origins/sidatacom/dotLLM/src/DotLLM.Core/DotLLM.Core.csproj" />
+    <ProjectReference Include="../../../origins/sidatacom/dotLLM/src/DotLLM.Engine/DotLLM.Engine.csproj" />
+    <ProjectReference Include="../../../origins/sidatacom/dotLLM/src/DotLLM.Models/DotLLM.Models.csproj" />
+    <PackageReference Include="Google.Protobuf" Version="3.30.2" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.76.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.76.0" PrivateAssets="All" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="../Esi.AI.Models/Grpc/vllm_inference.proto" GrpcServices="Client" />
   </ItemGroup>
 
   <ItemGroup>

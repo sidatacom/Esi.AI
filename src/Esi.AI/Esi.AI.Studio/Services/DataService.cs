@@ -13,30 +13,55 @@ public sealed class DataService(
     ModelLibraryService modelLibrary,
     OpenVinoDiagnosticsService openVinoDiagnostics,
     OpenVinoDriverInstaller openVinoInstaller,
-    ModelRuntime modelRuntime) : IDataService
+    ModelRuntime modelRuntime,
+    BackendPrerequisiteProvisioner? backendPrerequisites = null) : IDataService
 {
     public async Task<IReadOnlyList<LocalModel>> ScanLocalModelsAsync(CancellationToken cancellationToken = default) =>
         (await modelLibrary.ScanLocalModelsAsync(cancellationToken))
-        .Select(model => new LocalModel(model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc)).ToArray();
+        .Select(model => new LocalModel(model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc, model.Format)).ToArray();
 
     public IReadOnlyList<string> GetModelDirectories() => modelLibrary.GetModelDirectories();
 
     public Task<IReadOnlyList<string>> GetModelDirectoriesAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(GetModelDirectories());
 
-    public async Task<IReadOnlyList<HuggingFaceModel>> SearchModelsAsync(string query, CancellationToken cancellationToken = default) =>
-        (await modelLibrary.SearchHuggingFaceAsync(query, cancellationToken))
+    public async Task<IReadOnlyList<HuggingFaceModel>> SearchModelsAsync(HuggingFaceSearchRequest request, CancellationToken cancellationToken = default) =>
+        (await modelLibrary.SearchHuggingFaceAsync(request, cancellationToken))
         .Select(model => new HuggingFaceModel(model.Id, model.Author, model.Downloads, model.Likes, model.LastModified)).ToArray();
 
     public Task<Guid> StartModelDownloadAsync(ModelDownloadRequest request, CancellationToken cancellationToken = default) =>
-        modelLibrary.StartDownloadAsync(request.ModelId, request.FileName, cancellationToken);
+        modelLibrary.StartDownloadAsync(request.ModelId, request.FileName, request.Library, cancellationToken);
+
+    public Task<IReadOnlyList<ModelDownloadOption>> GetModelDownloadOptionsAsync(string modelId, string library = "gguf", CancellationToken cancellationToken = default) =>
+        modelLibrary.GetDownloadOptionsAsync(modelId, library, cancellationToken);
+
+    public Task PauseModelDownloadAsync(Guid id, CancellationToken cancellationToken = default) =>
+        modelLibrary.PauseDownloadAsync(id, cancellationToken);
+
+    public Task ResumeModelDownloadAsync(Guid id, CancellationToken cancellationToken = default) =>
+        modelLibrary.ResumeDownloadAsync(id, cancellationToken);
 
     public DownloadStatus? GetModelDownload(Guid id)
     {
         var status = modelLibrary.GetDownload(id);
         return status is null ? null : new DownloadStatus(status.Id, status.ModelId, status.FileName, status.DestinationPath,
-            status.BytesDownloaded, status.TotalBytes, status.Completed, status.Error);
+            status.BytesDownloaded, status.TotalBytes, status.Completed, status.Error, status.Paused, status.Queued, status.Files);
     }
+
+    /// <summary>Returns the current model download state for SignalR synchronization.</summary>
+    public IReadOnlyList<DownloadStatus> GetModelDownloads() =>
+        modelLibrary.GetDownloads().Select(status => new DownloadStatus(
+            status.Id,
+            status.ModelId,
+            status.FileName,
+            status.DestinationPath,
+            status.BytesDownloaded,
+            status.TotalBytes,
+            status.Completed,
+            status.Error,
+            status.Paused,
+            status.Queued,
+            status.Files)).ToArray();
 
     public Task<DownloadStatus?> GetModelDownloadAsync(Guid id, CancellationToken cancellationToken = default) =>
         Task.FromResult(GetModelDownload(id));
@@ -111,10 +136,21 @@ public sealed class DataService(
         return models.Select(ToModel).ToArray();
     }
 
+    public async Task<IReadOnlyList<BackendModel>> GetBackendModelsAsync(ConfigurationBackend backend, CancellationToken cancellationToken = default)
+    {
+        var models = await modelLibrary.ScanLocalModelsAsync(backend, cancellationToken);
+        return models.Select(model => new BackendModel(
+            model.Name,
+            model.Path,
+            model.SizeInBytes,
+            model.LastWriteTimeUtc,
+            backend)).ToArray();
+    }
+
     public async Task<IReadOnlyList<LlamaModel>> ScanLlamaModelsAsync(CancellationToken cancellationToken = default)
     {
         var models = await modelLibrary.ScanLocalModelsAsync(cancellationToken);
-        var llamaModels = models.Select(model => new LlamaModel(
+        var llamaModels = models.Where(model => model.Format == ReferenceModelFormat.Gguf).Select(model => new LlamaModel(
             Guid.Empty, model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc)).ToArray();
         if (llamaModels.Length == 0)
             return await GetLlamaModelsAsync(cancellationToken);
@@ -318,6 +354,21 @@ public sealed class DataService(
         return modelRuntime.GetStatus();
     }
 
+    public async Task<ModelLoadStatus> LoadPythonModelAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default)
+    {
+        if (request.Backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
+            throw new ArgumentException("A vLLM or SGLang backend is required.", nameof(request));
+
+        await modelRuntime.LoadAsync(request, cancellationToken);
+        return modelRuntime.GetStatus();
+    }
+
+    public async Task<ModelLoadStatus> LoadDotLlmModelAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default)
+    {
+        await modelRuntime.LoadAsync(request, cancellationToken);
+        return modelRuntime.GetStatus();
+    }
+
     public async Task<ModelLoadStatus> UnloadModelAsync(CancellationToken cancellationToken = default)
     {
         await modelRuntime.StopLlamaAsync(cancellationToken);
@@ -365,6 +416,32 @@ public sealed class DataService(
         };
     }
 
+    public async Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default)
+    {
+        if (backend != ConfigurationBackend.OpenVino)
+            return await (backendPrerequisites ?? new BackendPrerequisiteProvisioner()).DiagnoseAsync(backend, pythonExecutable, AppContext.BaseDirectory, cancellationToken: cancellationToken);
+
+        var result = openVinoDiagnostics.Diagnose();
+        var checks = result.Checks.Select(check => new BackendPrerequisiteCheck(check.Id, check.Name, check.IsAvailable, check.Detail, check.CanSolve)).ToArray();
+        return new(backend, "OpenVINO", result.IsGpuReady || result.IsNpuReady, checks, result.Error);
+    }
+
+    public async Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default)
+    {
+        if (backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
+            return new(false, "This backend has no user-space preparation action.", string.Empty);
+
+        try
+        {
+            var result = await (backendPrerequisites ?? new BackendPrerequisiteProvisioner()).PrepareAsync(backend, pythonExecutable, AppContext.BaseDirectory, cancellationToken: cancellationToken);
+            return new(true, result.Message, $"Python executable: {result.PythonExecutable}{Environment.NewLine}Requirements: {result.RequirementsPath}");
+        }
+        catch (Exception exception)
+        {
+            return new(false, exception.Message, exception.ToString());
+        }
+    }
+
     public async Task<OpenVinoLoadResultDto> LoadModelAsync(OpenVinoLoadRequest request, CancellationToken cancellationToken = default)
     {
         try
@@ -394,7 +471,10 @@ public sealed class DataService(
         var backend = request.Backend?.Trim();
         if (!string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(backend, "Vulkan", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(backend, "CPU", StringComparison.OrdinalIgnoreCase))
+            !string.Equals(backend, "CPU", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(backend, "vLLM", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(backend, "SGLang", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(backend, "dotLLM", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException($"Unsupported chat backend '{request.Backend}'.", nameof(request));
         var chat = await GetChatAsync(id, cancellationToken);
         if (chat is null)
@@ -410,6 +490,24 @@ public sealed class DataService(
             using var openVinoSession = modelRuntime.CreateOpenVinoChatSession();
             var openVinoGeneration = openVinoSession.GenerateWithStats(request.Content.Trim());
             return await AddChatExchangeAsync(id, request.Content.Trim(), openVinoGeneration.Text, modelPath, "OpenVINO", openVinoGeneration.TokenCount, openVinoGeneration.TokensPerSecond, cancellationToken);
+        }
+
+        if (string.Equals(backend, "vLLM", StringComparison.OrdinalIgnoreCase) || string.Equals(backend, "SGLang", StringComparison.OrdinalIgnoreCase))
+        {
+            using var pythonSession = modelRuntime.CreatePythonChatSession();
+            var pythonMessages = chat.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content))
+                .Append(new LlamaChatMessage("user", request.Content.Trim())).ToArray();
+            var pythonGeneration = await pythonSession.GenerateWithStatsAsync(pythonMessages, cancellationToken);
+            return await AddChatExchangeAsync(id, request.Content.Trim(), pythonGeneration, request.ModelPath, backend!, cancellationToken);
+        }
+
+        if (string.Equals(backend, "dotLLM", StringComparison.OrdinalIgnoreCase))
+        {
+            using var dotLlmSession = modelRuntime.CreateDotLlmChatSession();
+            var dotLlmMessages = chat.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content))
+                .Append(new LlamaChatMessage("user", request.Content.Trim())).ToArray();
+            var dotLlmGeneration = await dotLlmSession.GenerateWithStatsAsync(dotLlmMessages, cancellationToken);
+            return await AddChatExchangeAsync(id, request.Content.Trim(), dotLlmGeneration, request.ModelPath, backend!, cancellationToken);
         }
 
         if (!string.Equals(Path.GetExtension(request.ModelPath), ".gguf", StringComparison.OrdinalIgnoreCase))

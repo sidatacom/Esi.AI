@@ -3,8 +3,42 @@ namespace Esi.AI.Models;
 public enum ConfigurationBackend
 {
     Llama,
-    OpenVino
+    OpenVino,
+    Vllm,
+    Sglang,
+    DotLlm
 }
+
+public sealed record BackendModel(
+    string Name,
+    string Path,
+    long SizeInBytes,
+    DateTime LastWriteTimeUtc,
+    ConfigurationBackend Backend,
+    Guid? ConfigurationProfileId = null);
+
+/// <summary>Describes the prerequisite checks for one inference backend.</summary>
+public sealed record BackendPrerequisiteDiagnostics(
+    ConfigurationBackend Backend,
+    string BackendName,
+    bool IsReady,
+    IReadOnlyList<BackendPrerequisiteCheck> Checks,
+    string? Error = null);
+
+/// <summary>Describes one backend prerequisite and whether it can be repaired.</summary>
+public sealed record BackendPrerequisiteCheck(
+    string Id,
+    string Name,
+    bool IsAvailable,
+    string Detail,
+    bool CanSolve,
+    bool IsOptional = false);
+
+/// <summary>Contains the result and output of a backend preparation action.</summary>
+public sealed record BackendPrerequisiteSolveResult(
+    bool Succeeded,
+    string Message,
+    string Output);
 
 public sealed record LoadModelRequest(
     string ModelPath,
@@ -27,7 +61,52 @@ public sealed record CreateChatRequest(string? Title = null);
 
 public sealed record ChatExchangeRequest(string Content, string? ModelPath = null, string? Backend = null);
 
-public sealed record ModelDownloadRequest(string ModelId, string? FileName = null);
+public sealed record ModelDownloadRequest(string ModelId, string? FileName = null, string Library = "gguf");
+
+public sealed record ModelDownloadOption(string FileName, int FileCount, long? SizeInBytes = null)
+{
+    public string Label
+    {
+        get
+        {
+            var parts = new List<string> { FileName };
+            if (FileCount > 1)
+                parts.Add($"{FileCount} Dateien");
+            if (SizeInBytes is long size)
+                parts.Add(FormatSize(size));
+            return string.Join(" · ", parts);
+        }
+    }
+
+    private static string FormatSize(long size)
+    {
+        const double unit = 1024;
+        var value = (double)size;
+        var units = new[] { "B", "KiB", "MiB", "GiB", "TiB" };
+        var index = 0;
+        while (value >= unit && index < units.Length - 1)
+        {
+            value /= unit;
+            index++;
+        }
+
+        return $"{value.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture)} {units[index]}";
+    }
+}
+
+public sealed record HuggingFaceSearchRequest(
+    string Query,
+    string Library = "gguf",
+    string Task = "",
+    string ParameterRange = "",
+    string Language = "",
+    string License = "",
+    string Hardware = "",
+    string Other = "",
+    string InferenceProvider = "",
+    bool BaseOnly = false,
+    bool InferenceAvailable = false,
+    string Sort = "downloads");
 
 public sealed record SelectModelRequest(string Path);
 
@@ -103,6 +182,27 @@ public sealed record OpenVinoLoadRequest(
     OpenVinoNpuSettings? Npu = null,
     int TopK = 50,
     float RepetitionPenalty = 1.2f);
+
+public sealed record PythonInferenceLoadRequest(
+    string ModelPath,
+    ConfigurationBackend Backend,
+    string PythonExecutable = "python3",
+    string? WorkingDirectory = null,
+    int Port = 8000,
+    int? GpuMemoryUtilization = null,
+    uint MaxModelLength = 2048,
+    int TensorParallelSize = 1,
+    bool TrustRemoteCode = true,
+    TimeSpan? StartupTimeout = null,
+    uint MaxTokens = 512,
+    float Temperature = .7f,
+    float TopP = .9f,
+    bool EnforceEager = false);
+
+public sealed record DotLlmLoadRequest(
+    string ModelPath,
+    string Device = "cpu",
+    int? Threads = null);
 
 public sealed record OpenVinoNpuSettings(
     int MaxPromptLength = 1024,

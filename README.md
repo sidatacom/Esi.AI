@@ -1,5 +1,8 @@
 # Esi.AI
 
+Esi.AI is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+Third-party components retain their original licenses; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
 Esi.AI is a C# fork designed for seamless integration with VS Code and GitHub Copilot. It provides a robust framework for extending AI capabilities within the development environment.
 
 ## Project Overview
@@ -17,6 +20,8 @@ Esi.AI serves as a central hub for several key components and forks, enabling ad
 - **MCP Server Support**: Built-in support for Model Context Protocol (MCP) servers, including specialized tools for terminal interaction and debugging.
 - **Multi-Model Orchestration**: Leverages LiteLLM to provide a unified interface for various LLM providers.
 - **Local Execution**: Seamlessly integrates with LocalAI for private and local AI processing.
+
+Backend-specific reference models and commands for running the native load/generate checks are documented in [docs/reference-models.md](docs/reference-models.md).
 
 ## Repository Structure
 

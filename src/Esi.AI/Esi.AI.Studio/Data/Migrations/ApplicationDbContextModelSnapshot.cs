@@ -250,6 +250,56 @@ namespace Esi.AI.Studio.Migrations
                     b.ToTable("LlamaConfigurationProfiles", (string)null);
                 });
 
+            modelBuilder.Entity("Esi.AI.Studio.Data.ModelDownloadEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Completed")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DestinationPath")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Error")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileNamesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileStatusesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Library")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModelId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("Paused")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Revision")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ModelDownloads");
+                });
+
             modelBuilder.Entity("Esi.AI.Studio.Data.OpenVinoSettingsEntity", b =>
                 {
                     b.Property<int>("Id")

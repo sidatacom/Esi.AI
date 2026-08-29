@@ -77,7 +77,229 @@
         <span>OpenVINO</span>
         <small>IR or ONNX / GenAI</small>
     </button>
+    <button class="backend-tab @(activeBackend == BackendTab.Python ? "active" : "")" type="button" @onclick="() => SelectBackendAsync(BackendTab.Python)">
+        <span>Python engines</span>
+        <small>vLLM / SGLang</small>
+    </button>
+    <button class="backend-tab @(activeBackend == BackendTab.DotLlm ? "active" : "")" type="button" @onclick="() => SelectBackendAsync(BackendTab.DotLlm)">
+        <span>dotLLM</span>
+        <small>Native .NET / GGUF</small>
+    </button>
 </nav>
+
+<section class="config-panel shared-model-config">
+    <div class="section-heading">
+        <div><p class="eyebrow">SHARED MODEL CATALOG</p><h2>Model and configuration</h2></div>
+        <span class="step-label">00</span>
+    </div>
+    <div class="model-load-row">
+        <div class="model-picker">
+            <label class="form-label" for="shared-model-picker">Model for @GetBackendLabel(activeBackend)</label>
+            <select id="shared-model-picker" class="form-select" value="@CurrentModelPath" @onchange="SelectSharedModelAsync">
+                <option value="">Select a model...</option>
+                @if (!string.IsNullOrWhiteSpace(CurrentModelPath) && !CurrentBackendModels.Any(model => string.Equals(model.Path, CurrentModelPath, StringComparison.OrdinalIgnoreCase)))
+                {
+                    <option value="@CurrentModelPath">@Path.GetFileName(CurrentModelPath) (saved path)</option>
+                }
+                @foreach (var model in CurrentBackendModels)
+                {
+                    <option value="@model.Path">@model.Name</option>
+                }
+            </select>
+            @if (CurrentBackendModels.Count == 0)
+            {
+                <span class="picker-note">No stored models are available. Reference: @CurrentReferenceModel?.ModelId (@CurrentReferenceModel?.EnvironmentVariable)</span>
+            }
+            else
+            {
+                <span class="picker-note">Reference: @CurrentReferenceModel?.ModelId (@CurrentReferenceModel?.EnvironmentVariable)</span>
+            }
+        </div>
+        <div class="profile-select">
+            <label class="form-label" for="shared-configuration-profile">Configuration set</label>
+            <select id="shared-configuration-profile" class="form-select" value="@selectedProfileId" @onchange="SelectProfileAsync" disabled="@string.IsNullOrWhiteSpace(CurrentModelPath)">
+                <option value="">Select a saved set...</option>
+                @foreach (var profile in MatchingProfiles)
+                {
+                    <option value="@profile.Id">@profile.Name</option>
+                }
+            </select>
+        </div>
+        <div class="profile-actions">
+            <button class="profile-button" type="button" @onclick="CreateProfileAsync" disabled="@string.IsNullOrWhiteSpace(CurrentModelPath)">Create</button>
+            <button class="profile-button" type="button" @onclick="UpdateProfileAsync" disabled="@(!selectedProfileId.HasValue)">Update</button>
+            <button class="profile-button" type="button" @onclick="OpenAssignProfileAsync" disabled="@(!BackendProfiles.Any())">Assign</button>
+            <button class="load-button" type="button" @onclick="LoadActiveBackendModelAsync" disabled="@IsCurrentModelLoadDisabled">@GetLoadButtonLabel()</button>
+        </div>
+    </div>
+
+    @if (isAssigningProfile)
+    {
+        <div class="profile-create-row">
+            <label class="form-label" for="shared-assign-source-profile">Configuration to copy</label>
+            <div class="profile-create-fields">
+                <select id="shared-assign-source-profile" class="form-select" value="@assignSourceProfileId" @onchange="SelectAssignSourceProfileAsync">
+                    <option value="">Select a configuration...</option>
+                    @foreach (var profile in BackendProfiles.OrderBy(profile => profile.Name))
+                    {
+                        <option value="@profile.Id">@profile.Name (@Path.GetFileName(profile.ModelPath))</option>
+                    }
+                </select>
+                <label class="form-label" for="shared-assign-target-model">Target model</label>
+                <select id="shared-assign-target-model" class="form-select" value="@profileTargetModelPath" @onchange="SelectProfileTargetModelAsync">
+                    <option value="">Select a model...</option>
+                    @foreach (var model in CurrentBackendModels)
+                    {
+                        <option value="@model.Path">@model.Name</option>
+                    }
+                </select>
+                <button class="profile-button profile-button-primary" type="button" @onclick="AssignProfileToModelAsync" disabled="@(!assignSourceProfileId.HasValue || string.IsNullOrWhiteSpace(profileTargetModelPath))">Copy</button>
+                <button class="profile-button" type="button" @onclick="CancelAssignProfile">Cancel</button>
+            </div>
+        </div>
+    }
+
+    @if (isCreatingProfile)
+    {
+        <div class="profile-create-row">
+            <label class="form-label" for="shared-new-profile-name">Set name</label>
+            <div class="profile-create-fields">
+                <InputText id="shared-new-profile-name" class="form-control" @bind-Value="newProfileName" />
+                <button class="profile-button profile-button-primary" type="button" @onclick="SaveNewProfileAsync">Save</button>
+                <button class="profile-button" type="button" @onclick="CancelCreateProfile">Cancel</button>
+            </div>
+        </div>
+    }
+</section>
+
+@if (activeBackend != BackendTab.OpenVino)
+{
+    <section class="driver-validation-panel backend-prerequisites-panel">
+        <details open="@(!IsBackendPrerequisitesReady)">
+            <summary class="section-heading driver-validation-summary">
+                <div>
+                    <p class="eyebrow">BACKEND REQUIREMENTS</p>
+                    <h2>@(backendPrerequisites?.BackendName ?? GetBackendLabel(activeBackend))</h2>
+                </div>
+                <span class="validation-summary @(IsBackendPrerequisitesReady ? "validation-summary-ok" : "validation-summary-error")">
+                    @(IsBackendPrerequisitesReady ? "Ready" : "Needs attention")
+                </span>
+            </summary>
+            <div class="driver-validation-content">
+                <button class="profile-button" type="button" @onclick="RefreshBackendPrerequisitesAsync" disabled="@isCheckingPrerequisites">
+                    @(isCheckingPrerequisites ? "Checking..." : "Recheck")
+                </button>
+                @if (backendPrerequisites is null)
+                {
+                    <p class="empty-state">Checking backend requirements...</p>
+                }
+                else
+                {
+                    <ol class="validation-steps">
+                        @for (var index = 0; index < backendPrerequisites.Checks.Count; index++)
+                        {
+                            var check = backendPrerequisites.Checks[index];
+                            <li class="validation-step @(check.IsAvailable ? "validation-step-ok" : check.IsOptional ? "validation-step-info" : "validation-step-error")">
+                                <span class="validation-step-number">@((index + 1).ToString("00"))</span>
+                                <span class="validation-step-indicator" aria-hidden="true">@(check.IsAvailable ? "OK" : check.IsOptional ? "i" : "!")</span>
+                                <span class="validation-step-copy">
+                                    <strong>@check.Name</strong>
+                                    <small>@check.Detail</small>
+                                    @if (!check.IsAvailable && !check.IsOptional && check.CanSolve)
+                                    {
+                                        <button class="validation-solve-button" type="button" @onclick="PrepareBackendPrerequisitesAsync" disabled="@isPreparingPrerequisites">
+                                            @(isPreparingPrerequisites ? "Preparing..." : "Prepare")
+                                        </button>
+                                    }
+                                </span>
+                            </li>
+                        }
+                    </ol>
+                    <p class="validation-summary @(IsBackendPrerequisitesReady ? "validation-summary-ok" : "validation-summary-error")">
+                        @(IsBackendPrerequisitesReady ? "Backend requirements are ready." : "Model loading is disabled until the required backend checks pass.")
+                    </p>
+                    @if (!string.IsNullOrWhiteSpace(backendPrerequisites.Error))
+                    {
+                        <details class="solve-output" open>
+                            <summary>Diagnostic details</summary>
+                            <textarea class="form-control log-output" rows="8" readonly>@backendPrerequisites.Error</textarea>
+                        </details>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(prerequisiteOutput))
+                    {
+                        <details class="solve-output" open>
+                            <summary>Preparation output</summary>
+                            <textarea class="form-control log-output" rows="8" readonly>@prerequisiteOutput</textarea>
+                        </details>
+                    }
+                }
+            </div>
+        </details>
+    </section>
+}
+
+@if (activeBackend == BackendTab.Python)
+{
+    <section class="config-panel">
+        <div class="section-heading"><div><p class="eyebrow">PYTHON INFERENCE SERVER</p><h2>Load configuration</h2></div><span class="step-label">01</span></div>
+        <div class="field-row">
+            <div class="field-group"><label class="form-label" for="python-engine">Engine</label><InputSelect id="python-engine" class="form-select" @bind-Value="pythonForm.Backend" @bind-Value:after="RefreshBackendPrerequisitesAsync"><option value="Vllm">vLLM</option><option value="Sglang">SGLang</option></InputSelect></div>
+            <div class="field-group"><label class="form-label" for="python-model">Model path or Hugging Face ID</label><InputText id="python-model" class="form-control" @bind-Value="pythonForm.ModelPath" placeholder="Qwen/Qwen3.8-Flash-Next" /></div>
+            <div class="field-group"><label class="form-label" for="python-executable">Python executable (optional override)</label><InputText id="python-executable" class="form-control" @bind-Value="pythonForm.PythonExecutable" @bind-Value:after="RefreshBackendPrerequisitesAsync" /></div>
+        </div>
+        <div class="field-row">
+            <div class="field-group"><label class="form-label" for="python-port">Port</label><InputNumber id="python-port" class="form-control" @bind-Value="pythonForm.Port" /></div>
+            <div class="field-group"><label class="form-label" for="python-context">Max model length</label><InputNumber id="python-context" class="form-control" @bind-Value="pythonForm.MaxModelLength" /></div>
+            <div class="field-group"><label class="form-label" for="python-tp">Tensor parallel size</label><InputNumber id="python-tp" class="form-control" @bind-Value="pythonForm.TensorParallelSize" /></div>
+            <div class="field-group"><label class="form-label" for="python-gpu-memory">GPU memory utilization (%)</label><InputNumber id="python-gpu-memory" class="form-control" @bind-Value="pythonForm.GpuMemoryUtilization" /></div>
+        </div>
+        <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.TrustRemoteCode" /> Trust remote code</label>
+        <div class="model-actions"><button class="profile-button" type="button" @onclick="StopPythonModelAsync" disabled="@(!isPythonLoading && loadStatus?.Backend is not ("vLLM" or "SGLang"))">Stop backend</button></div>
+        @if (!string.IsNullOrWhiteSpace(pythonStatus)) { <p class="mt-3" role="status">@pythonStatus</p> }
+    </section>
+
+    <section class="telemetry-panel">
+        <div class="section-heading"><div><p class="eyebrow">RUNTIME TELEMETRY</p><h2>Python engine status</h2></div></div>
+        <dl class="telemetry-grid">
+            <dt>Engine</dt>
+            <dd>@GetPythonBackendName(pythonForm.Backend)</dd>
+            <dt>Python executable</dt>
+            <dd>@pythonForm.PythonExecutable</dd>
+            <dt>Model</dt>
+            <dd>@(string.IsNullOrWhiteSpace(pythonForm.ModelPath) ? "Not selected" : pythonForm.ModelPath)</dd>
+            <dt>Endpoint</dt>
+            <dd>127.0.0.1:@pythonForm.Port</dd>
+            <dt>Runtime</dt>
+            <dd class="diagnostic-@(loadStatus?.Backend is "vLLM" or "SGLang" ? "ok" : "error")">@(isPythonLoading ? "Starting" : loadStatus?.Backend is "vLLM" or "SGLang" ? "Ready" : "Not running")</dd>
+        </dl>
+    </section>
+}
+
+@if (activeBackend == BackendTab.DotLlm)
+{
+    <section class="config-panel">
+        <div class="section-heading"><div><p class="eyebrow">NATIVE .NET INFERENCE</p><h2>dotLLM configuration</h2></div><span class="step-label">01</span></div>
+        <div class="field-row">
+            <div class="field-group"><label class="form-label" for="dotllm-model">GGUF model path or ID</label><InputText id="dotllm-model" class="form-control" @bind-Value="dotLlmForm.ModelPath" /></div>
+            <div class="field-group"><label class="form-label" for="dotllm-device">Device</label><InputText id="dotllm-device" class="form-control" @bind-Value="dotLlmForm.Device" placeholder="cpu" /></div>
+            <div class="field-group"><label class="form-label" for="dotllm-threads">CPU threads</label><InputNumber id="dotllm-threads" class="form-control" @bind-Value="dotLlmForm.Threads" /></div>
+        </div>
+        <div class="model-actions"><button class="profile-button" type="button" @onclick="StopDotLlmModelAsync" disabled="@(!isDotLlmLoading && loadStatus?.Backend != "dotLLM")">Unload dotLLM</button></div>
+        @if (!string.IsNullOrWhiteSpace(dotLlmStatus)) { <p class="mt-3" role="status">@dotLlmStatus</p> }
+    </section>
+
+    <section class="telemetry-panel">
+        <div class="section-heading"><div><p class="eyebrow">RUNTIME TELEMETRY</p><h2>dotLLM status</h2></div></div>
+        <dl class="telemetry-grid">
+            <dt>Model</dt>
+            <dd>@(string.IsNullOrWhiteSpace(dotLlmForm.ModelPath) ? "Not selected" : dotLlmForm.ModelPath)</dd>
+            <dt>Device</dt>
+            <dd>@dotLlmForm.Device</dd>
+            <dt>Runtime</dt>
+            <dd class="diagnostic-@(loadStatus?.Backend == "dotLLM" ? "ok" : "error")">@(isDotLlmLoading ? "Loading in process" : loadStatus?.Backend == "dotLLM" ? "Ready in process" : "Not loaded")</dd>
+        </dl>
+    </section>
+}
 
 @if (activeBackend == BackendTab.Llama)
 {
@@ -91,84 +313,6 @@
             </div>
             <span class="step-label">01</span>
         </div>
-
-        <div class="model-load-row">
-            <div class="model-picker">
-                <label class="form-label" for="model-picker">Model from repository</label>
-                <select id="model-picker" class="form-select" value="@form.ModelPath" @onchange="SelectModelAsync">
-                    <option value="">Select a model...</option>
-                    @if (!string.IsNullOrWhiteSpace(form.ModelPath) && !LlamaModels.Any(model => string.Equals(model.Path, form.ModelPath, StringComparison.OrdinalIgnoreCase)))
-                    {
-                        <option value="@form.ModelPath">@Path.GetFileName(form.ModelPath) (saved path)</option>
-                    }
-                    @foreach (var model in LlamaModels)
-                    {
-                        <option value="@model.Path">@model.Name</option>
-                    }
-                </select>
-                @if (LlamaModels.Count == 0)
-                {
-                    <span class="picker-note">No models are stored in the database yet.</span>
-                }
-            </div>
-            <div class="model-actions">
-                    <button class="load-button" type="button" @onclick="LoadModelAsync" disabled="@(isLoading || string.IsNullOrWhiteSpace(form.ModelPath))">
-                    @(isLoading ? "Loading model..." : "Load model")
-                </button>
-            </div>
-        </div>
-
-        <div class="profile-toolbar">
-            <div class="profile-select">
-                <label class="form-label" for="configuration-profile">Configuration set</label>
-                <select id="configuration-profile" class="form-select" value="@selectedProfileId" @onchange="SelectProfileAsync" disabled="@string.IsNullOrWhiteSpace(CurrentModelPath)">
-                    <option value="">Select a saved set...</option>
-                    @foreach (var profile in MatchingProfiles)
-                    {
-                        <option value="@profile.Id">@profile.Name</option>
-                    }
-                </select>
-            </div>
-            <div class="profile-actions">
-                <button class="profile-button" type="button" @onclick="CreateProfileAsync" disabled="@string.IsNullOrWhiteSpace(CurrentModelPath)">Create</button>
-                <button class="profile-button" type="button" @onclick="UpdateProfileAsync" disabled="@(!selectedProfileId.HasValue)">Update</button>
-                <button class="profile-button" type="button" @onclick="OpenAssignProfileAsync">Assign</button>
-            </div>
-        </div>
-
-        @if (isAssigningProfile)
-        {
-            <div class="profile-create-row">
-                <label class="form-label" for="assign-source-profile">Configuration to copy</label>
-                <div class="profile-create-fields">
-                    <select id="assign-source-profile" class="form-select" value="@assignSourceProfileId" @onchange="SelectAssignSourceProfileAsync">
-                        <option value="">Select a configuration...</option>
-                        @foreach (var profile in profiles.OrderBy(profile => profile.Name))
-                        {
-                            <option value="@profile.Id">@profile.Name (@Path.GetFileName(profile.ModelPath))</option>
-                        }
-                    </select>
-                    <label class="form-label" for="assign-target-model">Target model</label>
-                    <select id="assign-target-model" class="form-select" value="@profileTargetModelPath" @onchange="SelectProfileTargetModelAsync">
-                        <option value="">Select a model...</option>
-                    </select>
-                    <button class="profile-button profile-button-primary" type="button" @onclick="AssignProfileToModelAsync" disabled="@(!assignSourceProfileId.HasValue || string.IsNullOrWhiteSpace(profileTargetModelPath))">Copy</button>
-                    <button class="profile-button" type="button" @onclick="CancelAssignProfile">Cancel</button>
-                </div>
-            </div>
-        }
-
-        @if (isCreatingProfile)
-        {
-            <div class="profile-create-row">
-                <label class="form-label" for="new-profile-name">Set name</label>
-                <div class="profile-create-fields">
-                    <InputText id="new-profile-name" class="form-control" @bind-Value="newProfileName" />
-                    <button class="profile-button profile-button-primary" type="button" @onclick="SaveNewProfileAsync">Save</button>
-                    <button class="profile-button" type="button" @onclick="CancelCreateProfile">Cancel</button>
-                </div>
-            </div>
-        }
 
     <div class="settings-panels">
         <details class="settings-panel">
@@ -446,85 +590,7 @@ else
                 <span class="step-label">01</span>
             </div>
 
-            <div class="model-load-row">
-                <div class="model-picker">
-                    <label class="form-label" for="openvino-repository-model-picker">Model from repository</label>
-                    <select id="openvino-repository-model-picker" class="form-select" value="@openVinoForm.ModelPath" @onchange="SelectOpenVinoModelFromPickerAsync">
-                        <option value="">Select a model...</option>
-                        @if (!string.IsNullOrWhiteSpace(openVinoForm.ModelPath) && !databaseModels.Any(model => string.Equals(model.Path, openVinoForm.ModelPath, StringComparison.OrdinalIgnoreCase)))
-                        {
-                            <option value="@openVinoForm.ModelPath">@Path.GetFileName(openVinoForm.ModelPath) (saved path)</option>
-                        }
-                        @foreach (var model in databaseModels)
-                        {
-                            <option value="@model.Path">@model.Name</option>
-                        }
-                    </select>
-                </div>
-                <div class="model-actions">
-                    <button class="load-button" type="button" @onclick="LoadOpenVinoModelAsync" disabled="@(isOpenVinoLoading || (openVinoDiagnostics?.IsGpuReady != true && openVinoDiagnostics?.IsNpuReady != true) || string.IsNullOrWhiteSpace(openVinoForm.ModelPath) || string.IsNullOrWhiteSpace(openVinoForm.Device))">
-                        @(isOpenVinoLoading ? "Loading model..." : "Load model")
-                    </button>
-                </div>
-            </div>
-
-            <div class="profile-toolbar">
-                <div class="profile-select">
-                    <label class="form-label" for="openvino-configuration-profile">Configuration set</label>
-                    <select id="openvino-configuration-profile" class="form-select" value="@selectedProfileId" @onchange="SelectProfileAsync" disabled="@string.IsNullOrWhiteSpace(CurrentModelPath)">
-                        <option value="">Select a saved set...</option>
-                        @foreach (var profile in MatchingProfiles)
-                        {
-                            <option value="@profile.Id">@profile.Name</option>
-                        }
-                    </select>
-                </div>
-                <div class="profile-actions">
-                    <button class="profile-button" type="button" @onclick="CreateProfileAsync" disabled="@string.IsNullOrWhiteSpace(CurrentModelPath)">Create</button>
-                    <button class="profile-button" type="button" @onclick="UpdateProfileAsync" disabled="@(!selectedProfileId.HasValue)">Update</button>
-                    <button class="profile-button" type="button" @onclick="OpenAssignProfileAsync">Assign</button>
-                </div>
-            </div>
-
             <div class="settings-panels">
-                @if (isAssigningProfile)
-                {
-                    <div class="profile-create-row">
-                        <label class="form-label" for="openvino-assign-source-profile">Configuration to copy</label>
-                        <div class="profile-create-fields">
-                            <select id="openvino-assign-source-profile" class="form-select" value="@assignSourceProfileId" @onchange="SelectAssignSourceProfileAsync">
-                                <option value="">Select a configuration...</option>
-                                @foreach (var profile in BackendProfiles.OrderBy(profile => profile.Name))
-                                {
-                                    <option value="@profile.Id">@profile.Name (@Path.GetFileName(profile.ModelPath))</option>
-                                }
-                            </select>
-                            <label class="form-label" for="openvino-assign-target-model">Target model</label>
-                            <select id="openvino-assign-target-model" class="form-select" value="@profileTargetModelPath" @onchange="SelectProfileTargetModelAsync">
-                                <option value="">Select a model...</option>
-                                @foreach (var model in databaseModels)
-                                {
-                                    <option value="@model.Path">@model.Name</option>
-                                }
-                            </select>
-                            <button class="profile-button profile-button-primary" type="button" @onclick="AssignProfileToModelAsync" disabled="@(!assignSourceProfileId.HasValue || string.IsNullOrWhiteSpace(profileTargetModelPath))">Copy</button>
-                            <button class="profile-button" type="button" @onclick="CancelAssignProfile">Cancel</button>
-                        </div>
-                    </div>
-                }
-
-                @if (isCreatingProfile)
-                {
-                    <div class="profile-create-row">
-                        <label class="form-label" for="openvino-new-profile-name">Set name</label>
-                        <div class="profile-create-fields">
-                            <InputText id="openvino-new-profile-name" class="form-control" @bind-Value="newProfileName" />
-                            <button class="profile-button profile-button-primary" type="button" @onclick="SaveNewProfileAsync">Save</button>
-                            <button class="profile-button" type="button" @onclick="CancelCreateProfile">Cancel</button>
-                        </div>
-                    </div>
-                }
-
                 <details class="settings-panel" open>
                     <summary>Model loading</summary>
                     <div class="field-group">
@@ -679,22 +745,74 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
 @code {
     private BackendTab activeBackend = BackendTab.Llama;
+    private readonly PythonForm pythonForm = new();
+    private bool isPythonLoading;
+    private string? pythonStatus;
     private bool isOpenVinoLoading;
     private bool isOpenVinoModelLoaded;
     private bool isCheckingOpenVino;
+    private bool isCheckingPrerequisites;
+    private bool isPreparingPrerequisites;
+    private string? prerequisiteOutput;
     private string? solvingCheckId;
     private string? openVinoStatus;
     private string? openVinoLoadLog;
     private string? openVinoInstallOutput;
     private bool solveRequiresLogin;
     private OpenVinoDiagnosticsDto? openVinoDiagnostics;
+    private BackendPrerequisiteDiagnostics? backendPrerequisites;
     private readonly OpenVinoForm openVinoForm = new();
+    private readonly DotLlmForm dotLlmForm = new();
+    private IReadOnlyList<BackendModel> backendModels = [];
+    private bool isDotLlmLoading;
+    private string? dotLlmStatus;
 
-    private string ActiveBackendLabel => activeBackend == BackendTab.Llama ? "LLama / Vulkan" : $"OpenVINO / {openVinoForm.Device}";
+    private string ActiveBackendLabel => activeBackend switch
+    {
+        BackendTab.Llama => "LLama / Vulkan",
+        BackendTab.OpenVino => $"OpenVINO / {openVinoForm.Device}",
+        BackendTab.DotLlm => "dotLLM / Native .NET",
+        _ => $"{GetPythonBackendName(pythonForm.Backend)} / Python"
+    };
     private bool IsOpenVinoValidationReady => openVinoDiagnostics?.IsGpuReady == true || openVinoDiagnostics?.IsNpuReady == true;
+    private bool IsBackendPrerequisitesReady => backendPrerequisites?.IsReady == true;
+    private ConfigurationBackend CurrentPrerequisiteBackend => activeBackend == BackendTab.Python ? pythonForm.Backend : GetConfigurationBackend(activeBackend);
     private IReadOnlyList<LlamaModel> LlamaModels => databaseModels
         .Where(model => string.Equals(Path.GetExtension(model.Path), ".gguf", StringComparison.OrdinalIgnoreCase))
         .ToArray();
+
+    private IReadOnlyList<BackendModel> CurrentBackendModels => backendModels
+        .Where(model => model.Backend == CurrentProfileBackend)
+        .ToArray();
+
+    private BackendReferenceModel? CurrentReferenceModel => BackendReferenceModels.All
+        .FirstOrDefault(model => model.Backend == CurrentProfileBackend);
+
+    private bool IsCurrentModelLoadDisabled => string.IsNullOrWhiteSpace(CurrentModelPath) || activeBackend switch
+    {
+        BackendTab.Llama => isLoading || !string.Equals(Path.GetExtension(CurrentModelPath), ".gguf", StringComparison.OrdinalIgnoreCase),
+        BackendTab.OpenVino => isOpenVinoLoading || !IsOpenVinoValidationReady || string.IsNullOrWhiteSpace(openVinoForm.Device),
+        BackendTab.Python => isPythonLoading || !IsBackendPrerequisitesReady,
+        BackendTab.DotLlm => isDotLlmLoading,
+        _ => true
+    };
+
+    private string GetLoadButtonLabel() => activeBackend switch
+    {
+        BackendTab.Llama => isLoading ? "Loading model..." : "Load model",
+        BackendTab.OpenVino => isOpenVinoLoading ? "Loading model..." : "Load model",
+        BackendTab.Python => isPythonLoading ? "Starting server..." : "Start Python backend",
+        BackendTab.DotLlm => isDotLlmLoading ? "Loading in process..." : "Load dotLLM",
+        _ => "Load model"
+    };
+
+    private static string GetBackendLabel(BackendTab backend) => backend switch
+    {
+        BackendTab.Llama => "LLama",
+        BackendTab.OpenVino => "OpenVINO",
+        BackendTab.DotLlm => "dotLLM",
+        _ => "Python"
+    };
 
     private async Task LoadOpenVinoModelAsync()
     {
@@ -748,6 +866,68 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         }
     }
 
+    private Task LoadActiveBackendModelAsync() => activeBackend switch
+    {
+        BackendTab.Llama => LoadModelAsync(),
+        BackendTab.OpenVino => LoadOpenVinoModelAsync(),
+        BackendTab.Python => LoadPythonModelAsync(),
+        BackendTab.DotLlm => LoadDotLlmModelAsync(),
+        _ => Task.CompletedTask
+    };
+
+    private async Task LoadPythonModelAsync()
+    {
+        isPythonLoading = true;
+        pythonStatus = null;
+        try
+        {
+            loadStatus = await DataService.LoadPythonModelAsync(pythonForm.ToRequest());
+            pythonStatus = $"{GetPythonBackendName(pythonForm.Backend)} is ready.";
+        }
+        catch (Exception exception)
+        {
+            pythonStatus = exception.Message;
+        }
+        finally
+        {
+            isPythonLoading = false;
+        }
+    }
+
+    private async Task StopPythonModelAsync()
+    {
+        await DataService.UnloadModelAsync(loadStatus?.ModelPath ?? pythonForm.ModelPath, pythonForm.Backend);
+        loadStatus = await DataService.GetModelStatusAsync();
+        pythonStatus = "Python backend stopped.";
+    }
+
+    private async Task LoadDotLlmModelAsync()
+    {
+        isDotLlmLoading = true;
+        dotLlmStatus = null;
+        try
+        {
+            loadStatus = await DataService.LoadDotLlmModelAsync(new DotLlmLoadRequest(
+                dotLlmForm.ModelPath, dotLlmForm.Device, dotLlmForm.Threads));
+            dotLlmStatus = "dotLLM is ready.";
+        }
+        catch (Exception exception)
+        {
+            dotLlmStatus = exception.Message;
+        }
+        finally
+        {
+            isDotLlmLoading = false;
+        }
+    }
+
+    private async Task StopDotLlmModelAsync()
+    {
+        await DataService.UnloadModelAsync(loadStatus?.ModelPath ?? dotLlmForm.ModelPath, ConfigurationBackend.DotLlm);
+        loadStatus = await DataService.GetModelStatusAsync();
+        dotLlmStatus = "dotLLM stopped.";
+    }
+
     private async Task RefreshOpenVinoDiagnosticsAsync()
     {
         isCheckingOpenVino = true;
@@ -759,6 +939,47 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         finally
         {
             isCheckingOpenVino = false;
+        }
+    }
+
+    private async Task RefreshBackendPrerequisitesAsync()
+    {
+        if (activeBackend == BackendTab.OpenVino)
+            return;
+
+        isCheckingPrerequisites = true;
+        try
+        {
+            backendPrerequisites = await DataService.GetBackendPrerequisitesAsync(CurrentPrerequisiteBackend, pythonForm.PythonExecutable);
+        }
+        catch (Exception exception)
+        {
+            backendPrerequisites = new(CurrentPrerequisiteBackend, GetBackendLabel(activeBackend), false,
+                [new("diagnostics", "Backend diagnostics", false, exception.Message, false)], exception.ToString());
+        }
+        finally
+        {
+            isCheckingPrerequisites = false;
+        }
+    }
+
+    private async Task PrepareBackendPrerequisitesAsync()
+    {
+        isPreparingPrerequisites = true;
+        prerequisiteOutput = $"Preparing {backendPrerequisites?.BackendName ?? GetBackendLabel(activeBackend)}...";
+        try
+        {
+            var result = await DataService.PrepareBackendAsync(CurrentPrerequisiteBackend, pythonForm.PythonExecutable);
+            prerequisiteOutput = $"Result: {(result.Succeeded ? "SUCCESS" : "FAILED")}{Environment.NewLine}{result.Message}{Environment.NewLine}{result.Output}";
+            await RefreshBackendPrerequisitesAsync();
+        }
+        catch (Exception exception)
+        {
+            prerequisiteOutput = exception.ToString();
+        }
+        finally
+        {
+            isPreparingPrerequisites = false;
         }
     }
 
@@ -840,24 +1061,30 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     {
         activeBackend = backend;
         statusMessage = null;
+        backendPrerequisites = null;
+        await RefreshBackendPrerequisitesAsync();
         isAssigningProfile = false;
         isCreatingProfile = false;
-        var modelPath = backend == BackendTab.Llama ? form.ModelPath : openVinoForm.ModelPath;
+        backendModels = await DataService.GetBackendModelsAsync(GetConfigurationBackend(backend));
+        var modelPath = backend switch
+        {
+            BackendTab.Llama => form.ModelPath,
+            BackendTab.OpenVino => openVinoForm.ModelPath,
+            BackendTab.DotLlm => dotLlmForm.ModelPath,
+            _ => pythonForm.ModelPath
+        };
         if (string.IsNullOrWhiteSpace(modelPath))
         {
             selectedProfileId = null;
             if (backend == BackendTab.OpenVino)
                 ResetOpenVinoConfiguration();
-            else
+            else if (backend == BackendTab.Llama)
                 ResetModelConfiguration();
             await InvokeAsync(StateHasChanged);
             return;
         }
 
-        var configurationBackend = backend == BackendTab.Llama
-            ? ConfigurationBackend.Llama
-            : ConfigurationBackend.OpenVino;
-        var profile = GetPreferredProfile(modelPath, configurationBackend);
+        var profile = GetPreferredProfile(modelPath, GetConfigurationBackend(backend));
         if (profile is not null)
             TryApplyProfile(profile);
         else
@@ -904,7 +1131,82 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private enum BackendTab
     {
         Llama,
-        OpenVino
+        OpenVino,
+        Python,
+        DotLlm
+    }
+
+    private static string GetPythonBackendName(ConfigurationBackend backend) => backend == ConfigurationBackend.Vllm ? "vLLM" : "SGLang";
+
+    private sealed class PythonForm
+    {
+        public string ModelPath { get; set; } = string.Empty;
+        public ConfigurationBackend Backend { get; set; } = ConfigurationBackend.Vllm;
+        public string PythonExecutable { get; set; } = "python3";
+        public string? WorkingDirectory { get; set; }
+        public int Port { get; set; } = 8000;
+        public int? GpuMemoryUtilization { get; set; } = 90;
+        public int MaxModelLength { get; set; } = 2048;
+        public int TensorParallelSize { get; set; } = 1;
+        public bool TrustRemoteCode { get; set; } = true;
+
+        public PythonInferenceLoadRequest ToRequest() => new(
+            ModelPath,
+            Backend,
+            PythonExecutable,
+            WorkingDirectory,
+            Port,
+            GpuMemoryUtilization,
+            (uint)Math.Max(1, MaxModelLength),
+            Math.Max(1, TensorParallelSize),
+            TrustRemoteCode,
+            EnforceEager: true);
+
+        public void Load(PythonInferenceLoadRequest request)
+        {
+            ModelPath = request.ModelPath;
+            Backend = request.Backend;
+            PythonExecutable = request.PythonExecutable;
+            WorkingDirectory = request.WorkingDirectory;
+            Port = request.Port;
+            GpuMemoryUtilization = request.GpuMemoryUtilization;
+            MaxModelLength = (int)Math.Min(int.MaxValue, request.MaxModelLength);
+            TensorParallelSize = request.TensorParallelSize;
+            TrustRemoteCode = request.TrustRemoteCode;
+        }
+
+        public void Reset()
+        {
+            PythonExecutable = "python3";
+            Backend = ConfigurationBackend.Vllm;
+            Port = 8000;
+            GpuMemoryUtilization = 90;
+            MaxModelLength = 2048;
+            TensorParallelSize = 1;
+            TrustRemoteCode = true;
+        }
+    }
+
+    private sealed class DotLlmForm
+    {
+        public string ModelPath { get; set; } = string.Empty;
+        public string Device { get; set; } = "cpu";
+        public int? Threads { get; set; }
+
+        public DotLlmLoadRequest ToRequest() => new(ModelPath, Device, Threads);
+
+        public void Load(DotLlmLoadRequest request)
+        {
+            ModelPath = request.ModelPath;
+            Device = request.Device;
+            Threads = request.Threads;
+        }
+
+        public void Reset()
+        {
+            Device = "cpu";
+            Threads = null;
+        }
     }
 
     private sealed class OpenVinoForm
@@ -1027,6 +1329,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
             var savedOpenVinoPath = !string.IsNullOrWhiteSpace(openVinoForm.ModelPath);
             activeBackend = savedOpenVinoPath ? BackendTab.OpenVino : BackendTab.Llama;
+            backendModels = await DataService.GetBackendModelsAsync(GetConfigurationBackend(activeBackend));
             var activeModelPath = activeBackend == BackendTab.OpenVino ? openVinoForm.ModelPath : form.ModelPath;
             var preferredProfile = GetPreferredProfile(activeModelPath, activeBackend == BackendTab.OpenVino ? ConfigurationBackend.OpenVino : ConfigurationBackend.Llama);
             if (preferredProfile is not null)
@@ -1041,6 +1344,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 openVinoForm.ModelPath = openVinoModelStatus.ModelPath;
             if (openVinoModelStatus.IsModelLoaded && !string.IsNullOrWhiteSpace(openVinoModelStatus.Device))
                 openVinoForm.Device = openVinoModelStatus.Device;
+            await RefreshBackendPrerequisitesAsync();
         }
         catch (Exception exception)
         {
@@ -1136,6 +1440,13 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             await DataService.SaveOpenVinoSettingsAsync(openVinoForm.ToSettings(selectedProfileId));
             await PersistCurrentProfileSettingsAsync();
             await PersistSelectedProfileAsync(openVinoForm.ModelPath, selectedProfileId);
+            return;
+        }
+
+        if (activeBackend is BackendTab.Python or BackendTab.DotLlm)
+        {
+            await PersistCurrentProfileSettingsAsync();
+            await PersistSelectedProfileAsync(CurrentModelPath, selectedProfileId);
             return;
         }
 
@@ -1347,11 +1658,29 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
     private void CancelCreateProfile() => isCreatingProfile = false;
 
-    private string CurrentModelPath => activeBackend == BackendTab.Llama ? form.ModelPath : openVinoForm.ModelPath;
+    private string CurrentModelPath => activeBackend switch
+    {
+        BackendTab.Llama => form.ModelPath,
+        BackendTab.OpenVino => openVinoForm.ModelPath,
+        BackendTab.DotLlm => dotLlmForm.ModelPath,
+        _ => pythonForm.ModelPath
+    };
 
     private ConfigurationBackend CurrentProfileBackend => activeBackend == BackendTab.Llama
         ? ConfigurationBackend.Llama
-        : ConfigurationBackend.OpenVino;
+        : activeBackend == BackendTab.OpenVino
+            ? ConfigurationBackend.OpenVino
+            : activeBackend == BackendTab.DotLlm
+                ? ConfigurationBackend.DotLlm
+                : pythonForm.Backend;
+
+    private ConfigurationBackend GetConfigurationBackend(BackendTab backend) => backend switch
+    {
+        BackendTab.Llama => ConfigurationBackend.Llama,
+        BackendTab.OpenVino => ConfigurationBackend.OpenVino,
+        BackendTab.DotLlm => ConfigurationBackend.DotLlm,
+        _ => pythonForm.Backend
+    };
 
     private IEnumerable<ModelConfigurationProfile> BackendProfiles =>
         profiles.Where(profile => profile.Backend == CurrentProfileBackend);
@@ -1376,6 +1705,58 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             .FirstOrDefault();
     }
 
+    private async Task SelectSharedModelAsync(ChangeEventArgs args)
+    {
+        var modelPath = args.Value?.ToString() ?? string.Empty;
+        switch (activeBackend)
+        {
+            case BackendTab.Llama:
+                form.ModelPath = modelPath;
+                break;
+            case BackendTab.OpenVino:
+                openVinoForm.ModelPath = modelPath;
+                break;
+            case BackendTab.DotLlm:
+                dotLlmForm.ModelPath = modelPath;
+                break;
+            default:
+                pythonForm.ModelPath = modelPath;
+                break;
+        }
+
+        var profile = GetPreferredProfile(modelPath, CurrentProfileBackend);
+        if (profile is not null)
+            TryApplyProfile(profile);
+        else
+        {
+            selectedProfileId = null;
+            ResetActiveBackendConfiguration();
+        }
+
+        await PersistSelectedProfileAsync(modelPath, selectedProfileId);
+        await SaveSettingsAsync();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ResetActiveBackendConfiguration()
+    {
+        switch (activeBackend)
+        {
+            case BackendTab.Llama:
+                ResetModelConfiguration();
+                break;
+            case BackendTab.OpenVino:
+                ResetOpenVinoConfiguration();
+                break;
+            case BackendTab.Python:
+                pythonForm.Reset();
+                break;
+            case BackendTab.DotLlm:
+                dotLlmForm.Reset();
+                break;
+        }
+    }
+
     private bool TryApplyProfile(ModelConfigurationProfile profile)
     {
         try
@@ -1383,19 +1764,29 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             isApplyingProfile = true;
             selectedProfileId = profile.Id;
             profileTargetModelPath = profile.ModelPath;
-            activeBackend = profile.Backend == ConfigurationBackend.OpenVino ? BackendTab.OpenVino : BackendTab.Llama;
-            if (profile.Backend == ConfigurationBackend.OpenVino)
+            activeBackend = profile.Backend switch
             {
-                var settings = JsonSerializer.Deserialize<OpenVinoSettings>(profile.ConfigurationJson)
-                    ?? throw new JsonException();
-                openVinoForm.Load(settings);
-                UpdateOpenVinoDeviceRoute();
-            }
-            else
+                ConfigurationBackend.OpenVino => BackendTab.OpenVino,
+                ConfigurationBackend.Vllm or ConfigurationBackend.Sglang => BackendTab.Python,
+                ConfigurationBackend.DotLlm => BackendTab.DotLlm,
+                _ => BackendTab.Llama
+            };
+            switch (profile.Backend)
             {
-                var settings = JsonSerializer.Deserialize<LlamaSettings>(profile.ConfigurationJson)
-                    ?? throw new JsonException();
-                ApplySettings(settings);
+                case ConfigurationBackend.OpenVino:
+                    openVinoForm.Load(JsonSerializer.Deserialize<OpenVinoSettings>(profile.ConfigurationJson) ?? throw new JsonException());
+                    UpdateOpenVinoDeviceRoute();
+                    break;
+                case ConfigurationBackend.Vllm:
+                case ConfigurationBackend.Sglang:
+                    pythonForm.Load(JsonSerializer.Deserialize<PythonInferenceLoadRequest>(profile.ConfigurationJson) ?? throw new JsonException());
+                    break;
+                case ConfigurationBackend.DotLlm:
+                    dotLlmForm.Load(JsonSerializer.Deserialize<DotLlmLoadRequest>(profile.ConfigurationJson) ?? throw new JsonException());
+                    break;
+                default:
+                    ApplySettings(JsonSerializer.Deserialize<LlamaSettings>(profile.ConfigurationJson) ?? throw new JsonException());
+                    break;
             }
             return true;
         }
@@ -1507,7 +1898,11 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             form.ContextSize,
             form.VulkanDevices,
             advanced.ToSettings()))
-        : JsonSerializer.Serialize(openVinoForm.ToSettings());
+        : activeBackend == BackendTab.OpenVino
+            ? JsonSerializer.Serialize(openVinoForm.ToSettings())
+            : activeBackend == BackendTab.DotLlm
+                ? JsonSerializer.Serialize(dotLlmForm.ToRequest())
+                : JsonSerializer.Serialize(pythonForm.ToRequest());
 
     private void ApplySettings(LlamaSettings settings)
     {

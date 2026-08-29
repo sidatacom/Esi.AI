@@ -13,6 +13,13 @@ public sealed class DataHub(
     OpenVinoDriverInstaller openVinoInstaller,
     ModelLibraryService modelLibrary) : Hub
 {
+    public override async Task OnConnectedAsync()
+    {
+        await base.OnConnectedAsync();
+        foreach (var download in dataService.GetModelDownloads())
+            await Clients.Caller.SendAsync("ModelDownloadUpdated", new ModelDownloadUpdate(download), Context.ConnectionAborted);
+    }
+
     public Task<LlamaSettings?> GetLlamaSettings() => dataService.GetLlamaSettingsAsync(Context.ConnectionAborted);
 
     public Task SaveLlamaSettings(LlamaSettings settings) => dataService.SaveLlamaSettingsAsync(settings, Context.ConnectionAborted);
@@ -22,6 +29,9 @@ public sealed class DataHub(
     public Task SaveOpenVinoSettings(OpenVinoSettings settings) => dataService.SaveOpenVinoSettingsAsync(settings, Context.ConnectionAborted);
 
     public Task<IReadOnlyList<LlamaModel>> GetLlamaModels() => dataService.GetLlamaModelsAsync(Context.ConnectionAborted);
+
+    public Task<IReadOnlyList<BackendModel>> GetBackendModels(ConfigurationBackend backend) =>
+        dataService.GetBackendModelsAsync(backend, Context.ConnectionAborted);
 
     public Task<IReadOnlyList<LlamaModel>> ScanLlamaModels() => dataService.ScanLlamaModelsAsync(Context.ConnectionAborted);
 
@@ -49,6 +59,12 @@ public sealed class DataHub(
 
     public Task<ModelLoadStatus> LoadModel(LoadModelRequest request) =>
         dataService.LoadModelAsync(request, Context.ConnectionAborted);
+
+    public Task<ModelLoadStatus> LoadPythonModel(PythonInferenceLoadRequest request) =>
+        dataService.LoadPythonModelAsync(request, Context.ConnectionAborted);
+
+    public Task<ModelLoadStatus> LoadDotLlmModel(DotLlmLoadRequest request) =>
+        dataService.LoadDotLlmModelAsync(request, Context.ConnectionAborted);
 
     public Task<ModelLoadStatus> UnloadModel() =>
         dataService.UnloadModelAsync(Context.ConnectionAborted);
@@ -83,6 +99,17 @@ public sealed class DataHub(
             }).ToArray(),
             Error = result.Error
         };
+    }
+
+    public Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisites(ConfigurationBackend backend, string pythonExecutable) =>
+        dataService.GetBackendPrerequisitesAsync(backend, pythonExecutable, Context.ConnectionAborted);
+
+    public async Task<BackendPrerequisiteSolveResult> PrepareBackend(ConfigurationBackend backend, string pythonExecutable)
+    {
+        if (backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
+            return new(false, "Only Python backends can be prepared from this tile.", string.Empty);
+
+        return await dataService.PrepareBackendAsync(backend, pythonExecutable, Context.ConnectionAborted);
     }
 
     public async Task<OpenVinoSolveResultDto> SolveOpenVinoDiagnostic(string checkId)
@@ -125,11 +152,20 @@ public sealed class DataHub(
 
     public IReadOnlyList<string> GetModelDirectories() => modelLibrary.GetModelDirectories();
 
-    public async Task<IReadOnlyList<HuggingFaceModel>> SearchModels(string query) =>
-        await dataService.SearchModelsAsync(query, Context.ConnectionAborted);
+    public async Task<IReadOnlyList<HuggingFaceModel>> SearchModels(HuggingFaceSearchRequest request) =>
+        await dataService.SearchModelsAsync(request, Context.ConnectionAborted);
 
     public Task<Guid> StartModelDownload(ModelDownloadRequest request) =>
         dataService.StartModelDownloadAsync(request, Context.ConnectionAborted);
+
+    public Task<IReadOnlyList<ModelDownloadOption>> GetModelDownloadOptions(string modelId, string library = "gguf") =>
+        dataService.GetModelDownloadOptionsAsync(modelId, library, Context.ConnectionAborted);
+
+    public Task PauseModelDownload(Guid id) =>
+        dataService.PauseModelDownloadAsync(id, Context.ConnectionAborted);
+
+    public Task ResumeModelDownload(Guid id) =>
+        dataService.ResumeModelDownloadAsync(id, Context.ConnectionAborted);
 
     public Task<DownloadStatus?> GetModelDownload(Guid id) =>
         Task.FromResult(dataService.GetModelDownload(id));
