@@ -6,6 +6,7 @@ using LLama;
 using LLama.Common;
 using LLama.Native;
 using Esi.AI.Core.Chat;
+using Esi.AI.Models;
 
 namespace Esi.AI.Core.ModelLoading;
 
@@ -259,6 +260,7 @@ public sealed class LlamaModelLoader : IDisposable
     private IReadOnlyList<LoadedModelStatus> CreateLoadedModelStatuses() =>
         loadedModels.Values.Select(model => new LoadedModelStatus(
             model.Status.ModelPath!,
+            ConfigurationBackend.Llama,
             model.Status.Backend,
             model.Status.GpuLayerCount,
             model.Status.ContextSize,
@@ -416,31 +418,6 @@ public sealed class LlamaModelLoader : IDisposable
 
     private sealed record LoadedModel(LLamaWeights Weights, ModelLoadStatus Status);
 }
-
-public sealed record ModelLoadStatus(
-    string? ModelPath,
-    string Backend,
-    int GpuLayerCount,
-    uint ContextSize,
-    ulong ModelSizeInBytes,
-    int FoundVulkanGpuCount,
-    IReadOnlyList<VulkanDeviceStatus> VulkanDevices,
-    double? CpuModelBufferMiB,
-    string LoadLog,
-    IReadOnlyDictionary<string, float> VulkanDeviceWeights,
-    bool IsModelLoaded,
-    IReadOnlyList<LoadedModelStatus> LoadedModels);
-
-public sealed record LoadedModelStatus(
-    string ModelPath,
-    string Backend,
-    int GpuLayerCount,
-    uint ContextSize,
-    ulong ModelSizeInBytes,
-    IReadOnlyList<VulkanDeviceStatus> VulkanDevices,
-    double? CpuModelBufferMiB);
-
-public sealed record VulkanDeviceStatus(string Name, string? Description, int AssignedLayerCount, double? ModelBufferMiB);
 
 public sealed record LlamaLoadOptions(
     int MainGpu = 0,

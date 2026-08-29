@@ -4,8 +4,6 @@ using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
 using Esi.AI.Studio.Services;
 using Microsoft.AspNetCore.SignalR;
-using ClientLoadModelRequest = Esi.AI.Models.LoadModelRequest;
-using ClientModelLoadStatus = Esi.AI.Studio.Client.Services.ModelLoadStatus;
 
 namespace Esi.AI.Studio.Hubs;
 
@@ -47,16 +45,19 @@ public sealed class DataHub(
     public Task SetDefaultModelConfigurationProfile(Guid id) =>
         dataService.SetDefaultModelConfigurationProfileAsync(id, Context.ConnectionAborted);
 
-    public Task<ClientModelLoadStatus> GetModelStatus() => dataService.GetModelStatusAsync(Context.ConnectionAborted);
+    public Task<ModelLoadStatus> GetModelStatus() => dataService.GetModelStatusAsync(Context.ConnectionAborted);
 
-    public Task<ClientModelLoadStatus> LoadModel(ClientLoadModelRequest request) =>
+    public Task<ModelLoadStatus> LoadModel(LoadModelRequest request) =>
         dataService.LoadModelAsync(request, Context.ConnectionAborted);
 
-    public Task<ClientModelLoadStatus> UnloadModel() =>
+    public Task<ModelLoadStatus> UnloadModel() =>
         dataService.UnloadModelAsync(Context.ConnectionAborted);
 
-    public Task<ClientModelLoadStatus> UnloadModelByPath(string modelPath) =>
+    public Task<ModelLoadStatus> UnloadModelByPath(string modelPath) =>
         dataService.UnloadModelAsync(modelPath, Context.ConnectionAborted);
+
+    public Task<ModelLoadStatus> UnloadModelByPathForBackend(string modelPath, ConfigurationBackend backend) =>
+        dataService.UnloadModelAsync(modelPath, backend, Context.ConnectionAborted);
 
     public OpenVinoDiagnosticsDto GetOpenVinoDiagnostics()
     {

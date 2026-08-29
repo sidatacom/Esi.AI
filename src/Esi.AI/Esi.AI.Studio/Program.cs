@@ -15,8 +15,6 @@ using Esi.AI.Core.ModelLoading;
 using Esi.AI.Core.Chat;
 using Esi.AI.Models;
 
-OpenVinoModelLoader.InitializeRuntime();
-
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseStaticWebAssets();
 
@@ -93,10 +91,10 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     .AddDefaultTokenProviders();
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
-builder.Services.AddSingleton<LlamaModelLoader>();
 builder.Services.AddSingleton<OpenVinoDiagnosticsService>();
 builder.Services.AddSingleton<OpenVinoDriverInstaller>();
-builder.Services.AddSingleton<OpenVinoModelLoader>();
+builder.Services.AddSingleton<ModelRuntime>();
+builder.Services.AddHostedService(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddScoped<IModelDownloadEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IModelRuntimeEvents, ServerModelDownloadEvents>();
 builder.Services.AddHttpClient("HuggingFace", client =>

@@ -18,8 +18,8 @@ description: 'See process Copilot is following where you can edit this to reshap
 
 # Phase 1: Initialization
 
-- Create directory `./Copilot-Processing/` if it does not exist
-- Create a new file `./Copilot-Processing/YYYYMMDD-HHmmss.md` for every session; never append to a previous session log
+- Create directory `./docs/history/` if it does not exist
+- Create a new file `./docs/history/YYYYMMDD-HHmmss.md` for every session; never append to a previous session log
 - Populate the new session file with user request details
 - Work silently without announcements until complete.
 - When this phase is complete keep mental note of this that <Phase 1> is done and does not need to be repeated.
@@ -50,7 +50,7 @@ description: 'See process Copilot is following where you can edit this to reshap
 - Work silently without announcements until complete.
 - Execute only when ALL actions complete
 - Inform user of the current session log file path.
-- Remind user to review the summary and confirm completion of the process, then remove the session log when done so it is not added to the repository.
+- Remind user to review the summary and confirm completion of the process, then remove the session log from `./docs/history/` when done so it is not added to the repository.
 
 **ENFORCEMENT RULES:**
 - NEVER write "# Phase X" headers in responses

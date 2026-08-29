@@ -16,6 +16,58 @@
     <div class="backend-mark"><span></span> @ActiveBackendLabel</div>
 </div>
 
+<section class="loaded-models global-loaded-models" aria-labelledby="loaded-models-heading">
+    <div class="loaded-models-heading">
+        <div>
+            <p class="eyebrow">ACTIVE RUNTIMES</p>
+            <h2 id="loaded-models-heading">Loaded models</h2>
+        </div>
+        <div class="loaded-models-status">
+            <div class="runtime-status @GetRuntimeStatusClass()" role="status" aria-live="polite">
+                <span class="runtime-status-dot"></span>
+                <div>
+                    <strong>@GetRuntimeStatusLabel()</strong>
+                    <span>@GetRuntimeStatusDetail()</span>
+                </div>
+            </div>
+            <span class="device-count">@(isInitializing ? "..." : $"{loadStatus?.LoadedModels.Count ?? 0} active")</span>
+        </div>
+    </div>
+    @if (isInitializing)
+    {
+        <p class="loaded-models-empty">Checking active runtimes...</p>
+    }
+    else if (loadStatus?.LoadedModels.Count > 0)
+    {
+        @foreach (var model in loadStatus.LoadedModels)
+        {
+            <article class="loaded-model">
+                <div class="loaded-model-topline">
+                    <div>
+                        <strong>@Path.GetFileName(model.ModelPath)</strong>
+                        <span>@model.Backend | @model.Runtime | @model.ContextSize tokens | @FormatBytes(model.ModelSizeInBytes)</span>
+                    </div>
+                    <button class="profile-button" type="button" @onclick="() => UnloadModelAsync(model)">Unload</button>
+                </div>
+                <div class="loaded-model-devices">
+                    @foreach (var device in model.VulkanDevices.Where(device => device.AssignedLayerCount > 0 || device.ModelBufferMiB is not null))
+                    {
+                        <span><b>@device.Name</b> @FormatMemory(device.ModelBufferMiB), @device.AssignedLayerCount layers</span>
+                    }
+                    @if (model.CpuModelBufferMiB is not null)
+                    {
+                        <span><b>CPU</b> @FormatMemory(model.CpuModelBufferMiB)</span>
+                    }
+                </div>
+            </article>
+        }
+    }
+    else
+    {
+        <p class="loaded-models-empty">No models loaded.</p>
+    }
+</section>
+
 <nav class="backend-tabs" aria-label="Inference backends">
     <button class="backend-tab @(activeBackend == BackendTab.Llama ? "active" : "")" type="button" @onclick="() => SelectBackendAsync(BackendTab.Llama)">
         <span>LLama</span>
@@ -39,54 +91,6 @@
             </div>
             <span class="step-label">01</span>
         </div>
-
-        <section class="loaded-models" aria-labelledby="loaded-models-heading">
-            <div class="loaded-models-heading">
-                <div>
-                    <p class="eyebrow">ACTIVE RUNTIMES</p>
-                    <h3 id="loaded-models-heading">Loaded models</h3>
-                </div>
-                <div class="loaded-models-status">
-                    <div class="runtime-status @GetRuntimeStatusClass()" role="status" aria-live="polite">
-                        <span class="runtime-status-dot"></span>
-                        <div>
-                            <strong>@GetRuntimeStatusLabel()</strong>
-                            <span>@GetRuntimeStatusDetail()</span>
-                        </div>
-                    </div>
-                    <span class="device-count">@(loadStatus?.LoadedModels.Count ?? 0) active</span>
-                </div>
-            </div>
-            @if (loadStatus?.LoadedModels.Count > 0)
-            {
-                @foreach (var model in loadStatus.LoadedModels)
-                {
-                    <article class="loaded-model">
-                        <div class="loaded-model-topline">
-                            <div>
-                                <strong>@Path.GetFileName(model.ModelPath)</strong>
-                                <span>@model.Backend | @model.ContextSize tokens | @FormatBytes(model.ModelSizeInBytes)</span>
-                            </div>
-                            <button class="profile-button" type="button" @onclick="() => UnloadModelAsync(model.ModelPath)">Unload</button>
-                        </div>
-                        <div class="loaded-model-devices">
-                            @foreach (var device in model.VulkanDevices.Where(device => device.AssignedLayerCount > 0 || device.ModelBufferMiB is not null))
-                            {
-                                <span><b>@device.Name</b> @FormatMemory(device.ModelBufferMiB), @device.AssignedLayerCount layers</span>
-                            }
-                            @if (model.CpuModelBufferMiB is not null)
-                            {
-                                <span><b>CPU</b> @FormatMemory(model.CpuModelBufferMiB)</span>
-                            }
-                        </div>
-                    </article>
-                }
-            }
-            else
-            {
-                <p class="loaded-models-empty">No models loaded.</p>
-            }
-        </section>
 
         <div class="model-load-row">
             <div class="model-picker">
@@ -442,40 +446,6 @@ else
                 <span class="step-label">01</span>
             </div>
 
-            <section class="loaded-models" aria-labelledby="openvino-loaded-models-heading">
-                <div class="loaded-models-heading">
-                    <div>
-                        <p class="eyebrow">ACTIVE RUNTIMES</p>
-                        <h3 id="openvino-loaded-models-heading">Loaded models</h3>
-                    </div>
-                    <div class="loaded-models-status">
-                        <div class="runtime-status @(isOpenVinoModelLoaded ? "runtime-status-loaded" : "runtime-status-idle")" role="status" aria-live="polite">
-                            <span class="runtime-status-dot"></span>
-                            <div>
-                                <strong>@(isOpenVinoModelLoaded ? "MODEL LOADED" : "NO MODEL LOADED")</strong>
-                                <span>@(isOpenVinoModelLoaded ? $"{Path.GetFileName(openVinoForm.ModelPath)} | {openVinoForm.Device}" : "Load a model to start inference.")</span>
-                            </div>
-                        </div>
-                        <span class="device-count">@(isOpenVinoModelLoaded ? 1 : 0) active</span>
-                    </div>
-                </div>
-                @if (isOpenVinoModelLoaded)
-                {
-                    <article class="loaded-model">
-                        <div class="loaded-model-topline">
-                            <div>
-                                <strong>@Path.GetFileName(openVinoForm.ModelPath)</strong>
-                                <span>OpenVINO | @openVinoForm.Device</span>
-                            </div>
-                        </div>
-                    </article>
-                }
-                else
-                {
-                    <p class="loaded-models-empty">No models loaded.</p>
-                }
-            </section>
-
             <div class="model-load-row">
                 <div class="model-picker">
                     <label class="form-label" for="openvino-repository-model-picker">Model from repository</label>
@@ -752,6 +722,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                     openVinoForm.RepetitionPenalty));
             isOpenVinoModelLoaded = result.Succeeded;
             openVinoStatus = result.Message;
+            if (result.Succeeded)
+                loadStatus = await DataService.GetModelStatusAsync();
             statusMessage = result.Succeeded ? null : "The model could not be loaded.";
         }
         finally
@@ -1046,6 +1018,12 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             else
                 selectedProfileId = null;
             loadStatus = await DataService.GetModelStatusAsync();
+            var openVinoModelStatus = await DataService.GetOpenVinoModelStatusAsync();
+            isOpenVinoModelLoaded = openVinoModelStatus.IsModelLoaded;
+            if (openVinoModelStatus.IsModelLoaded && !string.IsNullOrWhiteSpace(openVinoModelStatus.ModelPath))
+                openVinoForm.ModelPath = openVinoModelStatus.ModelPath;
+            if (openVinoModelStatus.IsModelLoaded && !string.IsNullOrWhiteSpace(openVinoModelStatus.Device))
+                openVinoForm.Device = openVinoModelStatus.Device;
         }
         catch (Exception exception)
         {
@@ -1104,13 +1082,13 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         }
     }
 
-    private async Task UnloadModelAsync(string modelPath)
+    private async Task UnloadModelAsync(LoadedModelStatus model)
     {
         try
         {
-            loadStatus = await DataService.UnloadModelAsync(modelPath);
+            loadStatus = await DataService.UnloadModelAsync(model.ModelPath, model.Backend);
             loadLog = loadStatus.LoadLog;
-            statusMessage = $"Unloaded: {Path.GetFileName(modelPath)}";
+            statusMessage = $"Unloaded: {Path.GetFileName(model.ModelPath)}";
         }
         catch (Exception)
         {
@@ -1581,17 +1559,21 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     }
 
     private string GetRuntimeStatusClass() =>
-        isLoading ? "runtime-status-loading" :
+        isInitializing || isLoading ? "runtime-status-loading" :
         loadStatus?.IsModelLoaded == true ? "runtime-status-loaded" :
         IsLoadError() ? "runtime-status-error" : "runtime-status-idle";
 
     private string GetRuntimeStatusLabel() =>
+        isInitializing ? "CHECKING RUNTIMES" :
         isLoading ? "LOADING MODEL" :
         loadStatus?.IsModelLoaded == true ? "MODEL LOADED" :
         IsLoadError() ? "LOAD FAILED" : "NO MODEL LOADED";
 
     private string GetRuntimeStatusDetail()
     {
+        if (isInitializing)
+            return "Reading active model state...";
+
         if (isLoading)
             return "Reading model tensors and preparing the context...";
 

@@ -7,12 +7,12 @@ namespace Esi.AI.Studio.Controllers;
 
 [ApiController]
 [Route("v1")]
-public sealed class OpenAiCompatibleController(LlamaModelLoader modelLoader) : ControllerBase
+public sealed class OpenAiCompatibleController(ModelRuntime modelRuntime) : ControllerBase
 {
     [HttpGet("models")]
     public IActionResult ListModels()
     {
-        var status = modelLoader.GetStatus();
+        var status = modelRuntime.GetStatus();
         var modelId = status.ModelPath is null ? "local-model" : Path.GetFileNameWithoutExtension(status.ModelPath);
         return Ok(new
         {
@@ -31,7 +31,7 @@ public sealed class OpenAiCompatibleController(LlamaModelLoader modelLoader) : C
 
         try
         {
-            using var session = modelLoader.CreateChatSession("You are a helpful assistant.");
+            using var session = modelRuntime.CreateLlamaChatSession("You are a helpful assistant.");
             var messages = request.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content)).ToArray();
             var model = request.Model ?? "local-model";
 

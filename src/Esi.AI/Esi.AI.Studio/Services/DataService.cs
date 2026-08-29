@@ -5,19 +5,15 @@ using Esi.AI.Core.Chat;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
 using Microsoft.EntityFrameworkCore;
-using ClientModelLoadStatus = Esi.AI.Studio.Client.Services.ModelLoadStatus;
-using ClientLoadedModelStatus = Esi.AI.Studio.Client.Services.LoadedModelStatus;
-using ClientVulkanDeviceStatus = Esi.AI.Studio.Client.Services.VulkanDeviceStatus;
 
 namespace Esi.AI.Studio.Services;
 
 public sealed class DataService(
     IDbContextFactory<ApplicationDbContext> dbContextFactory,
     ModelLibraryService modelLibrary,
-    LlamaModelLoader llamaModelLoader,
     OpenVinoDiagnosticsService openVinoDiagnostics,
     OpenVinoDriverInstaller openVinoInstaller,
-    OpenVinoModelLoader openVinoModelLoader) : IDataService
+    ModelRuntime modelRuntime) : IDataService
 {
     public async Task<IReadOnlyList<LocalModel>> ScanLocalModelsAsync(CancellationToken cancellationToken = default) =>
         (await modelLibrary.ScanLocalModelsAsync(cancellationToken))
@@ -309,37 +305,35 @@ public sealed class DataService(
         return ToChat(chat);
     }
 
-    public Task<ClientModelLoadStatus> GetModelStatusAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(ToClientStatus(llamaModelLoader.GetStatus()));
+    public Task<ModelLoadStatus> GetModelStatusAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(modelRuntime.GetStatus());
 
-    public async Task<ClientModelLoadStatus> LoadModelAsync(LoadModelRequest request, CancellationToken cancellationToken = default)
+    public async Task<ModelLoadStatus> LoadModelAsync(LoadModelRequest request, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.ModelPath) ||
             !string.Equals(Path.GetExtension(request.ModelPath), ".gguf", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("LLama loading requires a .gguf model path.", nameof(request));
 
-        var advanced = request.Advanced;
-        await llamaModelLoader.LoadAsync(request.ModelPath, request.Backend, request.GpuLayerCount, request.ContextSize,
-            request.VulkanDeviceWeights,
-            new LlamaLoadOptions(advanced.MainGpu, advanced.SeqMax, advanced.RecurrentRollbackSnapshots, advanced.UseMemorymap,
-                advanced.UseDirectIO, advanced.UseMemoryLock, advanced.Threads, advanced.BatchThreads, advanced.BatchSize,
-                advanced.UBatchSize, advanced.Embeddings, advanced.NoKqvOffload, advanced.FlashAttention, advanced.VocabOnly,
-                advanced.OpOffload, advanced.SwaFull, advanced.KVUnified, advanced.RopeFrequencyBase, advanced.RopeFrequencyScale,
-                advanced.YarnExtrapolationFactor, advanced.YarnAttentionFactor, advanced.YarnBetaFast, advanced.YarnBetaSlow,
-                advanced.YarnOriginalContext), cancellationToken);
-        return ToClientStatus(llamaModelLoader.GetStatus());
+        await modelRuntime.LoadAsync(request, cancellationToken);
+        return modelRuntime.GetStatus();
     }
 
-    public async Task<ClientModelLoadStatus> UnloadModelAsync(CancellationToken cancellationToken = default)
+    public async Task<ModelLoadStatus> UnloadModelAsync(CancellationToken cancellationToken = default)
     {
-        await llamaModelLoader.StopAsync(cancellationToken);
-        return ToClientStatus(llamaModelLoader.GetStatus());
+        await modelRuntime.StopLlamaAsync(cancellationToken);
+        return modelRuntime.GetStatus();
     }
 
-    public async Task<ClientModelLoadStatus> UnloadModelAsync(string modelPath, CancellationToken cancellationToken = default)
+    public async Task<ModelLoadStatus> UnloadModelAsync(string modelPath, CancellationToken cancellationToken = default)
     {
-        await llamaModelLoader.UnloadAsync(modelPath, cancellationToken);
-        return ToClientStatus(llamaModelLoader.GetStatus());
+        await modelRuntime.UnloadLlamaAsync(modelPath, cancellationToken);
+        return modelRuntime.GetStatus();
+    }
+
+    public async Task<ModelLoadStatus> UnloadModelAsync(string modelPath, ConfigurationBackend backend, CancellationToken cancellationToken = default)
+    {
+        await modelRuntime.UnloadAsync(modelPath, backend, cancellationToken);
+        return modelRuntime.GetStatus();
     }
 
     public Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default)
@@ -375,17 +369,7 @@ public sealed class DataService(
     {
         try
         {
-            await openVinoModelLoader.LoadAsync(
-                request.ModelPath,
-                request.Device,
-                cancellationToken,
-                new OpenVinoGenerationOptions(request.MaxNewTokens, request.Temperature, request.TopP, request.DoSample, request.TopK, request.RepetitionPenalty),
-                request.CacheDirectory,
-                new OpenVinoNpuOptions(
-                    request.Npu?.MaxPromptLength ?? 1024,
-                    request.Npu?.MinResponseLength ?? 128,
-                    request.Npu?.PrefillHint ?? "DYNAMIC",
-                    request.Npu?.GenerateHint ?? "FAST_COMPILE"));
+            await modelRuntime.LoadAsync(request, cancellationToken);
             return new OpenVinoLoadResultDto(true, $"OpenVINO model loaded on {request.Device}.", request.Device);
         }
         catch (Exception exception)
@@ -396,7 +380,7 @@ public sealed class DataService(
 
     public Task<OpenVinoModelStatusDto> GetOpenVinoModelStatusAsync(CancellationToken cancellationToken = default)
     {
-        var status = openVinoModelLoader.GetStatus();
+        var status = modelRuntime.GetOpenVinoStatus();
         var modelSizeInBytes = status.ModelPath is not null && File.Exists(status.ModelPath)
             ? (ulong)new FileInfo(status.ModelPath).Length
             : 0;
@@ -419,11 +403,11 @@ public sealed class DataService(
         if (string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase))
         {
             var modelPath = Path.GetFullPath(request.ModelPath);
-            var openVinoStatus = openVinoModelLoader.GetStatus();
+            var openVinoStatus = modelRuntime.GetOpenVinoStatus();
             if (!openVinoStatus.IsModelLoaded || !string.Equals(openVinoStatus.ModelPath, modelPath, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("The selected OpenVINO model is not loaded.");
 
-            using var openVinoSession = openVinoModelLoader.CreateChatSession();
+            using var openVinoSession = modelRuntime.CreateOpenVinoChatSession();
             var openVinoGeneration = openVinoSession.GenerateWithStats(request.Content.Trim());
             return await AddChatExchangeAsync(id, request.Content.Trim(), openVinoGeneration.Text, modelPath, "OpenVINO", openVinoGeneration.TokenCount, openVinoGeneration.TokensPerSecond, cancellationToken);
         }
@@ -431,20 +415,12 @@ public sealed class DataService(
         if (!string.Equals(Path.GetExtension(request.ModelPath), ".gguf", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("LLama chat requires a .gguf model path.", nameof(request));
 
-        using var session = llamaModelLoader.CreateChatSession("You are a helpful assistant.", request.ModelPath);
+        using var session = modelRuntime.CreateLlamaChatSession("You are a helpful assistant.", request.ModelPath);
         var messages = chat.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content))
             .Append(new LlamaChatMessage("user", request.Content.Trim())).ToArray();
         var generation = await session.GenerateWithStatsAsync(messages, cancellationToken);
         return await AddChatExchangeAsync(id, request.Content.Trim(), generation, request.ModelPath, backend!, cancellationToken);
     }
-
-    private static ClientModelLoadStatus ToClientStatus(Esi.AI.Core.ModelLoading.ModelLoadStatus status) =>
-        new(status.ModelPath, status.Backend, status.GpuLayerCount, status.ContextSize, status.ModelSizeInBytes,
-            status.FoundVulkanGpuCount,
-            status.VulkanDevices.Select(device => new ClientVulkanDeviceStatus(device.Name, device.Description, device.AssignedLayerCount, device.ModelBufferMiB)).ToArray(),
-            status.CpuModelBufferMiB, status.LoadLog, status.VulkanDeviceWeights, status.IsModelLoaded,
-            status.LoadedModels.Select(model => new ClientLoadedModelStatus(model.ModelPath, model.Backend, model.GpuLayerCount, model.ContextSize, model.ModelSizeInBytes,
-                model.VulkanDevices.Select(device => new ClientVulkanDeviceStatus(device.Name, device.Description, device.AssignedLayerCount, device.ModelBufferMiB)).ToArray(), model.CpuModelBufferMiB)).ToArray());
 
     private static PersistedChat ToChat(ChatConversationEntity chat) => new(chat.Id, chat.Title, chat.CreatedAtUtc, chat.UpdatedAtUtc,
         chat.Messages.OrderBy(message => message.CreatedAtUtc).ThenBy(message => message.Id).Select(message => new PersistedChatMessage(message.Role, message.Content, message.CreatedAtUtc, message.ModelPath, message.Backend, message.TokenCount, message.TokensPerSecond)).ToArray());

@@ -133,6 +133,12 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         return await connection.InvokeAsync<ModelLoadStatus>("UnloadModelByPath", modelPath, cancellationToken);
     }
 
+    public async Task<ModelLoadStatus> UnloadModelAsync(string modelPath, ConfigurationBackend backend, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<ModelLoadStatus>("UnloadModelByPathForBackend", modelPath, backend, cancellationToken);
+    }
+
     public async Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);

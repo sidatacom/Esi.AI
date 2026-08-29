@@ -51,22 +51,16 @@
     private bool isSending;
     private string? statusMessage;
     private string? selectedModelPath;
-    private string? selectedBackend;
+    private ConfigurationBackend? selectedBackend;
+    private string? selectedRuntime;
     private string? selectedModelKey;
 
     protected override async Task OnInitializedAsync() { await LoadLoadedModelsAsync(); await LoadChatsAsync(); if (chatSummaries.Count > 0) await SelectChatAsync(chatSummaries[0].Id); else await NewChatAsync(); }
     private async Task LoadLoadedModelsAsync()
     {
-        var llamaStatus = await DataService.GetModelStatusAsync();
-        var openVinoStatus = await DataService.GetOpenVinoModelStatusAsync();
+        var status = await DataService.GetModelStatusAsync();
         loadedModels.Clear();
-        loadedModels.AddRange(llamaStatus.LoadedModels);
-        if (openVinoStatus.IsModelLoaded && openVinoStatus.ModelPath is not null &&
-            !loadedModels.Any(model => string.Equals(model.ModelPath, openVinoStatus.ModelPath, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(model.Backend, "OpenVINO", StringComparison.OrdinalIgnoreCase)))
-        {
-            loadedModels.Add(new LoadedModelStatus(openVinoStatus.ModelPath, "OpenVINO", 0, 0, openVinoStatus.ModelSizeInBytes, [], null));
-        }
+        loadedModels.AddRange(status.LoadedModels);
 
         var selectedModel = loadedModels.FirstOrDefault();
         SetSelectedModel(selectedModel);
@@ -80,6 +74,7 @@
     {
         selectedModelPath = model?.ModelPath;
         selectedBackend = model?.Backend;
+        selectedRuntime = model?.Runtime;
         selectedModelKey = model is null ? null : GetModelKey(model);
     }
     private static string GetModelKey(LoadedModelStatus model) => $"{model.Backend}|{model.ModelPath}";
@@ -98,6 +93,6 @@
     private async Task LoadChatsAsync() { chatSummaries.Clear(); chatSummaries.AddRange(await DataService.GetChatSummariesAsync()); }
     private async Task NewChatAsync() { currentChat = await DataService.CreateChatAsync(new CreateChatRequest()); SetSelectedModel(loadedModels.FirstOrDefault()); await LoadChatsAsync(); statusMessage = null; }
     private async Task SelectChatAsync(Guid id) { currentChat = await DataService.GetChatAsync(id); composer.Content = string.Empty; statusMessage = null; }
-    private async Task SendAsync() { if (currentChat is null || string.IsNullOrWhiteSpace(composer.Content) || string.IsNullOrWhiteSpace(selectedModelPath) || string.IsNullOrWhiteSpace(selectedBackend) || isSending) return; isSending = true; statusMessage = null; var content = composer.Content.Trim(); composer.Content = string.Empty; try { currentChat = await DataService.AddChatExchangeAsync(currentChat.Id, new ChatExchangeRequest(content, selectedModelPath, selectedBackend)); await LoadChatsAsync(); } catch (Exception exception) { statusMessage = exception.Message; composer.Content = content; } finally { isSending = false; } }
+    private async Task SendAsync() { if (currentChat is null || string.IsNullOrWhiteSpace(composer.Content) || string.IsNullOrWhiteSpace(selectedModelPath) || selectedBackend is null || isSending) return; isSending = true; statusMessage = null; var content = composer.Content.Trim(); composer.Content = string.Empty; try { var backend = selectedBackend == ConfigurationBackend.OpenVino ? "OpenVINO" : selectedRuntime; currentChat = await DataService.AddChatExchangeAsync(currentChat.Id, new ChatExchangeRequest(content, selectedModelPath, backend)); await LoadChatsAsync(); } catch (Exception exception) { statusMessage = exception.Message; composer.Content = content; } finally { isSending = false; } }
     private sealed class Composer { public string Content { get; set; } = string.Empty; }
 }

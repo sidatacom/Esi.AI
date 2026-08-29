@@ -60,6 +60,8 @@ public interface IDataService
 
     Task<ModelLoadStatus> UnloadModelAsync(string modelPath, CancellationToken cancellationToken = default);
 
+    Task<ModelLoadStatus> UnloadModelAsync(string modelPath, ConfigurationBackend backend, CancellationToken cancellationToken = default);
+
     Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default);
     Task<OpenVinoSolveResultDto> SolveDiagnosticAsync(string checkId, CancellationToken cancellationToken = default);
     Task<OpenVinoLoadResultDto> LoadModelAsync(OpenVinoLoadRequest request, CancellationToken cancellationToken = default);
@@ -96,28 +98,3 @@ public sealed record ModelConfigurationProfile(
     ConfigurationBackend Backend = ConfigurationBackend.Llama);
 
 public sealed record VulkanDeviceSetting(bool Enabled, float Weight);
-
-public sealed record ModelLoadStatus(
-    string? ModelPath,
-    string Backend,
-    int GpuLayerCount,
-    uint ContextSize,
-    ulong ModelSizeInBytes,
-    int FoundVulkanGpuCount,
-    IReadOnlyList<VulkanDeviceStatus> VulkanDevices,
-    double? CpuModelBufferMiB,
-    string LoadLog,
-    IReadOnlyDictionary<string, float> VulkanDeviceWeights,
-    bool IsModelLoaded,
-    IReadOnlyList<LoadedModelStatus> LoadedModels);
-
-public sealed record VulkanDeviceStatus(string Name, string? Description, int AssignedLayerCount, double? ModelBufferMiB);
-
-public sealed record LoadedModelStatus(
-    string ModelPath,
-    string Backend,
-    int GpuLayerCount,
-    uint ContextSize,
-    ulong ModelSizeInBytes,
-    IReadOnlyList<VulkanDeviceStatus> VulkanDevices,
-    double? CpuModelBufferMiB);

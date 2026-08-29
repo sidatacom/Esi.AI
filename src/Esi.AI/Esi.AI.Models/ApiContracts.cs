@@ -117,3 +117,29 @@ public sealed record OpenVinoModelStatusDto(
     string? Device,
     bool IsModelLoaded,
     ulong ModelSizeInBytes);
+
+public sealed record ModelLoadStatus(
+    string? ModelPath,
+    string Backend,
+    int GpuLayerCount,
+    uint ContextSize,
+    ulong ModelSizeInBytes,
+    int FoundVulkanGpuCount,
+    IReadOnlyList<VulkanDeviceStatus> VulkanDevices,
+    double? CpuModelBufferMiB,
+    string LoadLog,
+    IReadOnlyDictionary<string, float> VulkanDeviceWeights,
+    bool IsModelLoaded,
+    IReadOnlyList<LoadedModelStatus> LoadedModels);
+
+public sealed record VulkanDeviceStatus(string Name, string? Description, int AssignedLayerCount, double? ModelBufferMiB);
+
+public sealed record LoadedModelStatus(
+    string ModelPath,
+    ConfigurationBackend Backend,
+    string Runtime,
+    int GpuLayerCount,
+    uint ContextSize,
+    ulong ModelSizeInBytes,
+    IReadOnlyList<VulkanDeviceStatus> VulkanDevices,
+    double? CpuModelBufferMiB);
