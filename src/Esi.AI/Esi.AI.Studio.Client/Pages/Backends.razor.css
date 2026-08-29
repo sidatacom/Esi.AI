@@ -1,9 +1,13 @@
-﻿.llama-header {
+﻿.page-header {
+    position: sticky;
+    top: 0;
+    z-index: 2;
     display: flex;
-    align-items: flex-end;
+    align-items: flex-start;
     justify-content: space-between;
     gap: 2rem;
-    padding: 2.5rem 0 2rem;
+    padding: 0;
+    background: #fff;
     border-bottom: 1px solid #d9e0e5;
 }
 
@@ -185,6 +189,9 @@ h2 {
 .loaded-model-devices { display: flex; flex-wrap: wrap; gap: .35rem .75rem; margin-top: .55rem; color: #486581; font-size: .72rem; }
 .loaded-model-devices span { white-space: nowrap; }
 .loaded-model-devices b { color: #102a43; }
+.runtime-log-details { margin-top: .7rem; }
+.runtime-log-details summary { color: #486581; cursor: pointer; font-size: .75rem; font-weight: 700; }
+.runtime-log-details .log-output { margin-top: .55rem; width: 100%; }
 .loaded-models-empty { margin: 0; color: #829ab1; font-size: .78rem; }
 .settings-panel summary { cursor: pointer; color: #102a43; font-size: .82rem; font-weight: 750; }
 .settings-panel[open] summary { margin-bottom: .85rem; }
@@ -244,8 +251,12 @@ h2 {
 .log-heading > span { color: #9fb3c8; }
 .log-output { border: 1px solid #486581; background: #0b1f33; color: #b8f2e6; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: .76rem; line-height: 1.55; resize: vertical; }
 
+@media (min-width: 641px) {
+    .page-header { top: 3.5rem; }
+}
+
 @media (max-width: 800px) {
-    .llama-header { align-items: flex-start; flex-direction: column; gap: 1rem; }
+    .page-header { align-items: flex-start; flex-direction: column; gap: 1rem; }
     .llama-workspace { grid-template-columns: 1fr; }
     .telemetry-panel { grid-column: auto; }
 }

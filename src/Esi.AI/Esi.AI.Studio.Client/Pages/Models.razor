@@ -6,11 +6,9 @@
 @inject IDataService DataService
 @inject IModelDownloadEvents DownloadEvents
 
-<PageTitle>Models</PageTitle>
-
 <div class="models-shell">
     <header class="models-header">
-        <div><p class="eyebrow">MODEL LIBRARY</p><h1>Models</h1><p class="lede">Lokale GGUF-Dateien verwalten oder Modelle von Hugging Face laden.</p></div>
+        <div><p class="eyebrow">MODEL LIBRARY</p><p class="lede">Lokale GGUF-Dateien verwalten oder Modelle von Hugging Face laden.</p></div>
         <button class="primary-button" type="button" @onclick="ScanLocalAsync" disabled="@isBusy">Bibliothek aktualisieren</button>
     </header>
 

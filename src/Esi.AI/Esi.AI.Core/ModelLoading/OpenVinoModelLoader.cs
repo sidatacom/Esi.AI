@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using OpenVinoSharp;
@@ -9,11 +10,17 @@ namespace Esi.AI.Core.ModelLoading;
 public sealed class OpenVinoModelLoader : IDisposable
 {
     private readonly SemaphoreSlim loadLock = new(1, 1);
+    private readonly ConcurrentQueue<string> loadLog = new();
     private static int linuxRuntimeInitialized;
     private LLMPipeline? llmPipeline;
     private VLMPipeline? vlmPipeline;
     private string? loadedModelPath;
     private string? loadedDevice;
+
+    public OpenVinoModelLoader()
+    {
+        OvLogger.SetCallback(HandleLog);
+    }
 
     public bool IsLoaded => llmPipeline is not null || vlmPipeline is not null;
 
@@ -24,7 +31,8 @@ public sealed class OpenVinoModelLoader : IDisposable
     public OpenVinoModelLoadStatus GetStatus() => new(
         loadedModelPath,
         loadedDevice,
-        IsLoaded);
+        IsLoaded,
+        string.Join(Environment.NewLine, loadLog));
 
     /// <summary>
     /// Configures the process to use the compatible OpenVINO runtime when one is available.
@@ -109,13 +117,12 @@ public sealed class OpenVinoModelLoader : IDisposable
         var operation = "GenAI.Initialize";
         try
         {
+            ClearLoadLog();
+            AppendLoadLog($"Starting OpenVINO model load on {device}.");
             cancellationToken.ThrowIfCancellationRequested();
             var runtimeDirectory = InitializeRuntime();
             ConfigureVerboseLogging();
-            if (IsVerboseLoggingEnabled())
-            {
-                OvLogger.Debug($"OpenVINO model load: path='{fullModelPath}', format={(isGgufFile ? "GGUF" : "OpenVINO IR directory")}, device='{device}'");
-            }
+            OvLogger.Debug($"OpenVINO model load: path='{fullModelPath}', format={(isGgufFile ? "GGUF" : "OpenVINO IR directory")}, device='{device}'");
 
             operation = "GenAI.Initialize";
             var genAiLibraryPath = ResolveGenAiLibraryPath(runtimeDirectory);
@@ -190,10 +197,7 @@ public sealed class OpenVinoModelLoader : IDisposable
         catch (Exception exception)
         {
             var loadException = new OpenVinoModelLoadException(fullModelPath, device, isGgufFile, operation, exception);
-            if (IsVerboseLoggingEnabled())
-            {
-                OvLogger.Error(loadException.ToString());
-            }
+            OvLogger.Error(loadException.ToString());
 
             throw loadException;
         }
@@ -240,6 +244,25 @@ public sealed class OpenVinoModelLoader : IDisposable
     {
         DisposePipelines();
         loadLock.Dispose();
+    }
+
+    private void HandleLog(LogLevel level, string message)
+    {
+        AppendLoadLog($"[{level}] {message}");
+    }
+
+    private void AppendLoadLog(string message)
+    {
+        loadLog.Enqueue(message);
+        while (loadLog.Count > 4000)
+            loadLog.TryDequeue(out _);
+    }
+
+    private void ClearLoadLog()
+    {
+        while (loadLog.TryDequeue(out _))
+        {
+        }
     }
 
     private static void ConfigureGenerationConfig(GenerationConfig generationConfig, OpenVinoGenerationOptions? generationOptions)
@@ -397,18 +420,9 @@ public sealed class OpenVinoModelLoader : IDisposable
 
     private static void ConfigureVerboseLogging()
     {
-        if (!IsVerboseLoggingEnabled())
-            return;
-
-        Environment.SetEnvironmentVariable("OPENVINO_LOG_LEVEL", "DEBUG");
         OvLogger.MinLevel = LogLevel.DEBUG;
         OvLogger.EnableNativeCallback();
     }
-
-    private static bool IsVerboseLoggingEnabled() => string.Equals(
-        Environment.GetEnvironmentVariable("ESI_OPENVINO_VERBOSE"),
-        "1",
-        StringComparison.Ordinal);
 }
 
 /// <summary>
@@ -570,4 +584,5 @@ public sealed record OpenVinoNpuOptions(
 public sealed record OpenVinoModelLoadStatus(
     string? ModelPath,
     string? Device,
-    bool IsModelLoaded);
+    bool IsModelLoaded,
+    string LoadLog);

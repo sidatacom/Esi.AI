@@ -116,7 +116,8 @@ public sealed record OpenVinoModelStatusDto(
     string? ModelPath,
     string? Device,
     bool IsModelLoaded,
-    ulong ModelSizeInBytes);
+    ulong ModelSizeInBytes,
+    string LoadLog);
 
 public sealed record ModelLoadStatus(
     string? ModelPath,
@@ -142,4 +143,5 @@ public sealed record LoadedModelStatus(
     uint ContextSize,
     ulong ModelSizeInBytes,
     IReadOnlyList<VulkanDeviceStatus> VulkanDevices,
-    double? CpuModelBufferMiB);
+    double? CpuModelBufferMiB,
+    string LoadLog = "");

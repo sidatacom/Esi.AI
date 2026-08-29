@@ -3,8 +3,6 @@
 @using Esi.AI.Models
 @inject IDataService DataService
 
-<PageTitle>Chats</PageTitle>
-
 <div class="chat-layout">
     <aside class="chat-sidebar">
         <div class="sidebar-heading"><div><p class="eyebrow">ARCHIVE</p><h2>Chats</h2></div><button class="new-button" type="button" @onclick="NewChatAsync" disabled="@isSending" title="Neuen Chat erstellen">+</button></div>

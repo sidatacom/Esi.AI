@@ -11,6 +11,47 @@
       ],
       "problemMatcher": "$msCompile",
       "group": "build"
+    },
+    {
+      "label": "start-esi-ai-studio-watchdog",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/.vscode/studio-watchdog.sh",
+        "7010"
+      ],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "esi-ai-studio-watchdog",
+        "pattern": {
+          "regexp": "^$"
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^Studio watchdog starting",
+          "endsPattern": "^Studio watchdog monitoring"
+        }
+      }
+    },
+    {
+      "label": "stop-esi-ai-studio-watchdog",
+      "type": "shell",
+      "command": "bash",
+      "args": [
+        "${workspaceFolder}/.vscode/studio-watchdog.sh",
+        "--stop",
+        "7010"
+      ],
+      "problemMatcher": []
+    },
+    {
+      "label": "build-and-watch-esi-ai-studio",
+      "dependsOn": [
+        "build-esi-ai-studio",
+        "start-esi-ai-studio-watchdog"
+      ],
+      "dependsOrder": "sequence",
+      "problemMatcher": []
     }
   ]
 }

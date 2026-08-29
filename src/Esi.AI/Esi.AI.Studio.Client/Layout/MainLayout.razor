@@ -1,4 +1,8 @@
 ﻿@inherits LayoutComponentBase
+@inject NavigationManager NavigationManager
+@implements IDisposable
+
+<PageTitle>@CurrentPageTitle</PageTitle>
 
 <div class="page">
     <div class="sidebar">
@@ -7,6 +11,7 @@
 
     <main>
         <div class="top-row px-4">
+                <h1 class="current-page-title">@CurrentPageTitle</h1>
             <a href="https://learn.microsoft.com/aspnet/core/" target="_blank">About</a>
         </div>
 
@@ -21,3 +26,34 @@
     <a href="." class="reload">Reload</a>
     <span class="dismiss">🗙</span>
 </div>
+
+@code {
+    private string CurrentPageTitle => NavigationManager.ToBaseRelativePath(NavigationManager.Uri)
+        .Split('?', '#')[0]
+        .Trim('/')
+        .ToLowerInvariant() switch
+    {
+        "backends" => "Backends",
+        "models" => "Models",
+        "chats" => "Chats",
+        "webapi" => "WebApi",
+        "auth" => "Authentication",
+        "" => "Home",
+        _ => "Esi.AI Studio"
+    };
+
+    protected override void OnInitialized()
+    {
+        NavigationManager.LocationChanged += HandleLocationChanged;
+    }
+
+    private void HandleLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        NavigationManager.LocationChanged -= HandleLocationChanged;
+    }
+}

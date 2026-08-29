@@ -28,7 +28,11 @@ public sealed class LlamaModelLoader : IDisposable
 
     public ModelLoadStatus? Status { get; private set; }
 
-    public ModelLoadStatus GetStatus() => Status ?? CreateDiscoveryStatus();
+    public ModelLoadStatus GetStatus()
+    {
+        var status = Status ?? CreateDiscoveryStatus();
+        return status with { LoadLog = string.Join(Environment.NewLine, loadLog) };
+    }
 
     public LlamaChatSession CreateChatSession(string systemPrompt)
         => CreateChatSession(systemPrompt, LoadedModelPath);

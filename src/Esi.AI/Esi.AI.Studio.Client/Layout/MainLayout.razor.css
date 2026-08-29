@@ -22,6 +22,16 @@ main {
     align-items: center;
 }
 
+.current-page-title {
+    margin-top: 0;
+    margin-bottom: 0;
+    margin-right: auto;
+    color: #102a43;
+    font-family: Georgia, serif;
+    font-size: 1.35rem;
+    font-weight: 500;
+}
+
     .top-row ::deep a, .top-row ::deep .btn-link {
         white-space: nowrap;
         margin-left: 1.5rem;

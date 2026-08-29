@@ -384,7 +384,7 @@ public sealed class DataService(
         var modelSizeInBytes = status.ModelPath is not null && File.Exists(status.ModelPath)
             ? (ulong)new FileInfo(status.ModelPath).Length
             : 0;
-        return Task.FromResult(new OpenVinoModelStatusDto(status.ModelPath, status.Device, status.IsModelLoaded, modelSizeInBytes));
+        return Task.FromResult(new OpenVinoModelStatusDto(status.ModelPath, status.Device, status.IsModelLoaded, modelSizeInBytes, status.LoadLog));
     }
 
     public async Task<PersistedChat?> AddChatExchangeAsync(Guid id, ChatExchangeRequest request, CancellationToken cancellationToken = default)

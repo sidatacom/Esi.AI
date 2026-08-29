@@ -5,13 +5,9 @@
 @using Esi.AI.Models
 @inject IDataService DataService
 
-<PageTitle>Backends</PageTitle>
-
-<div class="llama-header">
+<div class="page-header">
     <div>
         <p class="eyebrow">LOCAL INFERENCE / CONTROL ROOM</p>
-        <h1>Backends</h1>
-        <p class="lede">Choose a runtime and tune the parameters that belong to it.</p>
     </div>
     <div class="backend-mark"><span></span> @ActiveBackendLabel</div>
 </div>
@@ -59,6 +55,10 @@
                         <span><b>CPU</b> @FormatMemory(model.CpuModelBufferMiB)</span>
                     }
                 </div>
+                <details class="runtime-log-details">
+                    <summary>Load output</summary>
+                    <textarea class="form-control log-output" rows="8" readonly>@(string.IsNullOrWhiteSpace(model.LoadLog) ? "No runtime output was captured." : model.LoadLog)</textarea>
+                </details>
             </article>
         }
     }
@@ -663,16 +663,19 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     <p class="mt-3" role="status">@statusMessage</p>
 }
 
-<section class="log-panel">
-    <div class="log-heading">
-        <div>
-            <p class="eyebrow">DEBUG STREAM</p>
-            <h2>LLamaSharp load output</h2>
+@if (isLoading || isOpenVinoLoading)
+{
+    <section class="log-panel runtime-loading-log">
+        <div class="log-heading">
+            <div>
+                <p class="eyebrow">RUNTIME</p>
+                <h2>Load output</h2>
+            </div>
+            <span>READ ONLY</span>
         </div>
-        <span>READ ONLY</span>
-    </div>
-    <textarea id="load-log" class="form-control log-output" rows="12" readonly>@(loadLog ?? loadStatus?.LoadLog ?? "Noch kein Modell geladen.")</textarea>
-</section>
+        <textarea class="form-control log-output" rows="8" readonly>@(activeBackend == BackendTab.Llama ? loadLog ?? loadStatus?.LoadLog : openVinoLoadLog ?? "Waiting for runtime output...")</textarea>
+    </section>
+}
 
 @code {
     private BackendTab activeBackend = BackendTab.Llama;
@@ -681,6 +684,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private bool isCheckingOpenVino;
     private string? solvingCheckId;
     private string? openVinoStatus;
+    private string? openVinoLoadLog;
     private string? openVinoInstallOutput;
     private bool solveRequiresLogin;
     private OpenVinoDiagnosticsDto? openVinoDiagnostics;
@@ -702,9 +706,10 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
         isOpenVinoLoading = true;
         openVinoStatus = null;
+        openVinoLoadLog = string.Empty;
         try
         {
-            var result = await DataService.LoadModelAsync(
+            var loadTask = DataService.LoadModelAsync(
                 new OpenVinoLoadRequest(
                     openVinoForm.ModelPath,
                     openVinoForm.Device,
@@ -720,8 +725,19 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                         openVinoForm.GenerateHint),
                     openVinoForm.TopK,
                     openVinoForm.RepetitionPenalty));
+            while (!loadTask.IsCompleted)
+            {
+                await Task.Delay(250);
+                var openVinoModelStatus = await DataService.GetOpenVinoModelStatusAsync();
+                openVinoLoadLog = openVinoModelStatus.LoadLog;
+                await InvokeAsync(StateHasChanged);
+            }
+
+            var result = await loadTask;
             isOpenVinoModelLoaded = result.Succeeded;
             openVinoStatus = result.Message;
+            var finalOpenVinoStatus = await DataService.GetOpenVinoModelStatusAsync();
+            openVinoLoadLog = finalOpenVinoStatus.LoadLog;
             if (result.Succeeded)
                 loadStatus = await DataService.GetModelStatusAsync();
             statusMessage = result.Succeeded ? null : "The model could not be loaded.";
@@ -1020,6 +1036,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             loadStatus = await DataService.GetModelStatusAsync();
             var openVinoModelStatus = await DataService.GetOpenVinoModelStatusAsync();
             isOpenVinoModelLoaded = openVinoModelStatus.IsModelLoaded;
+            openVinoLoadLog = openVinoModelStatus.LoadLog;
             if (openVinoModelStatus.IsModelLoaded && !string.IsNullOrWhiteSpace(openVinoModelStatus.ModelPath))
                 openVinoForm.ModelPath = openVinoModelStatus.ModelPath;
             if (openVinoModelStatus.IsModelLoaded && !string.IsNullOrWhiteSpace(openVinoModelStatus.Device))
@@ -1055,7 +1072,16 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 GetVulkanWeightsForLoad(),
                 advanced.ToSettings());
             await SaveSettingsAsync();
-            loadStatus = await DataService.LoadModelAsync(request);
+            var loadTask = DataService.LoadModelAsync(request);
+            while (!loadTask.IsCompleted)
+            {
+                await Task.Delay(250);
+                loadStatus = await DataService.GetModelStatusAsync();
+                loadLog = loadStatus.LoadLog;
+                await InvokeAsync(StateHasChanged);
+            }
+
+            loadStatus = await loadTask;
             loadLog = loadStatus.LoadLog;
             SyncEnabledDevices();
             statusMessage = $"Loaded: {form.ModelPath}";

@@ -154,6 +154,7 @@ public sealed class ModelRuntime : IHostedService, IDisposable
             0,
             modelSize,
             [],
-            null)];
+            null,
+            status.LoadLog)];
     }
 }
