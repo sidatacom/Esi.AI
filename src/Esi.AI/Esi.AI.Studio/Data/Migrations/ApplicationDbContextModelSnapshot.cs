@@ -142,74 +142,7 @@ namespace Esi.AI.Studio.Migrations
                     b.ToTable("ChatMessages");
                 });
 
-            modelBuilder.Entity("Esi.AI.Studio.Data.LlamaModelEntity", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("ConfigurationProfileId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTime>("LastWriteTimeUtc")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Name")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Path")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<long>("SizeInBytes")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<DateTime>("UpdatedAtUtc")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("LlamaModels");
-                });
-
-            modelBuilder.Entity("Esi.AI.Studio.Data.LlamaSettingsEntity", b =>
-                {
-                    b.Property<int>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("AdvancedSettingsJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("Backend")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<Guid?>("ConfigurationProfileId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<uint>("ContextSize")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<int>("GpuLayerCount")
-                        .HasColumnType("INTEGER");
-
-                    b.Property<string>("ModelPath")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("VulkanDeviceWeightsJson")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("Id");
-
-                    b.ToTable("LlamaSettings");
-                });
-
-            modelBuilder.Entity("Esi.AI.Studio.Data.ModelConfigurationProfileEntity", b =>
+            modelBuilder.Entity("Esi.AI.Studio.Data.ModelConfigurationEntity", b =>
                 {
                     b.Property<Guid>("Id")
                         .ValueGeneratedOnAdd()
@@ -247,7 +180,7 @@ namespace Esi.AI.Studio.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("LlamaConfigurationProfiles", (string)null);
+                    b.ToTable("ModelConfigurations", (string)null);
                 });
 
             modelBuilder.Entity("Esi.AI.Studio.Data.ModelDownloadEntity", b =>
@@ -300,19 +233,106 @@ namespace Esi.AI.Studio.Migrations
                     b.ToTable("ModelDownloads");
                 });
 
-            modelBuilder.Entity("Esi.AI.Studio.Data.OpenVinoSettingsEntity", b =>
+            modelBuilder.Entity("Esi.AI.Studio.Data.ModelEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("ConfigurationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("LastWriteTimeUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("SizeInBytes")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Models", (string)null);
+                });
+
+            modelBuilder.Entity("Esi.AI.Studio.Data.ModelMetadataEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CompatibleBackendsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("HuggingFaceModelId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("HuggingFaceRevision")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("HuggingFaceSynchronizedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsDeleted")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsManuallyConfigured")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ModelPath")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ModelPath")
+                        .IsUnique();
+
+                    b.ToTable("ModelMetadata");
+                });
+
+            modelBuilder.Entity("Esi.AI.Studio.Data.ModelSettingsEntity", b =>
                 {
                     b.Property<int>("Id")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("INTEGER");
 
-                    b.Property<string>("SettingsJson")
+                    b.Property<int>("Backend")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid?>("ConfigurationId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ConfigurationJson")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModelPath")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
                         .HasColumnType("TEXT");
 
                     b.HasKey("Id");
 
-                    b.ToTable("OpenVinoSettings");
+                    b.HasIndex("Backend")
+                        .IsUnique();
+
+                    b.ToTable("ModelSettings");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>

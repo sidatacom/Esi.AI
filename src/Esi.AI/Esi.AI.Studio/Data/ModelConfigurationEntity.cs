@@ -2,7 +2,7 @@ namespace Esi.AI.Studio.Data;
 
 using Esi.AI.Models;
 
-public sealed class ModelConfigurationProfileEntity
+public sealed class ModelConfigurationEntity
 {
     public Guid Id { get; set; }
 

@@ -14,6 +14,8 @@ public sealed class OpenVinoDeviceDto
     public string Id { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public bool IsCompatible { get; set; }
+    public string Vendor { get; set; } = string.Empty;
+    public string Driver { get; set; } = string.Empty;
     public string Detail { get; set; } = string.Empty;
 }
 

@@ -18,7 +18,7 @@ fi
 port="${1:-7010}"
 state_file="${TMPDIR:-/tmp}/esi-ai-studio-watchdog-${port}.pid"
 health_interval="${STUDIO_WATCHDOG_INTERVAL_SECONDS:-3}"
-failure_limit="${STUDIO_WATCHDOG_FAILURE_LIMIT:-10}"
+failure_limit="${STUDIO_WATCHDOG_FAILURE_LIMIT:-60}"
 memory_limit_mb="${STUDIO_WATCHDOG_MEMORY_LIMIT_MB:-0}"
 
 if [[ -f "$state_file" ]]; then
@@ -60,11 +60,11 @@ while true; do
         exit 1
     fi
 
-    if wget -q --timeout=3 --tries=1 -O /dev/null "http://127.0.0.1:$port/"; then
+    if kill -0 "$studio_pid" 2>/dev/null; then
         failure_count=0
     else
         failure_count=$((failure_count + 1))
-        echo "Studio health check failed ($failure_count/$failure_limit)."
+        echo "Studio process check failed ($failure_count/$failure_limit)."
     fi
 
     if [[ "$memory_limit_mb" =~ ^[0-9]+$ ]] && (( memory_limit_mb > 0 )); then

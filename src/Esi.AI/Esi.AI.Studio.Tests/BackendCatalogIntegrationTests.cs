@@ -37,7 +37,7 @@ public sealed class BackendCatalogIntegrationTests
             null!,
             Options.Create(new ModelLibraryOptions()));
 
-        await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest("Qwen2.5", "openvino"));
+        await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest("Qwen2.5", ["openvino"]));
 
         StringAssert.Contains(handler.RequestUri!.Query, "filter=openvino");
     }
@@ -52,7 +52,7 @@ public sealed class BackendCatalogIntegrationTests
             null!,
             Options.Create(new ModelLibraryOptions()));
 
-        await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest("Qwen", "transformers", Other: "vllm"));
+        await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest("Qwen", ["transformers"], Other: ["vllm"]));
 
         StringAssert.Contains(handler.RequestUri!.Query, "filter=transformers");
         StringAssert.Contains(handler.RequestUri.Query, "other=vllm");
@@ -70,29 +70,34 @@ public sealed class BackendCatalogIntegrationTests
 
         await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest(
             "Qwen",
-            Library: "gguf",
-            Task: "text-generation",
-            ParameterRange: "n<1B",
-            Language: "de",
-            License: "license:mit",
-            Hardware: "cuda",
-            Other: "vllm",
-            InferenceProvider: "groq",
+            Libraries: ["gguf", "openvino"],
+            Tasks: ["text-generation", "image-to-text"],
+            ParameterRanges: ["n<1B"],
+            Languages: ["de"],
+            Licenses: ["license:mit"],
+            Hardware: ["cuda", "vulkan"],
+            Other: ["vllm", "sglang"],
+            InferenceProviders: ["groq", "together"],
             BaseOnly: true,
             InferenceAvailable: false,
             Sort: "likes"));
 
-        var query = handler.RequestUri!.Query;
-        StringAssert.Contains(query, "filter=gguf");
-        StringAssert.Contains(query, "pipeline_tag=text-generation");
-        StringAssert.Contains(query, "num_parameters=n%3C1B");
-        StringAssert.Contains(query, "language=de");
-        StringAssert.Contains(query, "license=license%3Amit");
-        StringAssert.Contains(query, "hardware=cuda");
-        StringAssert.Contains(query, "other=base");
-        StringAssert.Contains(query, "other=vllm");
-        StringAssert.Contains(query, "inference_provider=groq");
-        StringAssert.Contains(query, "sort=likes");
+        var queries = string.Join('&', handler.RequestUris.Select(uri => uri.Query));
+        StringAssert.Contains(queries, "filter=gguf");
+        StringAssert.Contains(queries, "filter=openvino");
+        StringAssert.Contains(queries, "pipeline_tag=text-generation");
+        StringAssert.Contains(queries, "pipeline_tag=image-to-text");
+        StringAssert.Contains(queries, "num_parameters=n%3C1B");
+        StringAssert.Contains(queries, "language=de");
+        StringAssert.Contains(queries, "license=license%3Amit");
+        StringAssert.Contains(queries, "hardware=cuda");
+        StringAssert.Contains(queries, "hardware=vulkan");
+        StringAssert.Contains(queries, "other=base");
+        StringAssert.Contains(queries, "other=vllm");
+        StringAssert.Contains(queries, "other=sglang");
+        StringAssert.Contains(queries, "inference_provider=groq");
+        StringAssert.Contains(queries, "inference_provider=together");
+        StringAssert.Contains(queries, "sort=likes");
     }
 
     [TestMethod]
@@ -105,13 +110,28 @@ public sealed class BackendCatalogIntegrationTests
             null!,
             Options.Create(new ModelLibraryOptions()));
 
-        await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest("Qwen", Library: "", Sort: "trending"));
+        await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest("Qwen", Libraries: [], Sort: "trending"));
 
         var query = handler.RequestUri!.Query;
         Assert.IsFalse(query.Contains("filter=", StringComparison.Ordinal));
         Assert.IsFalse(query.Contains("pipeline_tag=", StringComparison.Ordinal));
         Assert.IsFalse(query.Contains("hardware=", StringComparison.Ordinal));
         Assert.IsFalse(query.Contains("sort=", StringComparison.Ordinal));
+    }
+
+    [TestMethod]
+    public async Task GetHuggingFaceModelMetadataAsync_UnauthorizedExplainsTokenConfiguration()
+    {
+        var library = new ModelLibraryService(
+            new HttpClient(new UnauthorizedHttpMessageHandler()) { BaseAddress = new Uri("https://huggingface.co/") },
+            null!,
+            null!,
+            Options.Create(new ModelLibraryOptions()));
+
+        var exception = await Assert.ThrowsExceptionAsync<InvalidOperationException>(() =>
+            library.GetHuggingFaceModelMetadataAsync("owner/repository"));
+
+        StringAssert.Contains(exception.Message, "HF_TOKEN");
     }
 
     [TestMethod]
@@ -138,6 +158,23 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
+    public async Task GetDownloadOptionsAsync_ReturnsWholeRepositoryForNonGgufLibrary()
+    {
+        var handler = new ModelFilesHttpMessageHandler();
+        var library = new ModelLibraryService(
+            new HttpClient(handler) { BaseAddress = new Uri("https://huggingface.co/") },
+            null!,
+            null!,
+            Options.Create(new ModelLibraryOptions()));
+
+        var options = await library.GetDownloadOptionsAsync("owner/repository", "transformers");
+
+        Assert.AreEqual(1, options.Count);
+        Assert.AreEqual(3, options[0].FileCount);
+        StringAssert.StartsWith(options[0].Label, "Repository");
+    }
+
+    [TestMethod]
     public async Task StartDownloadAsync_MultipleRequestsRunInParallel()
     {
         var directory = Directory.CreateTempSubdirectory("esi-ai-download-queue-").FullName;
@@ -153,7 +190,7 @@ public sealed class BackendCatalogIntegrationTests
             new HttpClient(handler) { BaseAddress = new Uri("https://huggingface.co/") },
             new NoOpHubContext(),
             dbContextFactory,
-            Options.Create(new ModelLibraryOptions { Directories = [directory], MaxParallelDownloads = 2 }));
+            Options.Create(new ModelLibraryOptions { Directories = [directory], MaxParallelDownloads = 2, MaxParallelFileDownloads = 4 }));
 
         try
         {
@@ -178,13 +215,277 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
-    public async Task GetBackendModelsAsync_FiltersLocalModelsByBackend()
+    public async Task RestoreDownloadsAsync_PausesIncompleteDownloadForManualResume()
+    {
+        var directory = Directory.CreateTempSubdirectory("esi-ai-download-restore-").FullName;
+        var databasePath = Path.Combine(directory, "test.db");
+        var dbOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite($"Data Source={databasePath}")
+            .Options;
+        var dbContextFactory = new TestDbContextFactory(dbOptions);
+        await using (var db = await dbContextFactory.CreateDbContextAsync())
+        {
+            await db.Database.EnsureCreatedAsync();
+            db.ModelDownloads.Add(new ModelDownloadEntity
+            {
+                Id = Guid.NewGuid(),
+                ModelId = "owner/repository",
+                Library = "transformers",
+                DestinationPath = directory,
+                Revision = "revision",
+                FileNamesJson = System.Text.Json.JsonSerializer.Serialize(new[] { "model.safetensors" }),
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var handler = new TrackingDownloadHttpMessageHandler();
+        await using var library = new ModelLibraryService(
+            new HttpClient(handler) { BaseAddress = new Uri("https://huggingface.co/") },
+            new NoOpHubContext(),
+            dbContextFactory,
+            Options.Create(new ModelLibraryOptions { Directories = [directory] }));
+
+        try
+        {
+            await library.RestoreDownloadsAsync();
+
+            var status = library.GetDownloads().Single();
+            Assert.IsTrue(status.Paused);
+            Assert.IsFalse(status.Queued);
+            Assert.AreEqual(0, handler.RequestCount);
+
+            await using var db = await dbContextFactory.CreateDbContextAsync();
+            Assert.IsTrue((await db.ModelDownloads.SingleAsync()).Paused);
+        }
+        finally
+        {
+            dbContextFactory.Dispose();
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task CancelDownloadAsync_RestoredDownload_RemovesFilesAndPersistedDownload()
+    {
+        var directory = Directory.CreateTempSubdirectory("esi-ai-download-restored-cancel-").FullName;
+        var databasePath = Path.Combine(directory, "test.db");
+        var dbOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite($"Data Source={databasePath}")
+            .Options;
+        var dbContextFactory = new TestDbContextFactory(dbOptions);
+        var downloadId = Guid.NewGuid();
+        var filePath = Path.Combine(directory, "model.safetensors");
+        await File.WriteAllTextAsync(filePath, "partial");
+        await using (var db = await dbContextFactory.CreateDbContextAsync())
+        {
+            await db.Database.EnsureCreatedAsync();
+            db.ModelDownloads.Add(new ModelDownloadEntity
+            {
+                Id = downloadId,
+                ModelId = "owner/repository",
+                Library = "transformers",
+                DestinationPath = directory,
+                Revision = "revision",
+                FileNamesJson = System.Text.Json.JsonSerializer.Serialize(new[] { "model.safetensors" }),
+                FileStatusesJson = System.Text.Json.JsonSerializer.Serialize(new[] { new DownloadFileStatus("model.safetensors", 7, 100, false) }),
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var handler = new TrackingDownloadHttpMessageHandler();
+        await using var library = new ModelLibraryService(
+            new HttpClient(handler) { BaseAddress = new Uri("https://huggingface.co/") },
+            new NoOpHubContext(),
+            dbContextFactory,
+            Options.Create(new ModelLibraryOptions { Directories = [directory] }));
+
+        try
+        {
+            await library.RestoreDownloadsAsync();
+            await library.CancelDownloadAsync(downloadId);
+
+            Assert.IsNull(library.GetDownload(downloadId));
+            Assert.IsFalse(File.Exists(filePath));
+            await using var db = await dbContextFactory.CreateDbContextAsync();
+            Assert.IsNull(await db.ModelDownloads.FindAsync(downloadId));
+        }
+        finally
+        {
+            dbContextFactory.Dispose();
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task StartDownloadAsync_MultipleFilesRespectFileConcurrencyLimit()
+    {
+        var directory = Directory.CreateTempSubdirectory("esi-ai-download-file-limit-").FullName;
+        var handler = new QueuedDownloadHttpMessageHandler();
+        var databasePath = Path.Combine(directory, "test.db");
+        var dbOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite($"Data Source={databasePath}")
+            .Options;
+        var dbContextFactory = new TestDbContextFactory(dbOptions);
+        await using (var db = await dbContextFactory.CreateDbContextAsync())
+            await db.Database.EnsureCreatedAsync();
+        await using var library = new ModelLibraryService(
+            new HttpClient(handler) { BaseAddress = new Uri("https://huggingface.co/") },
+            new NoOpHubContext(),
+            dbContextFactory,
+            Options.Create(new ModelLibraryOptions { Directories = [directory], MaxParallelFileDownloads = 2 }));
+
+        try
+        {
+            var downloadId = await library.StartDownloadAsync("owner/first", "first-00001-of-00002.gguf");
+
+            while (library.GetDownload(downloadId)?.Completed != true)
+                await Task.Delay(10);
+
+            Assert.AreEqual(2, handler.MaxConcurrentDownloads);
+        }
+        finally
+        {
+            dbContextFactory.Dispose();
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task CancelDownloadAsync_RemovesPartialFilesAndPersistedDownload()
+    {
+        var directory = Directory.CreateTempSubdirectory("esi-ai-download-cancel-").FullName;
+        var databasePath = Path.Combine(directory, "test.db");
+        var dbOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite($"Data Source={databasePath}")
+            .Options;
+        var dbContextFactory = new TestDbContextFactory(dbOptions);
+        await using (var db = await dbContextFactory.CreateDbContextAsync())
+            await db.Database.EnsureCreatedAsync();
+        var handler = new CancellableDownloadHttpMessageHandler();
+        await using var library = new ModelLibraryService(
+            new HttpClient(handler) { BaseAddress = new Uri("https://huggingface.co/") },
+            new NoOpHubContext(),
+            dbContextFactory,
+            Options.Create(new ModelLibraryOptions { Directories = [directory] }));
+
+        try
+        {
+            var downloadId = await library.StartDownloadAsync("owner/repository", "model.gguf");
+            await handler.DownloadStarted;
+
+            await library.CancelDownloadAsync(downloadId);
+
+            Assert.IsNull(library.GetDownload(downloadId));
+            await using var db = await dbContextFactory.CreateDbContextAsync();
+            Assert.IsNull(await db.ModelDownloads.FindAsync(downloadId));
+            Assert.IsFalse(File.Exists(Path.Combine(directory, "model.gguf")));
+        }
+        finally
+        {
+            dbContextFactory.Dispose();
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task CancelDownloadAsync_RemovesQueuedDownloadWithoutWaitingForSlot()
+    {
+        var directory = Directory.CreateTempSubdirectory("esi-ai-download-queued-cancel-").FullName;
+        var databasePath = Path.Combine(directory, "test.db");
+        var dbOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite($"Data Source={databasePath}")
+            .Options;
+        var dbContextFactory = new TestDbContextFactory(dbOptions);
+        await using (var db = await dbContextFactory.CreateDbContextAsync())
+            await db.Database.EnsureCreatedAsync();
+        var handler = new CancellableDownloadHttpMessageHandler();
+        await using var library = new ModelLibraryService(
+            new HttpClient(handler) { BaseAddress = new Uri("https://huggingface.co/") },
+            new NoOpHubContext(),
+            dbContextFactory,
+            Options.Create(new ModelLibraryOptions { Directories = [directory], MaxParallelDownloads = 1 }));
+
+        try
+        {
+            var activeDownloadId = await library.StartDownloadAsync("owner/active", null, "transformers");
+            await handler.DownloadStarted;
+            var queuedDownloadId = await library.StartDownloadAsync("owner/queued", null, "transformers");
+
+            await library.CancelDownloadAsync(queuedDownloadId);
+
+            Assert.IsNull(library.GetDownload(queuedDownloadId));
+            await library.CancelDownloadAsync(activeDownloadId);
+        }
+        finally
+        {
+            dbContextFactory.Dispose();
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task RestoreDownloadsAsync_DoesNotResumeFailedDownload()
+    {
+        var directory = Directory.CreateTempSubdirectory("esi-ai-download-failed-restore-").FullName;
+        var databasePath = Path.Combine(directory, "test.db");
+        var dbOptions = new DbContextOptionsBuilder<ApplicationDbContext>()
+            .UseSqlite($"Data Source={databasePath}")
+            .Options;
+        var dbContextFactory = new TestDbContextFactory(dbOptions);
+        await using (var db = await dbContextFactory.CreateDbContextAsync())
+        {
+            await db.Database.EnsureCreatedAsync();
+            db.ModelDownloads.Add(new ModelDownloadEntity
+            {
+                Id = Guid.NewGuid(),
+                ModelId = "owner/repository",
+                Library = "transformers",
+                DestinationPath = directory,
+                Revision = "revision",
+                FileNamesJson = System.Text.Json.JsonSerializer.Serialize(new[] { "model.safetensors" }),
+                Error = "Hugging Face access was denied.",
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        var handler = new TrackingDownloadHttpMessageHandler();
+        await using var library = new ModelLibraryService(
+            new HttpClient(handler) { BaseAddress = new Uri("https://huggingface.co/") },
+            new NoOpHubContext(),
+            dbContextFactory,
+            Options.Create(new ModelLibraryOptions { Directories = [directory] }));
+
+        try
+        {
+            await library.RestoreDownloadsAsync();
+            await Task.Delay(100);
+
+            var status = library.GetDownloads().Single();
+            Assert.AreEqual("Hugging Face access was denied.", status.Error);
+            Assert.IsFalse(status.Queued);
+            Assert.AreEqual(0, handler.RequestCount);
+        }
+        finally
+        {
+            dbContextFactory.Dispose();
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public async Task BackendModel_ReadAsync_FiltersLocalModelsByBackend()
     {
         await using var context = await TestContext.CreateAsync();
-        var llamaModels = await context.DataService.GetBackendModelsAsync(ConfigurationBackend.Llama);
-        var dotLlmModels = await context.DataService.GetBackendModelsAsync(ConfigurationBackend.DotLlm);
-        var vllmModels = await context.DataService.GetBackendModelsAsync(ConfigurationBackend.Vllm);
-        var sglangModels = await context.DataService.GetBackendModelsAsync(ConfigurationBackend.Sglang);
+        var llamaModels = await context.DataService.BackendModel_ReadAsync(ConfigurationBackend.Llama);
+        var dotLlmModels = await context.DataService.BackendModel_ReadAsync(ConfigurationBackend.DotLlm);
+        var vllmModels = await context.DataService.BackendModel_ReadAsync(ConfigurationBackend.Vllm);
+        var sglangModels = await context.DataService.BackendModel_ReadAsync(ConfigurationBackend.Sglang);
 
         Assert.AreEqual(1, llamaModels.Count);
         Assert.AreEqual(ConfigurationBackend.Llama, llamaModels[0].Backend);
@@ -195,21 +496,138 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
-    public async Task SaveModelConfigurationProfileAsync_AllowsSameNameAcrossBackends()
+    public void ModelBackendCompatibility_FromHuggingFaceMetadata_ReturnsPythonBackends()
+    {
+        var backends = ModelBackendCompatibility.FromHuggingFace("transformers", ["vllm"]);
+
+        CollectionAssert.AreEquivalent(
+            new[] { ConfigurationBackend.Vllm, ConfigurationBackend.Sglang },
+            backends.Where(backend => backend is ConfigurationBackend.Vllm or ConfigurationBackend.Sglang).ToArray());
+    }
+
+    [TestMethod]
+    public void ModelBackendCompatibility_FromGgufHuggingFaceMetadata_DoesNotReturnPythonBackends()
+    {
+        var backends = ModelBackendCompatibility.FromHuggingFace("transformers", ["transformers", "gguf"]);
+
+        CollectionAssert.AreEquivalent(
+            new[] { ConfigurationBackend.Llama, ConfigurationBackend.DotLlm },
+            backends.ToArray());
+    }
+
+    [TestMethod]
+    public void ModelBackendCompatibility_DoesNotInferBackendsFromPipelineTag()
+    {
+        var backends = ModelBackendCompatibility.FromHuggingFace(null, []);
+
+        Assert.AreEqual(0, backends.Count);
+    }
+
+    [TestMethod]
+    public async Task LocalModel_UpdateAsync_ManualAssignmentControlsBackendPicker()
+    {
+        await using var context = await TestContext.CreateAsync();
+
+        await context.DataService.LocalModel_UpdateAsync(new ModelCompatibilityUpdate(
+            context.ModelPath,
+            [ConfigurationBackend.Vllm]));
+
+        var refreshed = (await context.DataService.LocalModel_ReadAsync()).Single(model => model.Path == context.ModelPath);
+        var vllmModels = await context.DataService.BackendModel_ReadAsync(ConfigurationBackend.Vllm);
+        var llamaModels = await context.DataService.BackendModel_ReadAsync(ConfigurationBackend.Llama);
+
+        CollectionAssert.AreEquivalent(new[] { ConfigurationBackend.Vllm }, refreshed.CompatibleBackends!.ToArray());
+        Assert.AreEqual(1, vllmModels.Count);
+        Assert.AreEqual(0, llamaModels.Count);
+    }
+
+    [TestMethod]
+    public async Task LocalModel_UpdateAsync_FromHuggingFaceUsesRepositoryMetadata()
+    {
+        await using var context = await TestContext.CreateAsync(new HuggingFaceMetadataHttpMessageHandler());
+
+        var models = await context.DataService.LocalModel_UpdateAsync(context.ModelPath, "owner/repository");
+        var model = models.Single(item => item.Path == context.ModelPath);
+
+        CollectionAssert.AreEquivalent(
+            new[] { ConfigurationBackend.Vllm, ConfigurationBackend.Sglang },
+            model.CompatibleBackends!.ToArray());
+        Assert.AreEqual("owner/repository", model.HuggingFaceModelId);
+    }
+
+    [TestMethod]
+    public async Task LocalModel_ReadAsync_RestoresHuggingFaceIdFromCompletedDownload()
+    {
+        await using var context = await TestContext.CreateAsync();
+        await context.AddCompletedDownloadAsync("owner/repository");
+
+        var model = (await context.DataService.LocalModel_ReadAsync()).Single(item => item.Path == context.ModelPath);
+
+        Assert.AreEqual("owner/repository", model.HuggingFaceModelId);
+    }
+
+    [TestMethod]
+    public async Task Chat_DeleteAsync_ExistingChat_RemovesChatAndMessages()
+    {
+        await using var context = await TestContext.CreateAsync();
+        var chat = await context.DataService.Chat_CreateAsync(new CreateChatRequest("Test chat"));
+        await context.AddChatMessageAsync(chat.Id);
+
+        await context.DataService.Chat_DeleteAsync(chat.Id);
+
+        Assert.IsNull(await context.DataService.Chat_ReadAsync(chat.Id));
+        Assert.IsFalse((await context.DataService.Chat_ReadAsync()).Any(summary => summary.Id == chat.Id));
+        Assert.AreEqual(0, await context.GetChatMessageCountAsync(chat.Id));
+    }
+
+    [TestMethod]
+    public async Task LocalModel_DeleteAsync_WithoutFiles_HidesModelAndKeepsFile()
+    {
+        await using var context = await TestContext.CreateAsync();
+
+        var models = await context.DataService.LocalModel_DeleteAsync(new ModelDeletionRequest(context.ModelPath, false));
+
+        Assert.IsTrue(File.Exists(context.ModelPath));
+        Assert.IsFalse(models.Any(model => model.Path == context.ModelPath));
+    }
+
+    [TestMethod]
+    public async Task LocalModel_DeleteAsync_WithFiles_DeletesModelAndFile()
+    {
+        await using var context = await TestContext.CreateAsync();
+
+        var models = await context.DataService.LocalModel_DeleteAsync(new ModelDeletionRequest(context.ModelPath, true));
+
+        Assert.IsFalse(File.Exists(context.ModelPath));
+        Assert.IsFalse(models.Any(model => model.Path == context.ModelPath));
+    }
+
+    [TestMethod]
+    public async Task ModelConfiguration_CreateAsync_AllowsSameNameAcrossBackends()
     {
         await using var context = await TestContext.CreateAsync();
         var now = DateTime.UtcNow;
-        var llamaProfile = new ModelConfigurationProfile(
+        var llamaConfiguration = new ModelConfiguration(
             Guid.Empty, "Shared defaults", null, context.ModelPath, false, 1, "{}", now, now, ConfigurationBackend.Llama);
-        var pythonProfile = llamaProfile with { Backend = ConfigurationBackend.Vllm };
+        var pythonConfiguration = llamaConfiguration with { Backend = ConfigurationBackend.Vllm };
 
-        var savedLlama = await context.DataService.SaveModelConfigurationProfileAsync(llamaProfile);
-        var savedPython = await context.DataService.SaveModelConfigurationProfileAsync(pythonProfile);
-        var profiles = await context.DataService.GetModelConfigurationProfilesAsync();
+        var savedLlama = await context.DataService.ModelConfiguration_CreateAsync(llamaConfiguration);
+        var savedPython = await context.DataService.ModelConfiguration_CreateAsync(pythonConfiguration);
+        var configurations = await context.DataService.ModelConfiguration_ReadAsync();
 
         Assert.AreEqual(ConfigurationBackend.Llama, savedLlama.Backend);
         Assert.AreEqual(ConfigurationBackend.Vllm, savedPython.Backend);
-        Assert.AreEqual(2, profiles.Count(profile => profile.Name == "Shared defaults"));
+        Assert.AreEqual(2, configurations.Count(configuration => configuration.Name == "Shared defaults"));
+    }
+
+    [TestMethod]
+    public async Task ModelConfiguration_CreateAsync_EmptyModelPath_ThrowsArgumentException()
+    {
+        await using var context = await TestContext.CreateAsync();
+        var configuration = new ModelConfiguration(
+            Guid.Empty, "Missing model", null, string.Empty, false, 1, "{}", default, default, ConfigurationBackend.Llama);
+
+        await Assert.ThrowsExceptionAsync<ArgumentException>(() => context.DataService.ModelConfiguration_CreateAsync(configuration));
     }
 
     private sealed class TestContext : IAsyncDisposable
@@ -230,7 +648,43 @@ public sealed class BackendCatalogIntegrationTests
         public DataService DataService { get; }
         public string ModelPath { get; }
 
-        public static async Task<TestContext> CreateAsync()
+        public async Task AddCompletedDownloadAsync(string modelId)
+        {
+            await using var db = await dbContextFactory.CreateDbContextAsync();
+            db.ModelDownloads.Add(new ModelDownloadEntity
+            {
+                Id = Guid.NewGuid(),
+                ModelId = modelId,
+                Library = "gguf",
+                DestinationPath = directory,
+                FileNamesJson = System.Text.Json.JsonSerializer.Serialize(new[] { Path.GetFileName(ModelPath) }),
+                Completed = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        public async Task AddChatMessageAsync(Guid chatId)
+        {
+            await using var db = await dbContextFactory.CreateDbContextAsync();
+            db.ChatMessages.Add(new ChatMessageEntity
+            {
+                ConversationId = chatId,
+                Role = "user",
+                Content = "Hello",
+                CreatedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+        }
+
+        public async Task<int> GetChatMessageCountAsync(Guid chatId)
+        {
+            await using var db = await dbContextFactory.CreateDbContextAsync();
+            return await db.ChatMessages.CountAsync(message => message.ConversationId == chatId);
+        }
+
+        public static async Task<TestContext> CreateAsync(HttpMessageHandler? handler = null)
         {
             var directory = Directory.CreateTempSubdirectory("esi-ai-studio-tests-").FullName;
             var modelPath = Path.Combine(directory, "local.gguf");
@@ -246,7 +700,7 @@ public sealed class BackendCatalogIntegrationTests
                 await db.Database.EnsureCreatedAsync();
 
             var modelLibrary = new ModelLibraryService(
-                new HttpClient { BaseAddress = new Uri("https://huggingface.co/") },
+                new HttpClient(handler ?? new HttpClientHandler()) { BaseAddress = new Uri("https://huggingface.co/") },
                 null!,
                 dbContextFactory,
                 Options.Create(new ModelLibraryOptions { Directories = [directory] }));
@@ -285,14 +739,35 @@ public sealed class BackendCatalogIntegrationTests
     private sealed class RecordingHttpMessageHandler : HttpMessageHandler
     {
         public Uri? RequestUri { get; private set; }
+        public List<Uri> RequestUris { get; } = [];
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             RequestUri = request.RequestUri;
+            RequestUris.Add(request.RequestUri!);
             return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
                 Content = new StringContent("[]", System.Text.Encoding.UTF8, "application/json")
             });
+        }
+    }
+
+    private sealed class UnauthorizedHttpMessageHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.Unauthorized));
+    }
+
+    private sealed class TrackingDownloadHttpMessageHandler : HttpMessageHandler
+    {
+        private int requestCount;
+
+        public int RequestCount => Volatile.Read(ref requestCount);
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref requestCount);
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.Unauthorized));
         }
     }
 
@@ -303,6 +778,20 @@ public sealed class BackendCatalogIntegrationTests
             var content = request.RequestUri?.AbsolutePath.Contains("/tree/", StringComparison.Ordinal) == true
                 ? "[{\"path\":\"model.Q4_K_M-00001-of-00002.gguf\",\"size\":1000000000},{\"path\":\"model.Q4_K_M-00002-of-00002.gguf\",\"size\":2000000000},{\"path\":\"model.Q8_0.gguf\",\"size\":1500000000}]"
                 : "{\"sha\":\"revision\",\"siblings\":[{\"rfilename\":\"model.Q4_K_M-00001-of-00002.gguf\"},{\"rfilename\":\"model.Q4_K_M-00002-of-00002.gguf\"},{\"rfilename\":\"model.Q8_0.gguf\"}]}";
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(content)
+            });
+        }
+    }
+
+    private sealed class HuggingFaceMetadataHttpMessageHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var content = request.RequestUri?.AbsolutePath.Contains("/tree/", StringComparison.Ordinal) == true
+                ? "[{\"path\":\"config.json\",\"size\":10}]"
+                : "{\"sha\":\"revision\",\"library_name\":\"transformers\",\"pipeline_tag\":\"text-generation\",\"tags\":[\"vllm\"],\"siblings\":[{\"rfilename\":\"config.json\"}]}";
             return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
                 Content = new StringContent(content)
@@ -346,6 +835,28 @@ public sealed class BackendCatalogIntegrationTests
             {
                 Interlocked.Decrement(ref activeDownloads);
             }
+        }
+    }
+
+    private sealed class CancellableDownloadHttpMessageHandler : HttpMessageHandler
+    {
+        private readonly TaskCompletionSource downloadStarted = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task DownloadStarted => downloadStarted.Task;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.RequestUri?.AbsolutePath.Contains("/api/models/", StringComparison.Ordinal) == true)
+            {
+                return new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+                {
+                    Content = new StringContent("{\"sha\":\"revision\",\"siblings\":[{\"rfilename\":\"model.gguf\"}]}")
+                };
+            }
+
+            downloadStarted.TrySetResult();
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            return new HttpResponseMessage(System.Net.HttpStatusCode.OK);
         }
     }
 

@@ -1,3 +1,5 @@
+using System.Collections.Concurrent;
+using System.Text.Json;
 using Esi.AI.Core.Chat;
 using Esi.AI.Models;
 using Microsoft.Extensions.Hosting;
@@ -14,6 +16,8 @@ public sealed class ModelRuntime : IHostedService, IDisposable
     private readonly PythonInferenceServer python;
     private readonly DotLlmInProcessRuntime dotLlm;
     private readonly BackendPrerequisiteProvisioner prerequisites;
+    private readonly IModelRuntimeStatusPublisher statusPublisher;
+    private readonly ConcurrentDictionary<string, PendingModel> pendingModels = new(StringComparer.OrdinalIgnoreCase);
 
     public ModelRuntime()
         : this(new LlamaModelLoader(), new OpenVinoModelLoader(), new PythonInferenceServer(), new DotLlmInProcessRuntime())
@@ -30,13 +34,15 @@ public sealed class ModelRuntime : IHostedService, IDisposable
         OpenVinoModelLoader openVino,
         PythonInferenceServer python,
         DotLlmInProcessRuntime dotLlm,
-        BackendPrerequisiteProvisioner? prerequisites = null)
+        BackendPrerequisiteProvisioner? prerequisites = null,
+        IModelRuntimeStatusPublisher? statusPublisher = null)
     {
         this.llama = llama ?? throw new ArgumentNullException(nameof(llama));
         this.openVino = openVino ?? throw new ArgumentNullException(nameof(openVino));
         this.python = python ?? throw new ArgumentNullException(nameof(python));
         this.dotLlm = dotLlm ?? throw new ArgumentNullException(nameof(dotLlm));
         this.prerequisites = prerequisites ?? new BackendPrerequisiteProvisioner();
+        this.statusPublisher = statusPublisher ?? NoOpModelRuntimeStatusPublisher.Instance;
     }
 
     /// <inheritdoc />
@@ -47,7 +53,8 @@ public sealed class ModelRuntime : IHostedService, IDisposable
         return Task.CompletedTask;
     }
 
-    public ModelLoadStatus GetStatus()
+    /// <summary>Reads the current active and loading loaded-model collection.</summary>
+    public ModelLoadStatus LoadedModel_Read()
     {
         var llamaStatus = llama.GetStatus();
         var openVinoStatus = openVino.GetStatus();
@@ -57,11 +64,12 @@ public sealed class ModelRuntime : IHostedService, IDisposable
             .Concat(CreateOpenVinoLoadedModels(openVinoStatus))
             .Concat(pythonStatus.LoadedModels)
             .Concat(dotLlmStatus.LoadedModels)
+            .Concat(CreatePendingModelStatuses(llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus))
             .ToArray();
 
         if (dotLlmStatus.IsModelLoaded)
             return dotLlmStatus with { LoadedModels = loadedModels };
-        if (pythonStatus.IsModelLoaded)
+        if (pythonStatus.IsModelLoaded || pythonStatus.ModelPath is not null)
             return pythonStatus with { LoadedModels = loadedModels };
         if (openVinoStatus.IsModelLoaded)
             return llamaStatus with
@@ -77,54 +85,54 @@ public sealed class ModelRuntime : IHostedService, IDisposable
 
     public OpenVinoModelLoadStatus GetOpenVinoStatus() => openVino.GetStatus();
 
-    public async Task LoadAsync(LoadModelRequest request, CancellationToken cancellationToken = default)
-    {
-        await prerequisites.PrepareAsync(ConfigurationBackend.Llama, cancellationToken: cancellationToken).ConfigureAwait(false);
-        var advanced = request.Advanced;
-        await llama.LoadAsync(request.ModelPath, request.Backend, request.GpuLayerCount, request.ContextSize,
-            request.VulkanDeviceWeights,
-            new LlamaLoadOptions(advanced.MainGpu, advanced.SeqMax, advanced.RecurrentRollbackSnapshots, advanced.UseMemorymap,
-                advanced.UseDirectIO, advanced.UseMemoryLock, advanced.Threads, advanced.BatchThreads, advanced.BatchSize,
-                advanced.UBatchSize, advanced.Embeddings, advanced.NoKqvOffload, advanced.FlashAttention, advanced.VocabOnly,
-                advanced.OpOffload, advanced.SwaFull, advanced.KVUnified, advanced.RopeFrequencyBase, advanced.RopeFrequencyScale,
-                advanced.YarnExtrapolationFactor, advanced.YarnAttentionFactor, advanced.YarnBetaFast, advanced.YarnBetaSlow,
-                advanced.YarnOriginalContext), cancellationToken).ConfigureAwait(false);
-    }
+    public Task LoadAsync(LoadModelRequest request, CancellationToken cancellationToken = default) =>
+        TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.Llama, request.Backend, async () =>
+        {
+            await prerequisites.PrepareAsync(ConfigurationBackend.Llama, cancellationToken: cancellationToken).ConfigureAwait(false);
+            var advanced = request.Advanced;
+            await llama.LoadAsync(request.ModelPath, request.Backend, request.GpuLayerCount, request.ContextSize,
+                request.VulkanDeviceWeights,
+                new LlamaLoadOptions(advanced.MainGpu, advanced.SeqMax, advanced.RecurrentRollbackSnapshots, advanced.UseMemorymap,
+                    advanced.UseDirectIO, advanced.UseMemoryLock, advanced.Threads, advanced.BatchThreads, advanced.BatchSize,
+                    advanced.UBatchSize, advanced.Embeddings, advanced.NoKqvOffload, advanced.FlashAttention, advanced.VocabOnly,
+                    advanced.OpOffload, advanced.SwaFull, advanced.KVUnified, advanced.RopeFrequencyBase, advanced.RopeFrequencyScale,
+                    advanced.YarnExtrapolationFactor, advanced.YarnAttentionFactor, advanced.YarnBetaFast, advanced.YarnBetaSlow,
+                    advanced.YarnOriginalContext), cancellationToken).ConfigureAwait(false);
+        });
 
-    public async Task LoadAsync(
+    public Task LoadAsync(
         OpenVinoLoadRequest request,
-        CancellationToken cancellationToken = default)
-    {
-        await prerequisites.PrepareAsync(ConfigurationBackend.OpenVino, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await openVino.LoadAsync(
-            request.ModelPath,
-            request.Device,
-            cancellationToken,
-            new OpenVinoGenerationOptions(request.MaxNewTokens, request.Temperature, request.TopP, request.DoSample, request.TopK, request.RepetitionPenalty),
-            request.CacheDirectory,
-            new OpenVinoNpuOptions(
-                request.Npu?.MaxPromptLength ?? 1024,
-                request.Npu?.MinResponseLength ?? 128,
-                request.Npu?.PrefillHint ?? "DYNAMIC",
-                request.Npu?.GenerateHint ?? "FAST_COMPILE")).ConfigureAwait(false);
-    }
+        CancellationToken cancellationToken = default) =>
+        TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.OpenVino, request.Device, async () =>
+        {
+            await prerequisites.PrepareAsync(ConfigurationBackend.OpenVino, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await openVino.LoadAsync(
+                request.ModelPath,
+                request.Device,
+                cancellationToken,
+                new OpenVinoGenerationOptions(request.MaxNewTokens, request.Temperature, request.TopP, request.DoSample, request.TopK, request.RepetitionPenalty),
+                request.CacheDirectory,
+                new OpenVinoNpuOptions(
+                    request.Npu?.MaxPromptLength ?? 1024,
+                    request.Npu?.MinResponseLength ?? 128,
+                    request.Npu?.PrefillHint ?? "DYNAMIC",
+                    request.Npu?.GenerateHint ?? "FAST_COMPILE")).ConfigureAwait(false);
+        });
 
-    public async Task LoadAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default)
-    {
-        var preparation = await prerequisites.PrepareAsync(
-            request.Backend,
-            request.PythonExecutable,
-            AppContext.BaseDirectory,
-            request.StartupTimeout,
-            cancellationToken).ConfigureAwait(false);
-        await python.LoadAsync(request with { PythonExecutable = preparation.PythonExecutable! }, cancellationToken).ConfigureAwait(false);
-    }
+    public Task LoadAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default) =>
+        TrackPendingModelAsync(request.ModelPath, request.Backend, request.Backend switch
+        {
+            ConfigurationBackend.Vllm => "vLLM",
+            ConfigurationBackend.Sglang => "SGLang",
+            _ => request.Backend.ToString()
+        }, () => python.LoadAsync(request, cancellationToken));
 
-    public async Task LoadAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default)
-    {
-        await prerequisites.PrepareAsync(ConfigurationBackend.DotLlm, cancellationToken: cancellationToken).ConfigureAwait(false);
-        await dotLlm.LoadAsync(request, cancellationToken).ConfigureAwait(false);
-    }
+    public Task LoadAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default) =>
+        TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.DotLlm, "dotLLM / In-Process", async () =>
+        {
+            await prerequisites.PrepareAsync(ConfigurationBackend.DotLlm, cancellationToken: cancellationToken).ConfigureAwait(false);
+            await dotLlm.LoadAsync(request, cancellationToken).ConfigureAwait(false);
+        });
 
     public Task LoadLlamaAsync(
         string modelPath,
@@ -199,6 +207,92 @@ public sealed class ModelRuntime : IHostedService, IDisposable
         dotLlm.Dispose();
     }
 
+    private async Task TrackPendingModelAsync(string modelPath, ConfigurationBackend backend, string runtime, Func<Task> load)
+    {
+        var key = $"{backend}|{modelPath}";
+        pendingModels[key] = new PendingModel(modelPath, backend, runtime);
+        using var monitorCancellation = new CancellationTokenSource();
+        Task monitorTask = Task.CompletedTask;
+        var completed = false;
+        try
+        {
+            await statusPublisher.LoadedModel_CreateAsync(LoadedModel_Read()).ConfigureAwait(false);
+            monitorTask = PublishChangedStatusesAsync(LoadedModel_Read(), monitorCancellation.Token);
+            await load().ConfigureAwait(false);
+            completed = true;
+        }
+        finally
+        {
+            monitorCancellation.Cancel();
+            try
+            {
+                await monitorTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (monitorCancellation.IsCancellationRequested)
+            {
+            }
+            pendingModels.TryRemove(key, out _);
+            var status = LoadedModel_Read();
+            if (completed)
+                await statusPublisher.LoadedModel_UpdateAsync(status).ConfigureAwait(false);
+            else
+                await statusPublisher.LoadedModel_DeleteAsync(status).ConfigureAwait(false);
+        }
+    }
+
+    private async Task PublishChangedStatusesAsync(ModelLoadStatus previous, CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                await Task.Delay(250, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+
+            var current = LoadedModel_Read();
+            if (JsonSerializer.Serialize(previous) == JsonSerializer.Serialize(current))
+                continue;
+
+            await statusPublisher.LoadedModel_UpdateAsync(current, cancellationToken).ConfigureAwait(false);
+            previous = current;
+        }
+    }
+
+    private IReadOnlyList<LoadedModelStatus> CreatePendingModelStatuses(
+        ModelLoadStatus llamaStatus,
+        OpenVinoModelLoadStatus openVinoStatus,
+        ModelLoadStatus pythonStatus,
+        ModelLoadStatus dotLlmStatus) =>
+        pendingModels.Values.Select(pending => new LoadedModelStatus(
+            pending.ModelPath,
+            pending.Backend,
+            pending.Runtime,
+            0,
+            0,
+            0,
+            [],
+            null,
+            GetPendingLoadLog(pending.Backend, llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus),
+            true)).ToArray();
+
+    private static string GetPendingLoadLog(
+        ConfigurationBackend backend,
+        ModelLoadStatus llamaStatus,
+        OpenVinoModelLoadStatus openVinoStatus,
+        ModelLoadStatus pythonStatus,
+        ModelLoadStatus dotLlmStatus) => backend switch
+        {
+            ConfigurationBackend.Llama => llamaStatus.LoadLog,
+            ConfigurationBackend.OpenVino => openVinoStatus.LoadLog,
+            ConfigurationBackend.Vllm or ConfigurationBackend.Sglang => pythonStatus.LoadLog,
+            ConfigurationBackend.DotLlm => dotLlmStatus.LoadLog,
+            _ => string.Empty
+        };
+
     private static IEnumerable<LoadedModelStatus> CreateOpenVinoLoadedModels(OpenVinoModelLoadStatus status)
     {
         if (!status.IsModelLoaded || string.IsNullOrWhiteSpace(status.ModelPath))
@@ -214,8 +308,23 @@ public sealed class ModelRuntime : IHostedService, IDisposable
             0,
             0,
             modelSize,
-            [],
+            status.VramUsageMiB is double vramUsageMiB && !string.IsNullOrWhiteSpace(status.Device)
+                ? [new VulkanDeviceStatus(status.Device, "OpenVINO", 0, vramUsageMiB, "Intel", "OpenVINO")]
+                : [],
             null,
             status.LoadLog)];
+    }
+
+    private sealed record PendingModel(string ModelPath, ConfigurationBackend Backend, string Runtime);
+
+    private sealed class NoOpModelRuntimeStatusPublisher : IModelRuntimeStatusPublisher
+    {
+        public static NoOpModelRuntimeStatusPublisher Instance { get; } = new();
+
+        public Task LoadedModel_CreateAsync(ModelLoadStatus status, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task LoadedModel_UpdateAsync(ModelLoadStatus status, CancellationToken cancellationToken = default) => Task.CompletedTask;
+
+        public Task LoadedModel_DeleteAsync(ModelLoadStatus status, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }
 }

@@ -9,7 +9,7 @@ internal static class PythonInferenceGrpcMapper
     public static Esi.AI.Core.Grpc.LoadModelRequest ToGrpcRequest(PythonInferenceLoadRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
-        return new Esi.AI.Core.Grpc.LoadModelRequest
+        var grpcRequest = new Esi.AI.Core.Grpc.LoadModelRequest
         {
             ModelPath = request.ModelPath,
             Engine = request.Backend == ConfigurationBackend.Vllm ? "vllm" : "sglang",
@@ -17,8 +17,12 @@ internal static class PythonInferenceGrpcMapper
             TensorParallelSize = (uint)request.TensorParallelSize,
             GpuMemoryUtilization = request.GpuMemoryUtilization is int utilization ? utilization / 100f : 0,
             TrustRemoteCode = request.TrustRemoteCode,
-            EnforceEager = request.EnforceEager
+            EnforceEager = request.EnforceEager,
+            Device = request.Device,
         };
+        var devices = request.Devices is { Count: > 0 } ? request.Devices : [request.Device];
+        grpcRequest.Devices.AddRange(devices.Where(device => !string.IsNullOrWhiteSpace(device)));
+        return grpcRequest;
     }
 
     public static GenerateRequest ToGrpcRequest(IReadOnlyList<LlamaChatMessage> messages, string modelId)

@@ -3,9 +3,9 @@ Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Studio", "src\Esi.AI\Esi.AI.Studio\Esi.AI.Studio.csproj", "{23DA8108-79B1-476B-8F11-7FB34AE98472}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Studio", "Esi.AI\Esi.AI.Studio\Esi.AI.Studio.csproj", "{23DA8108-79B1-476B-8F11-7FB34AE98472}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Studio.Client", "src\Esi.AI\Esi.AI.Studio.Client\Esi.AI.Studio.Client.csproj", "{CB0526D0-871F-4279-8E9E-559134357B07}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Studio.Client", "Esi.AI\Esi.AI.Studio.Client\Esi.AI.Studio.Client.csproj", "{CB0526D0-871F-4279-8E9E-559134357B07}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

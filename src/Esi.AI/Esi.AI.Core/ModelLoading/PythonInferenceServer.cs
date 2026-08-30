@@ -24,6 +24,7 @@ public sealed class PythonInferenceServer : IDisposable
     private string? modelId;
     private ConfigurationBackend backend;
     private string loadLog = string.Empty;
+    private bool isLoading;
 
     /// <summary>Creates a Python inference server with automatic backend environment preparation.</summary>
     public PythonInferenceServer(BackendPrerequisiteProvisioner? provisioner = null)
@@ -37,9 +38,10 @@ public sealed class PythonInferenceServer : IDisposable
         lock (sync)
         {
             var isRunning = process is { HasExited: false } && client is not null && modelPath is not null;
+            var hasActivity = isLoading || isRunning;
             return new ModelLoadStatus(
-                isRunning ? modelPath : null,
-                isRunning ? GetBackendName(backend) : string.Empty,
+                hasActivity ? modelPath : null,
+                hasActivity ? GetBackendName(backend) : string.Empty,
                 0,
                 0,
                 0,
@@ -75,57 +77,67 @@ public sealed class PythonInferenceServer : IDisposable
         if (!File.Exists(scriptPath))
             throw new FileNotFoundException("The Python gRPC inference bridge was not deployed.", scriptPath);
 
-        var preparation = await provisioner.PrepareAsync(
-            request.Backend,
-            request.PythonExecutable,
-            AppContext.BaseDirectory,
-            startupTimeout,
-            cancellationToken).ConfigureAwait(false);
-        var pythonExecutable = preparation.PythonExecutable;
-        lock (sync)
-            loadLog = preparation.Message;
-        var startInfo = new ProcessStartInfo
-        {
-            FileName = pythonExecutable,
-            WorkingDirectory = request.WorkingDirectory ?? AppContext.BaseDirectory,
-            UseShellExecute = false,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            CreateNoWindow = true
-        };
-        foreach (var argument in new[]
-        {
-            scriptPath,
-            "--engine", GetEngineName(request.Backend),
-            "--host", "127.0.0.1",
-            "--grpc-port", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
-        })
-            startInfo.ArgumentList.Add(argument);
-
-        var newProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-        newProcess.OutputDataReceived += CaptureOutput;
-        newProcess.ErrorDataReceived += CaptureOutput;
-        if (!newProcess.Start())
-            throw new InvalidOperationException($"Could not start the {GetBackendName(request.Backend)} gRPC bridge.");
-        newProcess.BeginOutputReadLine();
-        newProcess.BeginErrorReadLine();
-
-        var newChannel = GrpcChannel.ForAddress($"http://127.0.0.1:{request.Port}");
-        var newClient = new Inference.InferenceClient(newChannel);
         lock (sync)
         {
-            process = newProcess;
-            channel = newChannel;
-            client = newClient;
+            isLoading = true;
             modelPath = request.ModelPath;
             modelId = null;
             backend = request.Backend;
-            loadLog = string.Concat(loadLog, Environment.NewLine,
-                $"Started {GetBackendName(request.Backend)} gRPC bridge using {pythonExecutable}.");
+            loadLog = $"Preparing {GetBackendName(request.Backend)} runtime...";
         }
 
         try
         {
+            var devices = request.Devices is { Count: > 0 } ? request.Devices : [request.Device];
+            var preparation = await provisioner.PrepareAsync(
+                request.Backend,
+                request.PythonExecutable,
+                AppContext.BaseDirectory,
+                startupTimeout,
+                cancellationToken,
+                devices).ConfigureAwait(false);
+            var pythonExecutable = preparation.PythonExecutable
+                ?? throw new InvalidOperationException("The Python backend preparation did not return an executable.");
+            lock (sync)
+                loadLog = preparation.Message;
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = pythonExecutable,
+                WorkingDirectory = request.WorkingDirectory ?? AppContext.BaseDirectory,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+            foreach (var argument in new[]
+            {
+                scriptPath,
+                "--engine", GetEngineName(request.Backend),
+                "--host", "127.0.0.1",
+                "--grpc-port", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            })
+                startInfo.ArgumentList.Add(argument);
+            ApplyDeviceEnvironment(startInfo, devices, pythonExecutable);
+
+            var newProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+            newProcess.OutputDataReceived += CaptureOutput;
+            newProcess.ErrorDataReceived += CaptureOutput;
+            if (!newProcess.Start())
+                throw new InvalidOperationException($"Could not start the {GetBackendName(request.Backend)} gRPC bridge.");
+            newProcess.BeginOutputReadLine();
+            newProcess.BeginErrorReadLine();
+
+            var newChannel = GrpcChannel.ForAddress($"http://127.0.0.1:{request.Port}");
+            var newClient = new Inference.InferenceClient(newChannel);
+            lock (sync)
+            {
+                process = newProcess;
+                channel = newChannel;
+                client = newClient;
+                loadLog = string.Concat(loadLog, Environment.NewLine,
+                    $"Started {GetBackendName(request.Backend)} gRPC bridge using {pythonExecutable}.");
+            }
+
             using var startupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             startupCancellation.CancelAfter(startupTimeout);
             await WaitUntilReadyAsync(newClient, newProcess, startupTimeout, startupCancellation.Token).ConfigureAwait(false);
@@ -142,6 +154,11 @@ public sealed class PythonInferenceServer : IDisposable
         {
             await StopAsync(CancellationToken.None).ConfigureAwait(false);
             throw;
+        }
+        finally
+        {
+            lock (sync)
+                isLoading = false;
         }
     }
 
@@ -180,6 +197,7 @@ public sealed class PythonInferenceServer : IDisposable
             client = null;
             modelPath = null;
             modelId = null;
+            isLoading = false;
         }
 
         foreach (var session in activeSessions)
@@ -271,6 +289,109 @@ public sealed class PythonInferenceServer : IDisposable
             sessions.Remove(session);
     }
 
+    private static void ApplyDeviceEnvironment(ProcessStartInfo startInfo, IReadOnlyList<string> devices, string pythonExecutable)
+    {
+        var routes = devices
+            .Where(device => !string.IsNullOrWhiteSpace(device))
+            .Select(device => device.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (routes.Length == 0)
+            throw new ArgumentException("At least one Python device route is required.", nameof(devices));
+
+        var vendors = routes.Select(GetDeviceVendor).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        if (vendors.Length > 1)
+            throw new ArgumentException("CUDA and XPU devices cannot be mixed in one vLLM or SGLang worker; use a backend that supports heterogeneous device scheduling.", nameof(devices));
+
+        if (string.Equals(vendors[0], "cuda", StringComparison.OrdinalIgnoreCase))
+        {
+            var ordinals = routes.Select(route => ParseDeviceOrdinal(route, "cuda", devices)).ToArray();
+            startInfo.Environment["CUDA_VISIBLE_DEVICES"] = string.Join(",", ordinals);
+            startInfo.Environment.Remove("ONEAPI_DEVICE_SELECTOR");
+            startInfo.Environment.Remove("ZE_AFFINITY_MASK");
+            startInfo.Environment.Remove("VLLM_TARGET_DEVICE");
+            return;
+        }
+
+        if (string.Equals(vendors[0], "xpu", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var route in routes)
+                _ = ParseDeviceOrdinal(route, "xpu", devices);
+
+            startInfo.Environment["CUDA_VISIBLE_DEVICES"] = "";
+            startInfo.Environment["ONEAPI_DEVICE_SELECTOR"] = "level_zero:gpu";
+            startInfo.Environment.Remove("ZE_AFFINITY_MASK");
+            startInfo.Environment["VLLM_TARGET_DEVICE"] = "xpu";
+            ConfigureXpuCommunicationEnvironment(startInfo, pythonExecutable);
+            return;
+        }
+
+        throw new ArgumentException($"Unsupported Python device vendor in route '{routes[0]}'.", nameof(devices));
+    }
+
+    private static void ConfigureXpuCommunicationEnvironment(ProcessStartInfo startInfo, string pythonExecutable)
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        var pythonDirectory = Path.GetDirectoryName(Path.GetFullPath(pythonExecutable));
+        var environmentRoot = pythonDirectory is null ? null : Directory.GetParent(pythonDirectory)?.FullName;
+        if (string.IsNullOrWhiteSpace(environmentRoot))
+            throw new InvalidOperationException($"Could not determine the Python environment directory for '{pythonExecutable}'.");
+
+        var environmentLibraryDirectory = Path.Combine(environmentRoot, "lib");
+        Directory.CreateDirectory(environmentLibraryDirectory);
+        var loaderPath = FindLevelZeroLoader();
+        if (loaderPath is null)
+            throw new InvalidOperationException("The Intel XPU runtime requires libze_loader.so or libze_loader.so.1 on Linux.");
+
+        var compatibilityLoaderPath = Path.Combine(environmentLibraryDirectory, "libze_loader.so");
+        if (!File.Exists(compatibilityLoaderPath))
+            File.CreateSymbolicLink(compatibilityLoaderPath, loaderPath);
+
+        startInfo.Environment["CCL_ROOT"] = environmentRoot;
+        var currentLibraryPath = startInfo.Environment.TryGetValue("LD_LIBRARY_PATH", out var configuredLibraryPath)
+            ? configuredLibraryPath
+            : null;
+        startInfo.Environment["LD_LIBRARY_PATH"] = string.IsNullOrWhiteSpace(currentLibraryPath)
+            ? environmentLibraryDirectory
+            : string.Join(Path.PathSeparator, environmentLibraryDirectory, currentLibraryPath);
+    }
+
+    private static string? FindLevelZeroLoader()
+    {
+        foreach (var candidate in new[]
+        {
+            "/usr/lib/x86_64-linux-gnu/libze_loader.so",
+            "/usr/lib/x86_64-linux-gnu/libze_loader.so.1",
+            "/usr/lib64/libze_loader.so",
+            "/usr/lib64/libze_loader.so.1"
+        })
+        {
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    private static string GetDeviceVendor(string route)
+    {
+        var separator = route.IndexOf(':');
+        if (separator <= 0)
+            throw new ArgumentException($"A Python device route must use the '<vendor>:<index>' format: '{route}'.", nameof(route));
+        return route[..separator];
+    }
+
+    private static int ParseDeviceOrdinal(string route, string vendor, IReadOnlyList<string> devices)
+    {
+        var prefix = vendor + ":";
+        var ordinal = route.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ? route[prefix.Length..] : string.Empty;
+        if (!int.TryParse(ordinal, out var value) || value < 0)
+            throw new ArgumentException($"Invalid {vendor.ToUpperInvariant()} device route '{route}'.", nameof(devices));
+        return value;
+    }
+
     private static string GetEngineName(ConfigurationBackend value) => value == ConfigurationBackend.Vllm ? "vllm" : "sglang";
     private static string GetBackendName(ConfigurationBackend value) => value == ConfigurationBackend.Vllm ? "vLLM" : "SGLang";
 
@@ -311,6 +432,13 @@ public sealed class PythonInferenceChatSession : IDisposable
     public async Task<LlamaGenerationResult> GenerateWithStatsAsync(
         IReadOnlyList<LlamaChatMessage> messages,
         CancellationToken cancellationToken = default)
+        => await GenerateWithStatsAsync(messages, null, cancellationToken).ConfigureAwait(false);
+
+    /// <summary>Generates a response while forwarding each streamed delta.</summary>
+    public async Task<LlamaGenerationResult> GenerateWithStatsAsync(
+        IReadOnlyList<LlamaChatMessage> messages,
+        Func<string, Task>? onDelta,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(messages);
         if (messages.Count == 0)
@@ -329,6 +457,8 @@ public sealed class PythonInferenceChatSession : IDisposable
             if (!string.IsNullOrWhiteSpace(response.Error))
                 throw new InvalidOperationException($"{backendName()} generation failed: {response.Error}");
             text.Append(response.Delta);
+            if (!string.IsNullOrEmpty(response.Delta) && onDelta is not null)
+                await onDelta(response.Delta).ConfigureAwait(false);
             tokenCount = Math.Max(tokenCount, (int)response.GeneratedTokens);
             if (response.TokensPerSecond > 0)
                 tokensPerSecond = response.TokensPerSecond;

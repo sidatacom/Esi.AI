@@ -14,3 +14,15 @@
 - Do not define application DTOs in the Web project, Client project, Hub, controller, or service layer.
 - Keep DTOs free of transport-specific behavior so the same types can be used by the controller boundary and SignalR contracts.
 
+## SignalR Collection CRUD
+
+- Every server-owned entity that maintains a client-visible collection must expose explicit CRUD operations named `<Entity>_Create`, `<Entity>_Read`, `<Entity>_Update`, and `<Entity>_Delete`. This applies to existing entities when they are changed as well as to new entities.
+- Use the same entity-based CRUD names in `IDataService` and `DataService`; client wrappers may add the `Async` suffix but must preserve the `<Entity>_<Operation>` stem. Do not expose generic verbs such as `CreateChatAsync`, `GetModelsAsync`, or `SaveProfileAsync` for collection entities.
+- Use the exact operation names on `DataHub` and in SignalR event names. Client-side C# wrappers may add the `Async` suffix, for example `LoadedModel_ReadAsync`, but must invoke the exact hub operation `LoadedModel_Read`.
+- `<Entity>_Create` must publish the new collection item or collection snapshot as soon as creation begins. For long-running work, create the pending item before starting the operation.
+- `<Entity>_Update` must be pushed by the server when the entity state changes. The browser must subscribe to the SignalR update and must not poll the hub while the originating operation is running.
+- `<Entity>_Read` must return the current collection from the server-owned source of truth and must be used during full page initialization/reload.
+- `<Entity>_Delete` must be published when an item is removed, cancelled, or fails to complete. The client must reconcile its local collection from the received contract.
+- `IDataService` owns application orchestration, `DataHub` delegates to `IDataService`, and a server-side publisher adapts collection CRUD changes to SignalR. Do not put collection business logic in the hub or directly in a Blazor component.
+- Collection DTOs and SignalR payloads belong in `Esi.AI.Models` and must remain transport-independent.
+

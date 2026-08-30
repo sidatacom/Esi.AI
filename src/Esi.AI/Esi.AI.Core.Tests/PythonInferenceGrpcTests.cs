@@ -21,7 +21,8 @@ public sealed class PythonInferenceGrpcTests
             MaxModelLength: 4096,
             TensorParallelSize: 2,
             TrustRemoteCode: false,
-            EnforceEager: true);
+            EnforceEager: true,
+            Devices: ["cuda:0", "cuda:1"]);
 
         var grpcRequest = PythonInferenceGrpcMapper.ToGrpcRequest(request);
 
@@ -32,6 +33,7 @@ public sealed class PythonInferenceGrpcTests
         Assert.AreEqual(.75f, grpcRequest.GpuMemoryUtilization, .001f);
         Assert.IsFalse(grpcRequest.TrustRemoteCode);
         Assert.IsTrue(grpcRequest.EnforceEager);
+        CollectionAssert.AreEqual(new[] { "cuda:0", "cuda:1" }, grpcRequest.Devices.ToArray());
     }
 
     [TestMethod]

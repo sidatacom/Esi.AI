@@ -203,6 +203,46 @@ public sealed class OpenVinoModelLoaderTests
         Assert.IsFalse(string.IsNullOrWhiteSpace(response));
     }
 
+    [TestMethod]
+    [TestCategory("OpenVINO.Integration")]
+    public void LoadAsync_WithConfiguredRealModel_StreamsGeneratedText()
+    {
+        var modelPath = Environment.GetEnvironmentVariable("ESI_OPENVINO_MODEL_PATH");
+        if (string.IsNullOrWhiteSpace(modelPath))
+        {
+            Assert.Inconclusive("Set ESI_OPENVINO_MODEL_PATH to run the native OpenVINO model test.");
+            return;
+        }
+
+        var device = Environment.GetEnvironmentVariable("ESI_OPENVINO_DEVICE");
+        if (string.IsNullOrWhiteSpace(device))
+            device = "GPU";
+
+        using var loader = new OpenVinoModelLoader();
+        loader.LoadAsync(
+                modelPath,
+                device,
+                generationOptions: new OpenVinoGenerationOptions(
+                    MaxNewTokens: 64,
+                    Temperature: 0,
+                    TopP: 1,
+                    DoSample: false,
+                    TopK: 1,
+                    RepetitionPenalty: 1))
+            .GetAwaiter()
+            .GetResult();
+
+        using var session = loader.CreateChatSession();
+        var chunks = new List<string>();
+        var result = session.GenerateWithStats(
+            "Say exactly: OpenVINO streaming test passed.",
+            chunks.Add);
+
+        Assert.IsFalse(string.IsNullOrWhiteSpace(result.Text));
+        Assert.IsTrue(chunks.Count > 0);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(string.Concat(chunks)));
+    }
+
     private static string CreateTemporaryGgufFile()
     {
         var filePath = Path.Combine(Path.GetTempPath(), $"esi-ai-test-{Guid.NewGuid():N}.gguf");

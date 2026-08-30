@@ -9,6 +9,7 @@ import contextlib
 import gc
 import inspect
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -22,6 +23,14 @@ import grpc
 
 import inference_pb2
 import inference_pb2_grpc
+
+
+if os.environ.get("VLLM_TARGET_DEVICE", "").lower() == "xpu":
+    import vllm_xpu_bootstrap
+
+    vllm_xpu_bootstrap.disable_cuda_platform_probe()
+    vllm_xpu_bootstrap.enable_xpu_memory_probe_fallback()
+    vllm_xpu_bootstrap.install_vllm_memory_probe_hook()
 
 
 class InferenceService(inference_pb2_grpc.InferenceServicer):
@@ -50,6 +59,12 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
             if request.engine.lower() != "vllm":
                 return inference_pb2.ModelOperationResponse(error=f"Unsupported engine '{request.engine}'.")
             try:
+                if os.environ.get("VLLM_TARGET_DEVICE", "").lower() == "xpu":
+                    import vllm_xpu_bootstrap
+
+                    vllm_xpu_bootstrap.disable_cuda_platform_probe()
+                    vllm_xpu_bootstrap.enable_xpu_memory_probe_fallback()
+                    vllm_xpu_bootstrap.install_vllm_memory_probe_hook()
                 from vllm import AsyncEngineArgs, AsyncLLMEngine
 
                 engine_options = {
@@ -91,6 +106,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
             return
 
         if self._sglang_process is not None:
+            started = time.monotonic()
             try:
                 payload = {
                     "model": self._model_id,
@@ -101,7 +117,17 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 }
                 response = await asyncio.to_thread(self._post_json, "/v1/chat/completions", payload)
                 content = response["choices"][0]["message"].get("content", "")
-                yield inference_pb2.GenerateResponse(delta=content, finished=True)
+                usage = response.get("usage") or {}
+                generated_tokens = int(usage.get("completion_tokens") or 0)
+                prompt_tokens = int(usage.get("prompt_tokens") or 0)
+                elapsed = time.monotonic() - started
+                yield inference_pb2.GenerateResponse(
+                    delta=content,
+                    finished=True,
+                    generated_tokens=generated_tokens,
+                    prompt_tokens=prompt_tokens,
+                    tokens_per_second=generated_tokens / elapsed if elapsed > 0 else 0,
+                )
             except Exception as exception:
                 yield inference_pb2.GenerateResponse(error=f"SGLang generation failed: {exception}")
             return
@@ -164,6 +190,15 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 await self._engine.abort(request_id)
 
     async def _load_sglang(self, request, context):
+        devices = [device.strip() for device in request.devices if device.strip()]
+        if not devices and request.device.strip():
+            devices = [request.device.strip()]
+        vendors = {device.split(":", 1)[0].lower() for device in devices}
+        if len(vendors) != 1:
+            return inference_pb2.ModelOperationResponse(
+                error="CUDA and XPU devices cannot be mixed in one SGLang worker."
+            )
+
         command = [
             sys.executable,
             "-m",
@@ -179,6 +214,8 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
             "--tp-size",
             str(request.tensor_parallel_size or 1),
         ]
+        if "xpu" in vendors:
+            command.extend(["--device", "xpu"])
         if request.gpu_memory_utilization > 0:
             command.extend(["--mem-fraction-static", str(request.gpu_memory_utilization)])
         if request.trust_remote_code:

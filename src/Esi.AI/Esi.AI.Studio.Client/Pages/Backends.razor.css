@@ -85,6 +85,39 @@ h2 {
 .backend-tab small { font-size: .72rem; }
 .backend-tab:hover { background: #f4f8fa; }
 .backend-tab.active { border-color: #d9e0e5; border-bottom-color: #087f8c; background: #fff; }
+.backend-support-matrix { margin: 1rem 0 .65rem; padding: 1.35rem; border: 1px solid #d9e0e5; background: #f7fafb; }
+.backend-support-summary { align-items: center; margin-bottom: 1rem; cursor: pointer; list-style: none; }
+.backend-support-summary::-webkit-details-marker { display: none; }
+.backend-support-summary::after { content: "+"; color: #627d98; font-size: 1.25rem; line-height: 1; }
+.backend-support-matrix[open] .backend-support-summary::after { content: "-"; }
+.backend-support-matrix:not([open]) .backend-support-summary { margin-bottom: 0; }
+.table-scroll { overflow-x: auto; }
+.support-matrix-table { width: 100%; min-width: 58rem; border-collapse: collapse; background: #fff; }
+.support-matrix-table th, .support-matrix-table td { padding: .7rem .75rem; border: 1px solid #e9eef2; color: #486581; font-size: .74rem; line-height: 1.35; text-align: left; vertical-align: top; }
+.support-matrix-table thead th { background: #e6f0f7; color: #102a43; font-size: .68rem; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+.support-matrix-table tbody th { min-width: 8.5rem; color: #102a43; font-size: .78rem; font-weight: 800; }
+.support-matrix-table tbody tr:nth-child(even) { background: #fbfcfd; }
+.matrix-support-button { padding: .2rem .4rem; border: 1px solid #087f8c; border-radius: 3px; background: #fff; color: #087f8c; font: inherit; font-size: inherit; cursor: pointer; }
+.matrix-support-button:hover { background: #e6f7f5; }
+.dialog-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.dialog-heading h2 { margin: 0; }
+.dialog-context { margin: .45rem 0 0; color: #627d98; font-size: .8rem; }
+.dialog-close-button { width: 2rem; height: 2rem; padding: 0; border: 1px solid #bcccdc; border-radius: 3px; background: #fff; color: #486581; font-size: 1.35rem; line-height: 1; cursor: pointer; }
+.dialog-close-button:hover { border-color: #087f8c; color: #087f8c; }
+.backend-requirements-dialog { width: min(100%, 58rem); max-height: min(90vh, 44rem); padding: 1.35rem; overflow: auto; background: #fff; box-shadow: 0 1rem 3rem rgba(16, 42, 67, .2); }
+.backend-requirement-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: .65rem; margin-top: 1.2rem; }
+.backend-requirement-tile { display: flex; flex-direction: column; min-width: 0; padding: .85rem; border: 1px solid #d9e0e5; background: #f7fafb; }
+.backend-requirement-tile-selected { border-color: #087f8c; box-shadow: 0 0 0 1px #087f8c; }
+.backend-requirement-tile-disabled { opacity: .6; }
+.backend-requirement-tile-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: .5rem; }
+.backend-requirement-tile h3 { margin: 0; color: #102a43; font-size: .86rem; }
+.backend-requirement-status { color: #087f5b; font-size: .66rem; font-weight: 800; text-align: right; }
+.backend-requirement-tile-disabled .backend-requirement-status { color: #b42318; }
+.backend-requirement-tile p { flex: 1 1 auto; margin: .55rem 0 .8rem; color: #627d98; font-size: .74rem; line-height: 1.4; }
+.backend-requirement-tile .profile-button { align-self: flex-start; }
+.matrix-dialog-status { margin: 1rem 0 0; padding-top: .8rem; border-top: 1px solid #d9e0e5; color: #486581; font-size: .78rem; }
+.dialog-backdrop { align-items: center; background: rgba(16, 42, 67, .45); display: flex; inset: 0; justify-content: center; padding: 1rem; position: fixed; z-index: 10; }
+.backend-sections { display: grid; gap: .65rem; }
 .openvino-workspace .config-panel { grid-column: 1 / -1; }
 .openvino-workspace .telemetry-panel { grid-column: 1 / -1; }
 .openvino-actions { max-width: 15rem; margin-left: auto; }
@@ -120,8 +153,9 @@ h2 {
 .llama-workspace {
     display: grid;
     grid-template-columns: minmax(18rem, .78fr) minmax(28rem, 1.22fr);
-    gap: 1rem;
-    padding: 1.5rem 0;
+    column-gap: 1rem;
+    row-gap: .65rem;
+    padding: 0;
 }
 
 .config-panel, .gpu-panel, .telemetry-panel, .log-panel {
@@ -183,6 +217,8 @@ h2 {
 .loaded-models-heading .eyebrow { margin-bottom: .2rem; }
 .loaded-models-heading h3 { margin: 0; color: #102a43; font-size: .9rem; font-weight: 750; }
 .loaded-model { padding: .7rem 0; border-top: 1px solid #e9eef2; }
+.loaded-model-loading { background: #fffaf0; }
+.loading-model-status { color: #b26a00; font-size: .75rem; font-weight: 700; white-space: nowrap; }
 .loaded-model-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: .75rem; }
 .loaded-model-topline strong, .loaded-model-topline span { display: block; }
 .loaded-model-topline strong { color: #102a43; font-size: .82rem; overflow-wrap: anywhere; }
@@ -202,6 +238,11 @@ h2 {
 
 .field-group { margin-bottom: 1rem; }
 .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; }
+.python-device-list { display: grid; gap: .45rem; margin-top: .4rem; }
+.python-device-option { display: flex; align-items: center; gap: .65rem; min-width: 0; padding: .65rem .75rem; border: 1px solid #e9eef2; color: #486581; font-size: .8rem; cursor: pointer; }
+.python-device-option:hover { border-color: #087f8c; background: #f7fafb; }
+.python-device-option .form-check-input { margin: 0; }
+.form-text { display: block; margin-top: .45rem; color: #829ab1; font-size: .72rem; line-height: 1.4; }
 .form-label, .weight-field label { color: #486581; font-size: .78rem; font-weight: 700; }
 .form-control, .form-select { border-color: #bcccdc; border-radius: 3px; }
 .form-control:focus, .form-select:focus { border-color: #087f8c; box-shadow: 0 0 0 .2rem rgba(8, 127, 140, .12); }
@@ -265,6 +306,7 @@ h2 {
 @media (max-width: 520px) {
     .backend-tabs { overflow-x: hidden; }
     .backend-tab { flex: 1 1 9.5rem; min-width: 0; }
+    .backend-support-matrix { padding: 1rem; }
     .model-load-row { grid-template-columns: 1fr; }
     .model-actions { padding-top: 0; }
     .field-row { grid-template-columns: 1fr; gap: 0; }

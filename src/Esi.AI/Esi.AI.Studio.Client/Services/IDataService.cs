@@ -4,60 +4,70 @@ namespace Esi.AI.Studio.Client.Services;
 
 public interface IModelDownloadEvents
 {
-    event Func<ModelDownloadUpdate, Task>? ModelDownloadUpdated;
+    event Func<ModelDownloadUpdate, Task>? ModelDownload_Create;
+    event Func<ModelDownloadUpdate, Task>? ModelDownload_Update;
+    event Func<ModelDownloadUpdate, Task>? ModelDownload_Delete;
 }
 
 public interface IModelRuntimeEvents
 {
-    event Func<Task>? ModelRuntimeStatusUpdated;
+    event Func<ModelLoadStatus, Task>? LoadedModel_Create;
+    event Func<ModelLoadStatus, Task>? LoadedModel_Update;
+    event Func<ModelLoadStatus, Task>? LoadedModel_Delete;
+}
+
+public interface IBackendRequirementEvents
+{
+    event Func<BackendRequirementState, Task>? BackendRequirementStateUpdated;
 }
 
 public interface IDataService
 {
-    Task<PersistedChat> CreateChatAsync(CreateChatRequest request, CancellationToken cancellationToken = default);
-    Task<PersistedChat?> GetChatAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<PersistedChat> Chat_CreateAsync(CreateChatRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ChatSummary>> Chat_ReadAsync(CancellationToken cancellationToken = default);
+    Task<PersistedChat?> Chat_ReadAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<PersistedChat?> Chat_UpdateAsync(Guid id, ChatExchangeRequest request, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<ChatStreamUpdate> Chat_UpdateStreamAsync(Guid id, ChatExchangeRequest request, CancellationToken cancellationToken = default);
+    Task Chat_DeleteAsync(Guid id, CancellationToken cancellationToken = default);
 
-    Task<LlamaSettings?> GetLlamaSettingsAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ModelSettings>> ModelSettings_ReadAsync(CancellationToken cancellationToken = default);
 
-    Task SaveLlamaSettingsAsync(LlamaSettings settings, CancellationToken cancellationToken = default);
+    Task ModelSettings_UpdateAsync(ModelSettings settings, CancellationToken cancellationToken = default);
 
-    Task<OpenVinoSettings?> GetOpenVinoSettingsAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Model>> Model_ReadAsync(CancellationToken cancellationToken = default);
 
-    Task SaveOpenVinoSettingsAsync(OpenVinoSettings settings, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<BackendModel>> BackendModel_ReadAsync(ConfigurationBackend backend, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<LlamaModel>> GetLlamaModelsAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<Model>> Model_UpdateAsync(CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<BackendModel>> GetBackendModelsAsync(ConfigurationBackend backend, CancellationToken cancellationToken = default);
+    Task SetModelConfigurationAsync(string modelPath, Guid? configurationId, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<LlamaModel>> ScanLlamaModelsAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ModelConfiguration>> ModelConfiguration_ReadAsync(CancellationToken cancellationToken = default);
 
-    Task SyncLlamaModelsAsync(IReadOnlyList<LlamaModel> models, CancellationToken cancellationToken = default);
+    Task<ModelConfiguration?> ModelConfiguration_ReadAsync(Guid id, CancellationToken cancellationToken = default);
 
-    Task SetModelConfigurationProfileAsync(string modelPath, Guid? profileId, CancellationToken cancellationToken = default);
+    Task<ModelConfiguration> ModelConfiguration_CreateAsync(ModelConfiguration configuration, CancellationToken cancellationToken = default);
 
-    Task<IReadOnlyList<ModelConfigurationProfile>> GetModelConfigurationProfilesAsync(CancellationToken cancellationToken = default);
+    Task<ModelConfiguration> ModelConfiguration_UpdateAsync(ModelConfiguration configuration, CancellationToken cancellationToken = default);
 
-    Task<ModelConfigurationProfile?> GetModelConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default);
+    Task ModelConfiguration_DeleteAsync(Guid id, CancellationToken cancellationToken = default);
 
-    Task<ModelConfigurationProfile> SaveModelConfigurationProfileAsync(ModelConfigurationProfile profile, CancellationToken cancellationToken = default);
+    Task ModelConfiguration_SetDefaultAsync(Guid id, CancellationToken cancellationToken = default);
 
-    Task DeleteModelConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default);
-
-    Task SetDefaultModelConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default);
-
-    Task<IReadOnlyList<LocalModel>> ScanLocalModelsAsync(CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<string>> GetModelDirectoriesAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<LocalModel>> LocalModel_ReadAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<LocalModel>> LocalModel_UpdateAsync(ModelCompatibilityUpdate update, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<LocalModel>> LocalModel_UpdateAsync(string modelPath, string huggingFaceModelId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<LocalModel>> LocalModel_DeleteAsync(ModelDeletionRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<string>> ModelDirectory_ReadAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<HuggingFaceModel>> SearchModelsAsync(HuggingFaceSearchRequest request, CancellationToken cancellationToken = default);
-    Task<Guid> StartModelDownloadAsync(ModelDownloadRequest request, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<ModelDownloadOption>> GetModelDownloadOptionsAsync(string modelId, string library = "gguf", CancellationToken cancellationToken = default);
-    Task PauseModelDownloadAsync(Guid id, CancellationToken cancellationToken = default);
-    Task ResumeModelDownloadAsync(Guid id, CancellationToken cancellationToken = default);
-    Task<DownloadStatus?> GetModelDownloadAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<Guid> ModelDownload_CreateAsync(ModelDownloadRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<ModelDownloadOption>> ModelDownload_ReadOptionsAsync(string modelId, string library = "gguf", CancellationToken cancellationToken = default);
+    Task<DownloadStatus?> ModelDownload_ReadAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<DownloadStatus>> ModelDownload_ReadAsync(CancellationToken cancellationToken = default);
+    Task ModelDownload_UpdateAsync(Guid id, bool paused, CancellationToken cancellationToken = default);
+    Task ModelDownload_DeleteAsync(Guid id, CancellationToken cancellationToken = default);
     Task<ModelStatus> SelectModelAsync(SelectModelRequest request, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<ChatSummary>> GetChatSummariesAsync(CancellationToken cancellationToken = default);
-    Task<PersistedChat?> AddChatExchangeAsync(Guid id, ChatExchangeRequest request, CancellationToken cancellationToken = default);
-
-    Task<ModelLoadStatus> GetModelStatusAsync(CancellationToken cancellationToken = default);
+    Task<ModelLoadStatus> LoadedModel_ReadAsync(CancellationToken cancellationToken = default);
 
     Task<ModelLoadStatus> LoadModelAsync(LoadModelRequest request, CancellationToken cancellationToken = default);
     Task<ModelLoadStatus> LoadPythonModelAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default);
@@ -71,39 +81,10 @@ public interface IDataService
 
     Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default);
     Task<OpenVinoSolveResultDto> SolveDiagnosticAsync(string checkId, CancellationToken cancellationToken = default);
-    Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default);
-    Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default);
+    Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null);
+    Task<BackendRequirementState> GetBackendRequirementStateAsync(CancellationToken cancellationToken = default);
+    Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null);
     Task<OpenVinoLoadResultDto> LoadModelAsync(OpenVinoLoadRequest request, CancellationToken cancellationToken = default);
     Task<OpenVinoModelStatusDto> GetOpenVinoModelStatusAsync(CancellationToken cancellationToken = default);
 }
 
-public sealed record ChatSummary(Guid Id, string Title, DateTime UpdatedAtUtc, int MessageCount);
-
-public sealed record PersistedChat(Guid Id, string Title, DateTime CreatedAtUtc, DateTime UpdatedAtUtc, IReadOnlyList<PersistedChatMessage> Messages);
-
-public sealed record PersistedChatMessage(string Role, string Content, DateTime CreatedAtUtc, string? ModelPath = null, string? Backend = null, int? TokenCount = null, double? TokensPerSecond = null);
-
-public sealed record LlamaSettings(
-    string ModelPath,
-    string Backend,
-    int GpuLayerCount,
-    uint ContextSize,
-    IReadOnlyDictionary<string, VulkanDeviceSetting> VulkanDevices,
-    LlamaAdvancedSettings? Advanced = null,
-    Guid? ConfigurationProfileId = null);
-
-public sealed record LlamaModel(Guid Id, string Name, string Path, long SizeInBytes, DateTime LastWriteTimeUtc, Guid? ConfigurationProfileId = null);
-
-public sealed record ModelConfigurationProfile(
-    Guid Id,
-    string Name,
-    string? Description,
-    string ModelPath,
-    bool IsDefault,
-    int SchemaVersion,
-    string ConfigurationJson,
-    DateTime CreatedAtUtc,
-    DateTime UpdatedAtUtc,
-    ConfigurationBackend Backend = ConfigurationBackend.Llama);
-
-public sealed record VulkanDeviceSetting(bool Enabled, float Weight);

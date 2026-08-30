@@ -31,7 +31,13 @@ public sealed class LlamaChatSession : IDisposable
         return (await GenerateWithStatsAsync(messages, cancellationToken).ConfigureAwait(false)).Text;
     }
 
-    public async Task<LlamaGenerationResult> GenerateWithStatsAsync(IReadOnlyList<LlamaChatMessage> messages, CancellationToken cancellationToken = default)
+    public Task<LlamaGenerationResult> GenerateWithStatsAsync(IReadOnlyList<LlamaChatMessage> messages, CancellationToken cancellationToken = default) =>
+        GenerateWithStatsAsync(messages, null, cancellationToken);
+
+    public async Task<LlamaGenerationResult> GenerateWithStatsAsync(
+        IReadOnlyList<LlamaChatMessage> messages,
+        Func<string, Task>? onToken,
+        CancellationToken cancellationToken = default)
     {
         var result = string.Empty;
         var tokenCount = 0;
@@ -40,6 +46,8 @@ public sealed class LlamaChatSession : IDisposable
         {
             result += token;
             tokenCount++;
+            if (onToken is not null)
+                await onToken(token).ConfigureAwait(false);
         }
         stopwatch.Stop();
         var tokensPerSecond = stopwatch.Elapsed.TotalSeconds > 0 ? tokenCount / stopwatch.Elapsed.TotalSeconds : 0;

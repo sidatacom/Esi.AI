@@ -1,0 +1,94 @@
+{
+  "name": "vscode-esi-ai-studio",
+  "displayName": "Esi.AI Studio Models",
+  "description": "Use models loaded by Esi.AI Studio as VS Code language models.",
+  "version": "0.1.0",
+  "publisher": "sidatacom",
+  "license": "MIT",
+  "author": "sidatacom",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sidatacom/Esi.AI.git"
+  },
+  "homepage": "https://github.com/sidatacom/Esi.AI#readme",
+  "bugs": {
+    "url": "https://github.com/sidatacom/Esi.AI/issues"
+  },
+  "keywords": [
+    "vscode",
+    "language-model",
+    "openai",
+    "esi-ai",
+    "local-ai"
+  ],
+  "engines": {
+    "vscode": "^1.99.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "esiAiStudio.refreshModels",
+        "title": "Esi AI Studio: Refresh Models"
+      },
+      {
+        "command": "esiAiStudio.configureApiKey",
+        "title": "Esi AI Studio: Configure API Key"
+      }
+    ],
+    "configuration": {
+      "title": "Esi.AI Studio Models",
+      "properties": {
+        "esiAiStudio.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:7010/v1",
+          "description": "Base URL of the Esi.AI Studio OpenAI-compatible API.",
+          "pattern": "^https?://.+"
+        },
+        "esiAiStudio.requestTimeoutMs": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 1000,
+          "description": "Maximum time in milliseconds for one Esi.AI Studio request."
+        },
+        "esiAiStudio.maxInputTokens": {
+          "type": "number",
+          "default": 32768,
+          "minimum": 1,
+          "description": "Input token limit advertised to VS Code for Esi.AI Studio models."
+        },
+        "esiAiStudio.maxOutputTokens": {
+          "type": "number",
+          "default": 4096,
+          "minimum": 1,
+          "description": "Output token limit advertised to VS Code for Esi.AI Studio models."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.config.mjs",
+    "watch": "node esbuild.config.mjs --watch",
+    "lint": "eslint src/ --ext .ts",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "test": "vitest run",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "@types/vscode": "^1.99.0",
+    "@vscode/vsce": "^2.26.0",
+    "esbuild": "^0.21.0",
+    "eslint": "^8.57.0",
+    "prettier": "^3.2.0",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
 using Esi.AI.Models;
 
 namespace Esi.AI.Core.ModelLoading;
@@ -15,7 +16,8 @@ public sealed class PythonBackendProvisioner
         string requestedPythonExecutable,
         string applicationDirectory,
         TimeSpan timeout,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<string>? devices = null)
     {
         if (backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
             throw new ArgumentException("Only vLLM and SGLang have Python environments.", nameof(backend));
@@ -26,7 +28,7 @@ public sealed class PythonBackendProvisioner
         if (timeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(timeout), "The Python environment timeout must be positive.");
 
-        var definition = GetDefinition(backend);
+        var definition = GetDefinition(backend, devices);
         var requirementsPath = Path.Combine(applicationDirectory, "Python", definition.RequirementsFileName);
         if (!File.Exists(requirementsPath))
             throw new FileNotFoundException($"The {definition.DisplayName} requirements file was not deployed.", requirementsPath);
@@ -34,7 +36,7 @@ public sealed class PythonBackendProvisioner
         var configuredExecutable = ResolveConfiguredExecutable(backend, requestedPythonExecutable);
         if (!IsAutomaticExecutable(requestedPythonExecutable))
         {
-            await ValidateDependenciesAsync(configuredExecutable, definition, timeout, cancellationToken).ConfigureAwait(false);
+            await ValidateDependenciesAsync(configuredExecutable, definition, timeout, cancellationToken, applicationDirectory).ConfigureAwait(false);
             return new(configuredExecutable, requirementsPath, false,
                 $"Using the explicitly configured Python executable for {definition.DisplayName}: {configuredExecutable}.");
         }
@@ -59,7 +61,7 @@ public sealed class PythonBackendProvisioner
                 environmentCreated = true;
             }
 
-            if (!await HasDependenciesAsync(environmentPython, definition, timeout, preparationTimeout.Token).ConfigureAwait(false))
+            if (!await HasDependenciesAsync(environmentPython, definition, timeout, preparationTimeout.Token, applicationDirectory).ConfigureAwait(false))
             {
                 var installResult = await RunProcessAsync(
                     environmentPython,
@@ -67,7 +69,7 @@ public sealed class PythonBackendProvisioner
                     timeout,
                     preparationTimeout.Token).ConfigureAwait(false);
                 EnsureProcessSucceeded(installResult, $"Installing {definition.DisplayName} Python dependencies", installResult.Output);
-                await ValidateDependenciesAsync(environmentPython, definition, timeout, preparationTimeout.Token).ConfigureAwait(false);
+                await ValidateDependenciesAsync(environmentPython, definition, timeout, preparationTimeout.Token, applicationDirectory).ConfigureAwait(false);
             }
         }
         finally
@@ -86,9 +88,18 @@ public sealed class PythonBackendProvisioner
         string requestedPythonExecutable,
         string applicationDirectory,
         TimeSpan timeout,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<string>? devices = null)
     {
-        var definition = GetDefinition(backend);
+        if (backend is ConfigurationBackend.Vllm or ConfigurationBackend.Sglang && HasMixedDeviceVendors(devices))
+        {
+            var backendName = backend == ConfigurationBackend.Vllm ? "vLLM" : "SGLang";
+            const string detail = "CUDA and XPU devices cannot use the same Python environment.";
+            return new(backend, backendName, false,
+                [new("device-routing", "Device routing", false, detail, false)], detail);
+        }
+
+        var definition = GetDefinition(backend, devices);
         var checks = new List<BackendPrerequisiteCheck>();
         var requirementsPath = Path.Combine(applicationDirectory, "Python", definition.RequirementsFileName);
         var requirementsAvailable = File.Exists(requirementsPath);
@@ -107,7 +118,7 @@ public sealed class PythonBackendProvisioner
         {
             try
             {
-                dependenciesAvailable = await HasDependenciesAsync(executable, definition, timeout, cancellationToken).ConfigureAwait(false);
+                dependenciesAvailable = await HasDependenciesAsync(executable, definition, timeout, cancellationToken, applicationDirectory).ConfigureAwait(false);
             }
             catch
             {
@@ -116,29 +127,29 @@ public sealed class PythonBackendProvisioner
         }
         checks.Add(new("python-dependencies", "Engine and gRPC packages", dependenciesAvailable,
             dependenciesAvailable
-                ? $"grpcio, protobuf and {definition.PackageName} can be imported."
-                : $"grpcio, protobuf or {definition.PackageName} is missing from {executable}.", true));
+                ? $"{definition.DependencyDescription} can be imported."
+                : $"{definition.DependencyDescription} is incomplete in {executable}.", true));
 
         var cudaAvailable = false;
         var xpuAvailable = false;
+        var xpuRouteSelected = IsXpuRoute(devices);
         if (pythonAvailable)
         {
             cudaAvailable = await HasAcceleratorAsync(executable, "cuda", timeout, cancellationToken).ConfigureAwait(false);
             xpuAvailable = await HasAcceleratorAsync(executable, "xpu", timeout, cancellationToken).ConfigureAwait(false);
         }
-        checks.Add(new("cuda-runtime", "CUDA accelerator", cudaAvailable,
-            cudaAvailable ? "PyTorch reports a CUDA accelerator." : "PyTorch did not report an available CUDA accelerator.", false));
-        checks.Add(new("xpu-runtime", "Intel XPU accelerator (optional)", xpuAvailable,
-            xpuAvailable ? "PyTorch reports an Intel XPU accelerator." : "No Intel XPU accelerator is available; CUDA remains the active route.", false, true));
+        checks.Add(new("cuda-runtime", xpuRouteSelected ? "CUDA accelerator (optional)" : "CUDA accelerator", cudaAvailable,
+            cudaAvailable ? "PyTorch reports a CUDA accelerator." : "PyTorch did not report an available CUDA accelerator.", false, xpuRouteSelected));
+        checks.Add(new("xpu-runtime", xpuRouteSelected ? "Intel XPU accelerator" : "Intel XPU accelerator (optional)", xpuAvailable,
+            xpuAvailable ? "PyTorch reports an Intel XPU accelerator." : "PyTorch did not report an available Intel XPU accelerator.", false, !xpuRouteSelected));
 
-        var requiredChecks = checks.Where(check => check.Id != "xpu-runtime");
-        return new(backend, definition.DisplayName, requiredChecks.All(check => check.IsAvailable), checks, null);
+        return new(backend, definition.DisplayName, checks.Where(check => !check.IsOptional).All(check => check.IsAvailable), checks, null);
     }
 
     /// <summary>Returns the default isolated environment path for a backend.</summary>
-    public static string GetDefaultEnvironmentPath(ConfigurationBackend backend)
+    public static string GetDefaultEnvironmentPath(ConfigurationBackend backend, IReadOnlyList<string>? devices = null)
     {
-        var definition = GetDefinition(backend);
+        var definition = GetDefinition(backend, devices);
         return ResolveEnvironmentPath(definition.EnvironmentName);
     }
 
@@ -146,9 +157,10 @@ public sealed class PythonBackendProvisioner
         string pythonExecutable,
         BackendDefinition definition,
         TimeSpan timeout,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string applicationDirectory)
     {
-        if (!await HasDependenciesAsync(pythonExecutable, definition, timeout, cancellationToken).ConfigureAwait(false))
+        if (!await HasDependenciesAsync(pythonExecutable, definition, timeout, cancellationToken, applicationDirectory).ConfigureAwait(false))
         {
             throw new InvalidOperationException(
                 $"The Python executable '{pythonExecutable}' does not provide grpcio, protobuf and {definition.PackageName}. " +
@@ -160,9 +172,15 @@ public sealed class PythonBackendProvisioner
         string pythonExecutable,
         BackendDefinition definition,
         TimeSpan timeout,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string applicationDirectory)
     {
-        var importCheck = "import importlib.util,sys; sys.exit(0 if all(importlib.util.find_spec(name) is not None for name in ('grpc','google.protobuf','" + definition.PackageName + "')) else 1)";
+        var modules = string.Join(",", definition.RequiredModules.Select(module => $"'{module}'"));
+        var pythonDirectory = Path.Combine(applicationDirectory, "Python");
+        var bootstrap = definition.RequiresVllmXpuBootstrap
+            ? $"import sys; sys.path.insert(0, {JsonSerializer.Serialize(pythonDirectory)}); import vllm_xpu_bootstrap; vllm_xpu_bootstrap.disable_cuda_platform_probe(); "
+            : string.Empty;
+        var importCheck = $"{bootstrap}import importlib; [importlib.import_module(name) for name in ({modules})]";
         var result = await RunProcessAsync(pythonExecutable, ["-c", importCheck], timeout, cancellationToken).ConfigureAwait(false);
         return result.ExitCode == 0;
     }
@@ -290,12 +308,29 @@ public sealed class PythonBackendProvisioner
     private static string GetEnvironmentPythonPath(string environmentPath) =>
         Path.Combine(environmentPath, OperatingSystem.IsWindows() ? "Scripts" : "bin", OperatingSystem.IsWindows() ? "python.exe" : "python");
 
-    private static BackendDefinition GetDefinition(ConfigurationBackend backend) => backend switch
+    private static BackendDefinition GetDefinition(ConfigurationBackend backend, IReadOnlyList<string>? devices) => backend switch
     {
-        ConfigurationBackend.Vllm => new("vLLM", "vllm", "vllm-requirements.txt", "esi-ai-vllm"),
-        ConfigurationBackend.Sglang => new("SGLang", "sglang", "sglang-requirements.txt", "esi-ai-sglang"),
+        ConfigurationBackend.Vllm when IsXpuRoute(devices) => new("vLLM Intel XPU", "vllm", "vllm-xpu-requirements.txt", "esi-ai-vllm-xpu", ["grpc", "google.protobuf", "vllm", "vllm_xpu_kernels"], true),
+        ConfigurationBackend.Vllm => new("vLLM CUDA", "vllm", "vllm-requirements.txt", "esi-ai-vllm", ["grpc", "google.protobuf", "vllm"], false),
+        ConfigurationBackend.Sglang when IsXpuRoute(devices) => new("SGLang Intel XPU", "sglang", "sglang-requirements.txt", "esi-ai-sglang", ["grpc", "google.protobuf", "sglang"], false),
+        ConfigurationBackend.Sglang => new("SGLang CUDA", "sglang", "sglang-cuda-requirements.txt", "esi-ai-sglang-cuda", ["grpc", "google.protobuf", "sglang"], false),
         _ => throw new ArgumentException("Only vLLM and SGLang have Python environments.", nameof(backend))
     };
+
+    private static bool IsXpuRoute(IReadOnlyList<string>? devices)
+    {
+        if (HasMixedDeviceVendors(devices))
+            throw new ArgumentException("CUDA and XPU devices cannot use the same Python environment.", nameof(devices));
+
+        return (devices ?? []).Any(device => device.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool HasMixedDeviceVendors(IReadOnlyList<string>? devices)
+    {
+        var routes = (devices ?? []).Where(device => !string.IsNullOrWhiteSpace(device)).ToArray();
+        return routes.Any(device => device.StartsWith("cuda:", StringComparison.OrdinalIgnoreCase)) &&
+            routes.Any(device => device.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase));
+    }
 
     private static string CombineOutput(string standardOutput, string standardError)
     {
@@ -307,7 +342,16 @@ public sealed class PythonBackendProvisioner
         return output.ToString().Trim();
     }
 
-    private sealed record BackendDefinition(string DisplayName, string PackageName, string RequirementsFileName, string EnvironmentName);
+    private sealed record BackendDefinition(
+        string DisplayName,
+        string PackageName,
+        string RequirementsFileName,
+        string EnvironmentName,
+        IReadOnlyList<string> RequiredModules,
+        bool RequiresVllmXpuBootstrap)
+    {
+        public string DependencyDescription => string.Join(", ", RequiredModules);
+    }
     private sealed record ProcessResult(int ExitCode, string Output);
 }
 

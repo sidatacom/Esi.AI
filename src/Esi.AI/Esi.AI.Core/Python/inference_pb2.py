@@ -41,6 +41,8 @@ _field(load_request, "tensor_parallel_size", 4, 13)
 _field(load_request, "gpu_memory_utilization", 5, 2)
 _field(load_request, "trust_remote_code", 6, 8)
 _field(load_request, "enforce_eager", 7, 8)
+_field(load_request, "device", 8, 9)
+_field(load_request, "devices", 9, 9, 3)
 
 operation_response = file_descriptor.message_type.add(name="ModelOperationResponse")
 _field(operation_response, "succeeded", 1, 8)

@@ -35,6 +35,8 @@ public sealed class OpenVinoDiagnosticsService
                         device,
                         displayName,
                         isCompatible,
+                        isNpu ? "Intel" : ResolveVendor(displayName),
+                        isNpu ? "Intel NPU plugin" : "Intel GPU plugin",
                         isCompatible
                             ? $"OpenVINO {(isNpu ? "NPU" : "GPU")} device detected and compatible ({device})."
                             : $"OpenVINO GPU device detected but is not compatible with the Intel OpenVINO route ({device}).");
@@ -101,6 +103,12 @@ public sealed class OpenVinoDiagnosticsService
 
         return fullDeviceName;
     }
+
+    private static string ResolveVendor(string deviceName) =>
+        deviceName.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) ? "NVIDIA" :
+        deviceName.Contains("AMD", StringComparison.OrdinalIgnoreCase) || deviceName.Contains("Radeon", StringComparison.OrdinalIgnoreCase) ? "AMD" :
+        deviceName.Contains("Intel", StringComparison.OrdinalIgnoreCase) ? "Intel" :
+        "Unknown";
 
     private static bool IsOpenVinoGpuDevice(string device) =>
         device.Equals("GPU", StringComparison.OrdinalIgnoreCase) ||
@@ -234,7 +242,13 @@ public sealed record OpenVinoDiagnostics(
     IReadOnlyList<OpenVinoDiagnosticCheck> Checks,
     string? Error);
 
-public sealed record OpenVinoDeviceStatus(string Id, string Name, bool IsCompatible, string Detail);
+public sealed record OpenVinoDeviceStatus(
+    string Id,
+    string Name,
+    bool IsCompatible,
+    string Vendor,
+    string Driver,
+    string Detail);
 
 public sealed record OpenVinoDiagnosticCheck(
     string Id,

@@ -1,4 +1,6 @@
 using System.Text.Json;
+using System.Runtime.CompilerServices;
+using System.Threading.Channels;
 using Esi.AI.Studio.Client.Services;
 using Esi.AI.Studio.Data;
 using Esi.AI.Core.Chat;
@@ -14,34 +16,228 @@ public sealed class DataService(
     OpenVinoDiagnosticsService openVinoDiagnostics,
     OpenVinoDriverInstaller openVinoInstaller,
     ModelRuntime modelRuntime,
-    BackendPrerequisiteProvisioner? backendPrerequisites = null) : IDataService
+    BackendPrerequisiteProvisioner? backendPrerequisites = null,
+    BackendRequirementMonitor? requirementMonitor = null) : IDataService
 {
-    public async Task<IReadOnlyList<LocalModel>> ScanLocalModelsAsync(CancellationToken cancellationToken = default) =>
-        (await modelLibrary.ScanLocalModelsAsync(cancellationToken))
-        .Select(model => new LocalModel(model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc, model.Format)).ToArray();
+    #region BackendRequirements
+
+    public Task<BackendRequirementState> GetBackendRequirementStateAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(requirementMonitor?.Current ?? new BackendRequirementState([], DateTimeOffset.MinValue));
+
+    #endregion
+
+    #region LocalModels
+
+    public async Task<IReadOnlyList<LocalModel>> LocalModel_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        var scannedModels = await modelLibrary.ScanLocalModelsAsync(cancellationToken);
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var metadata = await db.ModelMetadata
+            .ToDictionaryAsync(item => item.ModelPath, StringComparer.OrdinalIgnoreCase, cancellationToken);
+        var downloadedModelIds = await GetCompletedDownloadModelIdsAsync(db, cancellationToken);
+        var result = new List<LocalModel>(scannedModels.Count);
+        var now = DateTime.UtcNow;
+
+        foreach (var model in scannedModels)
+        {
+            if (!metadata.TryGetValue(model.Path, out var entity))
+            {
+                entity = new ModelMetadataEntity
+                {
+                    Id = Guid.NewGuid(),
+                    ModelPath = model.Path,
+                    CompatibleBackendsJson = JsonSerializer.Serialize(ModelBackendCompatibility.ForFormat(model.Format)),
+                    UpdatedAtUtc = now
+                };
+                db.ModelMetadata.Add(entity);
+                metadata[model.Path] = entity;
+            }
+
+            if (entity.IsDeleted)
+                continue;
+
+            if (string.IsNullOrWhiteSpace(entity.HuggingFaceModelId) && downloadedModelIds.TryGetValue(model.Path, out var huggingFaceModelId))
+            {
+                entity.HuggingFaceModelId = huggingFaceModelId;
+                entity.UpdatedAtUtc = now;
+            }
+
+            var compatibleBackends = JsonSerializer.Deserialize<ConfigurationBackend[]>(entity.CompatibleBackendsJson) ?? [];
+            result.Add(new LocalModel(model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc, model.Format, compatibleBackends, entity.HuggingFaceModelId));
+        }
+
+        if (db.ChangeTracker.HasChanges())
+            await db.SaveChangesAsync(cancellationToken);
+
+        return result;
+    }
+
+    private static async Task<IReadOnlyDictionary<string, string>> GetCompletedDownloadModelIdsAsync(
+        ApplicationDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var downloads = await db.ModelDownloads.AsNoTracking()
+            .Where(download => download.Completed && download.Error == null)
+            .ToArrayAsync(cancellationToken);
+        var modelIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var download in downloads)
+        {
+            if (download.Library.Equals("openvino", StringComparison.OrdinalIgnoreCase))
+            {
+                modelIds[Path.GetFullPath(download.DestinationPath)] = download.ModelId;
+                continue;
+            }
+
+            var fileNames = JsonSerializer.Deserialize<string[]>(download.FileNamesJson) ?? [];
+            foreach (var fileName in fileNames)
+            {
+                var modelPath = Path.GetFullPath(Path.Combine(download.DestinationPath, fileName.Replace('/', Path.DirectorySeparatorChar)));
+                modelIds[modelPath] = download.ModelId;
+            }
+        }
+
+        return modelIds;
+    }
 
     public IReadOnlyList<string> GetModelDirectories() => modelLibrary.GetModelDirectories();
 
-    public Task<IReadOnlyList<string>> GetModelDirectoriesAsync(CancellationToken cancellationToken = default) =>
+    public Task<IReadOnlyList<string>> ModelDirectory_ReadAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(GetModelDirectories());
 
     public async Task<IReadOnlyList<HuggingFaceModel>> SearchModelsAsync(HuggingFaceSearchRequest request, CancellationToken cancellationToken = default) =>
         (await modelLibrary.SearchHuggingFaceAsync(request, cancellationToken))
-        .Select(model => new HuggingFaceModel(model.Id, model.Author, model.Downloads, model.Likes, model.LastModified)).ToArray();
+        .Select(model => new HuggingFaceModel(
+            model.Id,
+            model.Author,
+            model.Downloads,
+            model.Likes,
+            model.LastModified,
+            model.LibraryName,
+            model.PipelineTag,
+            model.Tags,
+            ModelBackendCompatibility.FromHuggingFace(model.LibraryName, model.Tags))).ToArray();
 
-    public Task<Guid> StartModelDownloadAsync(ModelDownloadRequest request, CancellationToken cancellationToken = default) =>
+    public async Task<IReadOnlyList<LocalModel>> LocalModel_UpdateAsync(ModelCompatibilityUpdate update, CancellationToken cancellationToken = default)
+    {
+        var modelPath = Path.GetFullPath(update.ModelPath.Trim());
+        var compatibleBackends = NormalizeBackends(update.CompatibleBackends);
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var entity = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == modelPath, cancellationToken);
+        entity ??= new ModelMetadataEntity { Id = Guid.NewGuid(), ModelPath = modelPath };
+        entity.CompatibleBackendsJson = JsonSerializer.Serialize(compatibleBackends);
+        entity.HuggingFaceModelId = string.IsNullOrWhiteSpace(update.HuggingFaceModelId) ? null : update.HuggingFaceModelId.Trim();
+        entity.IsManuallyConfigured = true;
+        entity.UpdatedAtUtc = DateTime.UtcNow;
+        if (db.Entry(entity).State == EntityState.Detached)
+            db.ModelMetadata.Add(entity);
+        await db.SaveChangesAsync(cancellationToken);
+        return await LocalModel_ReadAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LocalModel>> LocalModel_UpdateAsync(
+        string modelPath,
+        string huggingFaceModelId,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedPath = Path.GetFullPath(modelPath.Trim());
+        var normalizedModelId = huggingFaceModelId.Trim();
+        var metadata = await modelLibrary.GetHuggingFaceModelMetadataAsync(normalizedModelId, cancellationToken);
+        var compatibleBackends = ModelBackendCompatibility.FromHuggingFace(metadata.LibraryName, metadata.Tags);
+
+        await using (var db = await dbContextFactory.CreateDbContextAsync(cancellationToken))
+        {
+            var entity = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == normalizedPath, cancellationToken);
+            entity ??= new ModelMetadataEntity { Id = Guid.NewGuid(), ModelPath = normalizedPath };
+            entity.CompatibleBackendsJson = JsonSerializer.Serialize(compatibleBackends);
+            entity.HuggingFaceModelId = normalizedModelId;
+            entity.HuggingFaceRevision = metadata.Revision;
+            entity.HuggingFaceSynchronizedAtUtc = DateTime.UtcNow;
+            entity.IsManuallyConfigured = false;
+            entity.UpdatedAtUtc = DateTime.UtcNow;
+            if (db.Entry(entity).State == EntityState.Detached)
+                db.ModelMetadata.Add(entity);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        return await LocalModel_ReadAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<LocalModel>> LocalModel_DeleteAsync(
+        ModelDeletionRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var modelPath = Path.GetFullPath(request.ModelPath.Trim());
+        if (!IsWithinModelDirectory(modelPath))
+            throw new InvalidOperationException("The model path is outside the configured model directories.");
+
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var metadata = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == modelPath, cancellationToken);
+        if (request.DeleteFiles)
+            DeleteModelFiles(modelPath);
+
+        if (metadata is not null)
+        {
+            if (request.DeleteFiles)
+                db.ModelMetadata.Remove(metadata);
+            else
+            {
+                metadata.IsDeleted = true;
+                metadata.UpdatedAtUtc = DateTime.UtcNow;
+            }
+        }
+        else if (!request.DeleteFiles)
+        {
+            db.ModelMetadata.Add(new ModelMetadataEntity
+            {
+                Id = Guid.NewGuid(),
+                ModelPath = modelPath,
+                IsDeleted = true,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+        }
+
+        var models = await db.Models.Where(model => model.Path == modelPath).ToArrayAsync(cancellationToken);
+        db.Models.RemoveRange(models);
+        await db.SaveChangesAsync(cancellationToken);
+        return await LocalModel_ReadAsync(cancellationToken);
+    }
+
+    private bool IsWithinModelDirectory(string modelPath) => modelLibrary.GetModelDirectories()
+        .Select(Path.GetFullPath)
+        .Any(directory =>
+        {
+            var relativePath = Path.GetRelativePath(directory, modelPath);
+            return relativePath is not "." and not ".." &&
+                !relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
+                !Path.IsPathRooted(relativePath);
+        });
+
+    private static void DeleteModelFiles(string modelPath)
+    {
+        if (File.Exists(modelPath))
+            File.Delete(modelPath);
+        else if (Directory.Exists(modelPath))
+            Directory.Delete(modelPath, recursive: true);
+    }
+
+    #endregion
+
+    #region ModelDownloads
+
+    public Task<Guid> ModelDownload_CreateAsync(ModelDownloadRequest request, CancellationToken cancellationToken = default) =>
         modelLibrary.StartDownloadAsync(request.ModelId, request.FileName, request.Library, cancellationToken);
 
-    public Task<IReadOnlyList<ModelDownloadOption>> GetModelDownloadOptionsAsync(string modelId, string library = "gguf", CancellationToken cancellationToken = default) =>
+    public Task<IReadOnlyList<ModelDownloadOption>> ModelDownload_ReadOptionsAsync(string modelId, string library = "gguf", CancellationToken cancellationToken = default) =>
         modelLibrary.GetDownloadOptionsAsync(modelId, library, cancellationToken);
 
-    public Task PauseModelDownloadAsync(Guid id, CancellationToken cancellationToken = default) =>
-        modelLibrary.PauseDownloadAsync(id, cancellationToken);
+    public Task ModelDownload_UpdateAsync(Guid id, bool paused, CancellationToken cancellationToken = default) =>
+        paused ? modelLibrary.PauseDownloadAsync(id, cancellationToken) : modelLibrary.ResumeDownloadAsync(id, cancellationToken);
 
-    public Task ResumeModelDownloadAsync(Guid id, CancellationToken cancellationToken = default) =>
-        modelLibrary.ResumeDownloadAsync(id, cancellationToken);
+    public Task ModelDownload_DeleteAsync(Guid id, CancellationToken cancellationToken = default) =>
+        modelLibrary.CancelDownloadAsync(id, cancellationToken);
 
-    public DownloadStatus? GetModelDownload(Guid id)
+    public DownloadStatus? ModelDownload_Read(Guid id)
     {
         var status = modelLibrary.GetDownload(id);
         return status is null ? null : new DownloadStatus(status.Id, status.ModelId, status.FileName, status.DestinationPath,
@@ -49,7 +245,7 @@ public sealed class DataService(
     }
 
     /// <summary>Returns the current model download state for SignalR synchronization.</summary>
-    public IReadOnlyList<DownloadStatus> GetModelDownloads() =>
+    public IReadOnlyList<DownloadStatus> ModelDownload_Read() =>
         modelLibrary.GetDownloads().Select(status => new DownloadStatus(
             status.Id,
             status.ModelId,
@@ -63,130 +259,132 @@ public sealed class DataService(
             status.Queued,
             status.Files)).ToArray();
 
-    public Task<DownloadStatus?> GetModelDownloadAsync(Guid id, CancellationToken cancellationToken = default) =>
-        Task.FromResult(GetModelDownload(id));
+    public Task<DownloadStatus?> ModelDownload_ReadAsync(Guid id, CancellationToken cancellationToken = default) =>
+        Task.FromResult(ModelDownload_Read(id));
+
+    public Task<IReadOnlyList<DownloadStatus>> ModelDownload_ReadAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(ModelDownload_Read());
+
+    #endregion
+
+    #region ModelSelection
 
     public async Task<ModelStatus> SelectModelAsync(SelectModelRequest request, CancellationToken cancellationToken = default)
     {
         if (!Path.IsPathFullyQualified(request.Path) || !request.Path.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("A fully qualified GGUF path is required.");
-        var settings = await GetLlamaSettingsAsync(cancellationToken) ?? new LlamaSettings(
-            request.Path, "Vulkan", 0, (uint)LlamaContextSize.Context128K,
-            new Dictionary<string, VulkanDeviceSetting>(StringComparer.OrdinalIgnoreCase));
-        await SaveLlamaSettingsAsync(settings with { ModelPath = request.Path }, cancellationToken);
-        return new ModelStatus(request.Path, settings.Backend, settings.GpuLayerCount, settings.ContextSize, 0, false);
+        var settings = (await ModelSettings_ReadAsync(cancellationToken))
+            .FirstOrDefault(item => item.Backend == ConfigurationBackend.Llama);
+        var requestSettings = settings is null
+            ? new LoadModelRequest(request.Path, "Vulkan", 0, (uint)LlamaContextSize.Context128K,
+                new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase), null)
+            : JsonSerializer.Deserialize<LoadModelRequest>(settings.ConfigurationJson)
+                ?? throw new InvalidOperationException("The persisted model settings are invalid.");
+        await ModelSettings_UpdateAsync(new ModelSettings(
+            request.Path,
+            ConfigurationBackend.Llama,
+            JsonSerializer.Serialize(requestSettings with { ModelPath = request.Path }),
+            settings?.ConfigurationId), cancellationToken);
+        return new ModelStatus(request.Path, requestSettings.Backend, requestSettings.GpuLayerCount, requestSettings.ContextSize, 0, false);
     }
 
-    public Task<PersistedChat> CreateChatAsync(CreateChatRequest request, CancellationToken cancellationToken = default) =>
-        CreateChatAsync(request.Title, cancellationToken);
+    #endregion
 
+    #region ModelSettings
 
-    public async Task<LlamaSettings?> GetLlamaSettingsAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<ModelSettings>> ModelSettings_ReadAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.LlamaSettings.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
-        return entity is null ? null : ToSettings(entity);
+        return (await db.ModelSettings.AsNoTracking().OrderBy(item => item.Backend).ToArrayAsync(cancellationToken))
+            .Select(ToModelSettings).ToArray();
     }
 
-    public async Task SaveLlamaSettingsAsync(LlamaSettings settings, CancellationToken cancellationToken = default)
+    public async Task ModelSettings_UpdateAsync(ModelSettings settings, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.LlamaSettings.SingleOrDefaultAsync(cancellationToken);
-        entity ??= new LlamaSettingsEntity { Id = 1 };
+        if (!Enum.IsDefined(settings.Backend))
+            throw new ArgumentException("A valid model backend is required.", nameof(settings));
+        var entity = await db.ModelSettings.SingleOrDefaultAsync(item => item.Backend == settings.Backend, cancellationToken);
+        entity ??= new ModelSettingsEntity { Backend = settings.Backend };
         entity.ModelPath = settings.ModelPath;
-        entity.Backend = settings.Backend;
-        entity.GpuLayerCount = settings.GpuLayerCount;
-        entity.ContextSize = settings.ContextSize;
-        entity.VulkanDeviceWeightsJson = JsonSerializer.Serialize(settings.VulkanDevices);
-        entity.AdvancedSettingsJson = JsonSerializer.Serialize(settings.Advanced ?? new());
-        entity.ConfigurationProfileId = settings.ConfigurationProfileId;
-        if (entity.Id == 1 && db.Entry(entity).State == EntityState.Detached)
-            db.LlamaSettings.Add(entity);
+        entity.ConfigurationJson = settings.ConfigurationJson;
+        entity.ConfigurationId = settings.ConfigurationId;
+        entity.UpdatedAtUtc = DateTime.UtcNow;
+        if (db.Entry(entity).State == EntityState.Detached)
+            db.ModelSettings.Add(entity);
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<OpenVinoSettings?> GetOpenVinoSettingsAsync(CancellationToken cancellationToken = default)
+    #endregion
+
+    #region Models
+
+    public async Task<IReadOnlyList<Model>> Model_ReadAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.OpenVinoSettings.AsNoTracking().SingleOrDefaultAsync(cancellationToken);
-        if (entity is null)
-            return null;
-
-        return JsonSerializer.Deserialize<OpenVinoSettings>(entity.SettingsJson)
-            ?? throw new InvalidOperationException("The persisted OpenVINO settings are invalid.");
-    }
-
-    public async Task SaveOpenVinoSettingsAsync(OpenVinoSettings settings, CancellationToken cancellationToken = default)
-    {
-        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.OpenVinoSettings.SingleOrDefaultAsync(cancellationToken);
-        entity ??= new OpenVinoSettingsEntity { Id = 1 };
-        entity.SettingsJson = JsonSerializer.Serialize(settings);
-        if (entity.Id == 1 && db.Entry(entity).State == EntityState.Detached)
-            db.OpenVinoSettings.Add(entity);
-        await db.SaveChangesAsync(cancellationToken);
-    }
-
-    public async Task<IReadOnlyList<LlamaModel>> GetLlamaModelsAsync(CancellationToken cancellationToken = default)
-    {
-        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var models = await db.LlamaModels.AsNoTracking()
+        var models = await db.Models.AsNoTracking()
             .OrderBy(model => model.Name)
             .ToArrayAsync(cancellationToken);
         return models.Select(ToModel).ToArray();
     }
 
-    public async Task<IReadOnlyList<BackendModel>> GetBackendModelsAsync(ConfigurationBackend backend, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<BackendModel>> BackendModel_ReadAsync(ConfigurationBackend backend, CancellationToken cancellationToken = default)
     {
-        var models = await modelLibrary.ScanLocalModelsAsync(backend, cancellationToken);
+        var models = (await LocalModel_ReadAsync(cancellationToken))
+            .Where(model => model.CompatibleBackends?.Contains(backend) == true)
+            .ToArray();
         return models.Select(model => new BackendModel(
             model.Name,
             model.Path,
             model.SizeInBytes,
             model.LastWriteTimeUtc,
-            backend)).ToArray();
+            backend,
+            CompatibleBackends: model.CompatibleBackends)).ToArray();
     }
 
-    public async Task<IReadOnlyList<LlamaModel>> ScanLlamaModelsAsync(CancellationToken cancellationToken = default)
+    private static IReadOnlyList<ConfigurationBackend> NormalizeBackends(IEnumerable<ConfigurationBackend> backends) =>
+        Enum.GetValues<ConfigurationBackend>().Where(backends.Contains).ToArray();
+
+    public async Task<IReadOnlyList<Model>> Model_UpdateAsync(CancellationToken cancellationToken = default)
     {
-        var models = await modelLibrary.ScanLocalModelsAsync(cancellationToken);
-        var llamaModels = models.Where(model => model.Format == ReferenceModelFormat.Gguf).Select(model => new LlamaModel(
+        var models = await LocalModel_ReadAsync(cancellationToken);
+        var discoveredModels = models.Select(model => new Model(
             Guid.Empty, model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc)).ToArray();
-        if (llamaModels.Length == 0)
-            return await GetLlamaModelsAsync(cancellationToken);
+        if (discoveredModels.Length == 0)
+            return await Model_ReadAsync(cancellationToken);
 
-        await SyncLlamaModelsAsync(llamaModels, cancellationToken);
-        return await GetLlamaModelsAsync(cancellationToken);
+        await SyncModelsCoreAsync(discoveredModels, cancellationToken);
+        return await Model_ReadAsync(cancellationToken);
     }
 
-    public async Task SetModelConfigurationProfileAsync(string modelPath, Guid? profileId, CancellationToken cancellationToken = default)
+    public async Task SetModelConfigurationAsync(string modelPath, Guid? configurationId, CancellationToken cancellationToken = default)
     {
         var normalizedPath = modelPath.Trim();
         if (string.IsNullOrWhiteSpace(normalizedPath))
             return;
 
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var model = await db.LlamaModels.SingleOrDefaultAsync(item => item.Path == normalizedPath, cancellationToken);
+        var model = await db.Models.SingleOrDefaultAsync(item => item.Path == normalizedPath, cancellationToken);
         if (model is null)
             return;
 
-        if (profileId.HasValue)
+        if (configurationId.HasValue)
         {
-            var profile = await db.ModelConfigurationProfiles.SingleOrDefaultAsync(item => item.Id == profileId.Value, cancellationToken)
-                ?? throw new KeyNotFoundException("The model configuration profile was not found.");
-            if (!string.Equals(profile.ModelPath.Trim(), normalizedPath, StringComparison.OrdinalIgnoreCase))
-                throw new ArgumentException("The configuration profile does not belong to the selected model.", nameof(profileId));
+            var configuration = await db.ModelConfigurations.SingleOrDefaultAsync(item => item.Id == configurationId.Value, cancellationToken)
+                ?? throw new KeyNotFoundException("The model configuration was not found.");
+            if (!string.Equals(configuration.ModelPath.Trim(), normalizedPath, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException("The model configuration does not belong to the selected model.", nameof(configurationId));
         }
 
-        model.ConfigurationProfileId = profileId;
+        model.ConfigurationId = configurationId;
         model.UpdatedAtUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task SyncLlamaModelsAsync(IReadOnlyList<LlamaModel> models, CancellationToken cancellationToken = default)
+    private async Task SyncModelsCoreAsync(IReadOnlyList<Model> models, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var existing = await db.LlamaModels.ToDictionaryAsync(model => model.Path, StringComparer.OrdinalIgnoreCase, cancellationToken);
+        var existing = await db.Models.ToDictionaryAsync(model => model.Path, StringComparer.OrdinalIgnoreCase, cancellationToken);
         var incomingPaths = models.Select(model => model.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var now = DateTime.UtcNow;
         foreach (var model in models)
@@ -200,7 +398,7 @@ public sealed class DataService(
             }
             else
             {
-                db.LlamaModels.Add(new LlamaModelEntity
+                db.Models.Add(new ModelEntity
                 {
                     Id = model.Id == Guid.Empty ? Guid.NewGuid() : model.Id,
                     Name = model.Name,
@@ -208,78 +406,88 @@ public sealed class DataService(
                     SizeInBytes = model.SizeInBytes,
                     LastWriteTimeUtc = model.LastWriteTimeUtc,
                     UpdatedAtUtc = now,
-                    ConfigurationProfileId = model.ConfigurationProfileId
+                    ConfigurationId = model.ConfigurationId
                 });
             }
         }
-        db.LlamaModels.RemoveRange(existing.Values.Where(model => !incomingPaths.Contains(model.Path)));
+        db.Models.RemoveRange(existing.Values.Where(model => !incomingPaths.Contains(model.Path)));
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyList<ModelConfigurationProfile>> GetModelConfigurationProfilesAsync(CancellationToken cancellationToken = default)
+    #endregion
+
+    #region ModelConfigurations
+
+    public async Task<IReadOnlyList<ModelConfiguration>> ModelConfiguration_ReadAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entities = await db.ModelConfigurationProfiles.AsNoTracking()
+        var entities = await db.ModelConfigurations.AsNoTracking()
             .OrderByDescending(profile => profile.IsDefault)
             .ThenBy(profile => profile.Name)
             .ToArrayAsync(cancellationToken);
-        return entities.Select(ToProfile).ToArray();
+        return entities.Select(ToConfiguration).ToArray();
     }
 
-    public async Task<ModelConfigurationProfile?> GetModelConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<ModelConfiguration?> ModelConfiguration_ReadAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.ModelConfigurationProfiles.AsNoTracking()
+        var entity = await db.ModelConfigurations.AsNoTracking()
             .Where(profile => profile.Id == id)
             .SingleOrDefaultAsync(cancellationToken);
-        return entity is null ? null : ToProfile(entity);
+        return entity is null ? null : ToConfiguration(entity);
     }
 
-    public async Task<ModelConfigurationProfile> SaveModelConfigurationProfileAsync(ModelConfigurationProfile profile, CancellationToken cancellationToken = default)
+    public Task<ModelConfiguration> ModelConfiguration_CreateAsync(ModelConfiguration configuration, CancellationToken cancellationToken = default) =>
+        ModelConfiguration_SaveAsync(configuration with { Id = Guid.Empty }, cancellationToken);
+
+    public Task<ModelConfiguration> ModelConfiguration_UpdateAsync(ModelConfiguration configuration, CancellationToken cancellationToken = default) =>
+        ModelConfiguration_SaveAsync(configuration, cancellationToken);
+
+    private async Task<ModelConfiguration> ModelConfiguration_SaveAsync(ModelConfiguration configuration, CancellationToken cancellationToken = default)
     {
-        ValidateProfile(profile);
+        ValidateConfiguration(configuration);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var duplicateName = await db.ModelConfigurationProfiles.AnyAsync(item =>
-            item.Name == profile.Name && item.Backend == profile.Backend && item.Id != profile.Id, cancellationToken);
+        var duplicateName = await db.ModelConfigurations.AnyAsync(item =>
+            item.Name == configuration.Name && item.Backend == configuration.Backend && item.Id != configuration.Id, cancellationToken);
         if (duplicateName)
-            throw new InvalidOperationException($"A configuration profile named '{profile.Name}' already exists.");
+            throw new InvalidOperationException($"A model configuration named '{configuration.Name}' already exists.");
 
         var now = DateTime.UtcNow;
-        var entity = profile.Id == Guid.Empty
-            ? new ModelConfigurationProfileEntity { Id = Guid.NewGuid(), CreatedAtUtc = now }
-            : await db.ModelConfigurationProfiles.SingleOrDefaultAsync(item => item.Id == profile.Id, cancellationToken)
-                ?? throw new KeyNotFoundException("The configuration profile was not found.");
-        entity.Name = profile.Name.Trim();
-        entity.Description = string.IsNullOrWhiteSpace(profile.Description) ? null : profile.Description.Trim();
-        entity.ModelPath = profile.ModelPath.Trim();
-        entity.Backend = profile.Backend;
-        entity.IsDefault = profile.IsDefault;
-        entity.SchemaVersion = profile.SchemaVersion < 1 ? 1 : profile.SchemaVersion;
-        entity.ConfigurationJson = profile.ConfigurationJson;
+        var entity = configuration.Id == Guid.Empty
+            ? new ModelConfigurationEntity { Id = Guid.NewGuid(), CreatedAtUtc = now }
+            : await db.ModelConfigurations.SingleOrDefaultAsync(item => item.Id == configuration.Id, cancellationToken)
+                ?? throw new KeyNotFoundException("The model configuration was not found.");
+        entity.Name = configuration.Name.Trim();
+        entity.Description = string.IsNullOrWhiteSpace(configuration.Description) ? null : configuration.Description.Trim();
+        entity.ModelPath = configuration.ModelPath.Trim();
+        entity.Backend = configuration.Backend;
+        entity.IsDefault = configuration.IsDefault;
+        entity.SchemaVersion = configuration.SchemaVersion < 1 ? 1 : configuration.SchemaVersion;
+        entity.ConfigurationJson = configuration.ConfigurationJson;
         entity.UpdatedAtUtc = now;
         if (entity.Id == Guid.Empty)
             entity.Id = Guid.NewGuid();
         if (db.Entry(entity).State == EntityState.Detached)
-            db.ModelConfigurationProfiles.Add(entity);
+            db.ModelConfigurations.Add(entity);
 
         if (entity.IsDefault)
             await ClearOtherDefaultsAsync(db, entity.Id, cancellationToken);
-        else if (!await db.ModelConfigurationProfiles.AnyAsync(item => item.IsDefault && item.Id != entity.Id, cancellationToken))
+        else if (!await db.ModelConfigurations.AnyAsync(item => item.IsDefault && item.Id != entity.Id, cancellationToken))
             entity.IsDefault = true;
 
         await db.SaveChangesAsync(cancellationToken);
-        return ToProfile(entity);
+        return ToConfiguration(entity);
     }
 
-    public async Task DeleteModelConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task ModelConfiguration_DeleteAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.ModelConfigurationProfiles.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
-            ?? throw new KeyNotFoundException("The configuration profile was not found.");
-        db.ModelConfigurationProfiles.Remove(entity);
+        var entity = await db.ModelConfigurations.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
+            ?? throw new KeyNotFoundException("The model configuration was not found.");
+        db.ModelConfigurations.Remove(entity);
         if (entity.IsDefault)
         {
-            var replacement = await db.ModelConfigurationProfiles
+            var replacement = await db.ModelConfigurations
                 .Where(item => item.Id != id)
                 .OrderBy(item => item.Name)
                 .FirstOrDefaultAsync(cancellationToken);
@@ -289,25 +497,32 @@ public sealed class DataService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task SetDefaultModelConfigurationProfileAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task ModelConfiguration_SetDefaultAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.ModelConfigurationProfiles.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
-            ?? throw new KeyNotFoundException("The configuration profile was not found.");
+        var entity = await db.ModelConfigurations.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
+            ?? throw new KeyNotFoundException("The model configuration was not found.");
         await ClearOtherDefaultsAsync(db, id, cancellationToken);
         entity.IsDefault = true;
         entity.UpdatedAtUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyList<ChatSummary>> GetChatSummariesAsync(CancellationToken cancellationToken = default)
+    #endregion
+
+    #region Chats
+
+    public Task<PersistedChat> Chat_CreateAsync(CreateChatRequest request, CancellationToken cancellationToken = default) =>
+        Chat_CreateCoreAsync(request.Title, cancellationToken);
+
+    public async Task<IReadOnlyList<ChatSummary>> Chat_ReadAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         return await db.ChatConversations.AsNoTracking().OrderByDescending(chat => chat.UpdatedAtUtc)
             .Select(chat => new ChatSummary(chat.Id, chat.Title, chat.UpdatedAtUtc, chat.Messages.Count)).ToArrayAsync(cancellationToken);
     }
 
-    public async Task<PersistedChat> CreateChatAsync(string? title, CancellationToken cancellationToken = default)
+    private async Task<PersistedChat> Chat_CreateCoreAsync(string? title, CancellationToken cancellationToken = default)
     {
         var now = DateTime.UtcNow;
         var chat = new ChatConversationEntity { Id = Guid.NewGuid(), Title = string.IsNullOrWhiteSpace(title) ? "Neuer Chat" : title.Trim(), CreatedAtUtc = now, UpdatedAtUtc = now };
@@ -317,17 +532,28 @@ public sealed class DataService(
         return ToChat(chat);
     }
 
-    public async Task<PersistedChat?> GetChatAsync(Guid id, CancellationToken cancellationToken = default)
+    public async Task<PersistedChat?> Chat_ReadAsync(Guid id, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var chat = await db.ChatConversations.AsNoTracking().Include(item => item.Messages).SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
         return chat is null ? null : ToChat(chat);
     }
 
-    public async Task<PersistedChat?> AddChatExchangeAsync(Guid id, string userContent, LlamaGenerationResult generation, string modelPath, string backend, CancellationToken cancellationToken = default) =>
-        await AddChatExchangeAsync(id, userContent, generation.Text, modelPath, backend, generation.TokenCount, generation.TokensPerSecond, cancellationToken);
+    public async Task Chat_DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var chat = await db.ChatConversations.SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
+        if (chat is null)
+            return;
 
-    private async Task<PersistedChat?> AddChatExchangeAsync(Guid id, string userContent, string assistantContent, string modelPath, string backend, int? tokenCount, double? tokensPerSecond, CancellationToken cancellationToken = default)
+        db.ChatConversations.Remove(chat);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<PersistedChat?> Chat_UpdateCoreAsync(Guid id, string userContent, LlamaGenerationResult generation, string modelPath, string backend, CancellationToken cancellationToken = default) =>
+        await PersistChatUpdateAsync(id, userContent, generation.Text, modelPath, backend, generation.TokenCount, generation.TokensPerSecond, cancellationToken);
+
+    private async Task<PersistedChat?> PersistChatUpdateAsync(Guid id, string userContent, string assistantContent, string modelPath, string backend, int? tokenCount, double? tokensPerSecond, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var chat = await db.ChatConversations.Include(item => item.Messages).SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
@@ -341,8 +567,12 @@ public sealed class DataService(
         return ToChat(chat);
     }
 
-    public Task<ModelLoadStatus> GetModelStatusAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(modelRuntime.GetStatus());
+    #endregion
+
+    #region LoadedModel
+
+    public Task<ModelLoadStatus> LoadedModel_ReadAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(modelRuntime.LoadedModel_Read());
 
     public async Task<ModelLoadStatus> LoadModelAsync(LoadModelRequest request, CancellationToken cancellationToken = default)
     {
@@ -351,7 +581,7 @@ public sealed class DataService(
             throw new ArgumentException("LLama loading requires a .gguf model path.", nameof(request));
 
         await modelRuntime.LoadAsync(request, cancellationToken);
-        return modelRuntime.GetStatus();
+        return modelRuntime.LoadedModel_Read();
     }
 
     public async Task<ModelLoadStatus> LoadPythonModelAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default)
@@ -360,32 +590,36 @@ public sealed class DataService(
             throw new ArgumentException("A vLLM or SGLang backend is required.", nameof(request));
 
         await modelRuntime.LoadAsync(request, cancellationToken);
-        return modelRuntime.GetStatus();
+        return modelRuntime.LoadedModel_Read();
     }
 
     public async Task<ModelLoadStatus> LoadDotLlmModelAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default)
     {
         await modelRuntime.LoadAsync(request, cancellationToken);
-        return modelRuntime.GetStatus();
+        return modelRuntime.LoadedModel_Read();
     }
 
     public async Task<ModelLoadStatus> UnloadModelAsync(CancellationToken cancellationToken = default)
     {
         await modelRuntime.StopLlamaAsync(cancellationToken);
-        return modelRuntime.GetStatus();
+        return modelRuntime.LoadedModel_Read();
     }
 
     public async Task<ModelLoadStatus> UnloadModelAsync(string modelPath, CancellationToken cancellationToken = default)
     {
         await modelRuntime.UnloadLlamaAsync(modelPath, cancellationToken);
-        return modelRuntime.GetStatus();
+        return modelRuntime.LoadedModel_Read();
     }
 
     public async Task<ModelLoadStatus> UnloadModelAsync(string modelPath, ConfigurationBackend backend, CancellationToken cancellationToken = default)
     {
         await modelRuntime.UnloadAsync(modelPath, backend, cancellationToken);
-        return modelRuntime.GetStatus();
+        return modelRuntime.LoadedModel_Read();
     }
+
+    #endregion
+
+    #region BackendDiagnostics
 
     public Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default)
     {
@@ -416,24 +650,24 @@ public sealed class DataService(
         };
     }
 
-    public async Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default)
+    public async Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null)
     {
         if (backend != ConfigurationBackend.OpenVino)
-            return await (backendPrerequisites ?? new BackendPrerequisiteProvisioner()).DiagnoseAsync(backend, pythonExecutable, AppContext.BaseDirectory, cancellationToken: cancellationToken);
+            return await (backendPrerequisites ?? new BackendPrerequisiteProvisioner()).DiagnoseAsync(backend, pythonExecutable, AppContext.BaseDirectory, cancellationToken: cancellationToken, devices: devices);
 
         var result = openVinoDiagnostics.Diagnose();
         var checks = result.Checks.Select(check => new BackendPrerequisiteCheck(check.Id, check.Name, check.IsAvailable, check.Detail, check.CanSolve)).ToArray();
         return new(backend, "OpenVINO", result.IsGpuReady || result.IsNpuReady, checks, result.Error);
     }
 
-    public async Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default)
+    public async Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null)
     {
         if (backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
             return new(false, "This backend has no user-space preparation action.", string.Empty);
 
         try
         {
-            var result = await (backendPrerequisites ?? new BackendPrerequisiteProvisioner()).PrepareAsync(backend, pythonExecutable, AppContext.BaseDirectory, cancellationToken: cancellationToken);
+            var result = await (backendPrerequisites ?? new BackendPrerequisiteProvisioner()).PrepareAsync(backend, pythonExecutable, AppContext.BaseDirectory, cancellationToken: cancellationToken, devices: devices);
             return new(true, result.Message, $"Python executable: {result.PythonExecutable}{Environment.NewLine}Requirements: {result.RequirementsPath}");
         }
         catch (Exception exception)
@@ -464,96 +698,177 @@ public sealed class DataService(
         return Task.FromResult(new OpenVinoModelStatusDto(status.ModelPath, status.Device, status.IsModelLoaded, modelSizeInBytes, status.LoadLog));
     }
 
-    public async Task<PersistedChat?> AddChatExchangeAsync(Guid id, ChatExchangeRequest request, CancellationToken cancellationToken = default)
+    #endregion
+
+    #region ChatMessages
+
+    public async Task<PersistedChat?> Chat_UpdateAsync(Guid id, ChatExchangeRequest request, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(request.Content) || string.IsNullOrWhiteSpace(request.ModelPath))
             return null;
-        var backend = request.Backend?.Trim();
-        if (!string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(backend, "Vulkan", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(backend, "CPU", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(backend, "vLLM", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(backend, "SGLang", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(backend, "dotLLM", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException($"Unsupported chat backend '{request.Backend}'.", nameof(request));
-        var chat = await GetChatAsync(id, cancellationToken);
+        var backend = ValidateChatBackend(request.Backend);
+        var chat = await Chat_ReadAsync(id, cancellationToken);
         if (chat is null)
             return null;
 
+        var generation = await GenerateChatWithStatsAsync(chat, request, backend, null, cancellationToken);
+        return await Chat_UpdateCoreAsync(id, request.Content.Trim(), generation, request.ModelPath, backend, cancellationToken);
+    }
+
+    public async IAsyncEnumerable<ChatStreamUpdate> Chat_UpdateStreamAsync(
+        Guid id,
+        ChatExchangeRequest request,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(request.Content) || string.IsNullOrWhiteSpace(request.ModelPath))
+            yield break;
+
+        var backend = ValidateChatBackend(request.Backend);
+        var chat = await Chat_ReadAsync(id, cancellationToken);
+        if (chat is null)
+            yield break;
+
+        var deltas = Channel.CreateUnbounded<string>();
+        var generationTask = Task.Factory.StartNew(
+            () => GenerateChatWithStatsAsync(
+                chat,
+                request,
+                backend,
+                delta =>
+                {
+                    deltas.Writer.TryWrite(delta);
+                    return Task.CompletedTask;
+                },
+                cancellationToken),
+            CancellationToken.None,
+            TaskCreationOptions.LongRunning,
+            TaskScheduler.Default).Unwrap();
+        _ = CompleteGenerationChannelAsync(generationTask, deltas.Writer);
+
+        await foreach (var delta in deltas.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            if (!string.IsNullOrEmpty(delta))
+                yield return new ChatStreamUpdate(id, delta);
+
+        var generation = await generationTask.ConfigureAwait(false);
+        var persistedChat = await Chat_UpdateCoreAsync(id, request.Content.Trim(), generation, request.ModelPath, backend, cancellationToken);
+        if (persistedChat is not null)
+            yield return new ChatStreamUpdate(id, string.Empty, true, persistedChat);
+    }
+
+    #endregion
+
+    #region Helpers
+
+    private async Task<LlamaGenerationResult> GenerateChatWithStatsAsync(
+        PersistedChat chat,
+        ChatExchangeRequest request,
+        string backend,
+        Func<string, Task>? onDelta,
+        CancellationToken cancellationToken)
+    {
+        var content = request.Content.Trim();
         if (string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase))
         {
-            var modelPath = Path.GetFullPath(request.ModelPath);
+            var modelPath = Path.GetFullPath(request.ModelPath!);
             var openVinoStatus = modelRuntime.GetOpenVinoStatus();
-            if (!openVinoStatus.IsModelLoaded || !string.Equals(openVinoStatus.ModelPath, modelPath, StringComparison.OrdinalIgnoreCase))
+            if (!openVinoStatus.IsModelLoaded)
                 throw new InvalidOperationException("The selected OpenVINO model is not loaded.");
+            if (!string.Equals(openVinoStatus.ModelPath, modelPath, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"The selected OpenVINO model does not match the loaded model. Loaded: '{openVinoStatus.ModelPath}', selected: '{modelPath}'.");
 
             using var openVinoSession = modelRuntime.CreateOpenVinoChatSession();
-            var openVinoGeneration = openVinoSession.GenerateWithStats(request.Content.Trim());
-            return await AddChatExchangeAsync(id, request.Content.Trim(), openVinoGeneration.Text, modelPath, "OpenVINO", openVinoGeneration.TokenCount, openVinoGeneration.TokensPerSecond, cancellationToken);
+            var openVinoGeneration = openVinoSession.GenerateWithStats(content, delta =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (onDelta is not null)
+                    onDelta(delta).GetAwaiter().GetResult();
+            });
+            return new LlamaGenerationResult(openVinoGeneration.Text, openVinoGeneration.TokenCount, TimeSpan.Zero, openVinoGeneration.TokensPerSecond);
         }
 
+        var messages = chat.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content))
+            .Append(new LlamaChatMessage("user", content)).ToArray();
         if (string.Equals(backend, "vLLM", StringComparison.OrdinalIgnoreCase) || string.Equals(backend, "SGLang", StringComparison.OrdinalIgnoreCase))
         {
             using var pythonSession = modelRuntime.CreatePythonChatSession();
-            var pythonMessages = chat.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content))
-                .Append(new LlamaChatMessage("user", request.Content.Trim())).ToArray();
-            var pythonGeneration = await pythonSession.GenerateWithStatsAsync(pythonMessages, cancellationToken);
-            return await AddChatExchangeAsync(id, request.Content.Trim(), pythonGeneration, request.ModelPath, backend!, cancellationToken);
+            return await pythonSession.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
         }
 
         if (string.Equals(backend, "dotLLM", StringComparison.OrdinalIgnoreCase))
         {
             using var dotLlmSession = modelRuntime.CreateDotLlmChatSession();
-            var dotLlmMessages = chat.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content))
-                .Append(new LlamaChatMessage("user", request.Content.Trim())).ToArray();
-            var dotLlmGeneration = await dotLlmSession.GenerateWithStatsAsync(dotLlmMessages, cancellationToken);
-            return await AddChatExchangeAsync(id, request.Content.Trim(), dotLlmGeneration, request.ModelPath, backend!, cancellationToken);
+            return await dotLlmSession.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
         }
 
         if (!string.Equals(Path.GetExtension(request.ModelPath), ".gguf", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("LLama chat requires a .gguf model path.", nameof(request));
 
         using var session = modelRuntime.CreateLlamaChatSession("You are a helpful assistant.", request.ModelPath);
-        var messages = chat.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content))
-            .Append(new LlamaChatMessage("user", request.Content.Trim())).ToArray();
-        var generation = await session.GenerateWithStatsAsync(messages, cancellationToken);
-        return await AddChatExchangeAsync(id, request.Content.Trim(), generation, request.ModelPath, backend!, cancellationToken);
+        return await session.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static string ValidateChatBackend(string? backend)
+    {
+        var normalizedBackend = backend?.Trim();
+        if (normalizedBackend is null ||
+            (!string.Equals(normalizedBackend, "OpenVINO", StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(normalizedBackend, "Vulkan", StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(normalizedBackend, "CPU", StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(normalizedBackend, "vLLM", StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(normalizedBackend, "SGLang", StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(normalizedBackend, "dotLLM", StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException($"Unsupported chat backend '{backend}'.", nameof(backend));
+
+        return normalizedBackend;
+    }
+
+    private static async Task CompleteGenerationChannelAsync(Task<LlamaGenerationResult> generationTask, ChannelWriter<string> writer)
+    {
+        try
+        {
+            await generationTask.ConfigureAwait(false);
+            writer.TryComplete();
+        }
+        catch (Exception exception)
+        {
+            writer.TryComplete(exception);
+        }
     }
 
     private static PersistedChat ToChat(ChatConversationEntity chat) => new(chat.Id, chat.Title, chat.CreatedAtUtc, chat.UpdatedAtUtc,
         chat.Messages.OrderBy(message => message.CreatedAtUtc).ThenBy(message => message.Id).Select(message => new PersistedChatMessage(message.Role, message.Content, message.CreatedAtUtc, message.ModelPath, message.Backend, message.TokenCount, message.TokensPerSecond)).ToArray());
 
-    private static LlamaSettings ToSettings(LlamaSettingsEntity entity) =>
-        new(entity.ModelPath, entity.Backend, entity.GpuLayerCount, entity.ContextSize,
-            DeserializeVulkanDevices(entity.VulkanDeviceWeightsJson),
-            DeserializeAdvancedSettings(entity.AdvancedSettingsJson), entity.ConfigurationProfileId);
+    private static ModelSettings ToModelSettings(ModelSettingsEntity entity) =>
+        new(entity.ModelPath, entity.Backend, entity.ConfigurationJson, entity.ConfigurationId);
 
-    private static ModelConfigurationProfile ToProfile(ModelConfigurationProfileEntity entity) =>
+    private static ModelConfiguration ToConfiguration(ModelConfigurationEntity entity) =>
         new(entity.Id, entity.Name, entity.Description, entity.ModelPath, entity.IsDefault, entity.SchemaVersion,
             entity.ConfigurationJson, entity.CreatedAtUtc, entity.UpdatedAtUtc, entity.Backend);
 
-    private static LlamaModel ToModel(LlamaModelEntity entity) =>
-        new(entity.Id, entity.Name, entity.Path, entity.SizeInBytes, entity.LastWriteTimeUtc, entity.ConfigurationProfileId);
+    private static Model ToModel(ModelEntity entity) =>
+        new(entity.Id, entity.Name, entity.Path, entity.SizeInBytes, entity.LastWriteTimeUtc, entity.ConfigurationId);
 
-    private static void ValidateProfile(ModelConfigurationProfile profile)
+    private static void ValidateConfiguration(ModelConfiguration configuration)
     {
-        if (!Enum.IsDefined(profile.Backend))
-            throw new ArgumentException("A valid configuration backend is required.", nameof(profile));
-        if (string.IsNullOrWhiteSpace(profile.Name))
-            throw new ArgumentException("A configuration profile name is required.", nameof(profile));
-        if (profile.Name.Trim().Length > 120)
-            throw new ArgumentException("A configuration profile name cannot exceed 120 characters.", nameof(profile));
-        if (profile.ConfigurationJson is null)
-            throw new ArgumentException("Configuration JSON is required.", nameof(profile));
+        if (!Enum.IsDefined(configuration.Backend))
+            throw new ArgumentException("A valid configuration backend is required.", nameof(configuration));
+        if (string.IsNullOrWhiteSpace(configuration.Name))
+            throw new ArgumentException("A model configuration name is required.", nameof(configuration));
+        if (string.IsNullOrWhiteSpace(configuration.ModelPath))
+            throw new ArgumentException("A model path is required for a model configuration.", nameof(configuration));
+        if (configuration.Name.Trim().Length > 120)
+            throw new ArgumentException("A model configuration name cannot exceed 120 characters.", nameof(configuration));
+        if (configuration.ConfigurationJson is null)
+            throw new ArgumentException("Configuration JSON is required.", nameof(configuration));
         try
         {
-            using var document = JsonDocument.Parse(profile.ConfigurationJson);
+            using var document = JsonDocument.Parse(configuration.ConfigurationJson);
             if (document.RootElement.ValueKind != JsonValueKind.Object)
-                throw new ArgumentException("Configuration JSON must contain an object.", nameof(profile));
+                throw new ArgumentException("Configuration JSON must contain an object.", nameof(configuration));
         }
         catch (JsonException exception)
         {
-            throw new ArgumentException("Configuration JSON is invalid.", nameof(profile), exception);
+            throw new ArgumentException("Configuration JSON is invalid.", nameof(configuration), exception);
         }
     }
 
@@ -562,7 +877,7 @@ public sealed class DataService(
         Guid selectedId,
         CancellationToken cancellationToken)
     {
-        await db.ModelConfigurationProfiles
+        await db.ModelConfigurations
             .Where(item => item.Id != selectedId && item.IsDefault)
             .ExecuteUpdateAsync(setters => setters
                 .SetProperty(item => item.IsDefault, false)
@@ -600,4 +915,6 @@ public sealed class DataService(
             pair => new VulkanDeviceSetting(pair.Value > 0, Math.Max(0, pair.Value)),
             StringComparer.OrdinalIgnoreCase);
     }
+
+    #endregion
 }

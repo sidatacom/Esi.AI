@@ -9,6 +9,7 @@
 		"dotnet.projectLoad.exclude": [
 			"**/origins/**"
 		],
-		"esimcp.debugReadyString": "Now listening on:"
+		"esimcp.debugReadyString": "Now listening on:",
+		"git.ignoreLimitWarning": true
 	}
 }

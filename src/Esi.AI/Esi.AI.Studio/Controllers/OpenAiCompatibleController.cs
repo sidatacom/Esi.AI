@@ -12,7 +12,7 @@ public sealed class OpenAiCompatibleController(ModelRuntime modelRuntime) : Cont
     [HttpGet("models")]
     public IActionResult ListModels()
     {
-        var status = modelRuntime.GetStatus();
+        var status = modelRuntime.LoadedModel_Read();
         var modelId = status.ModelPath is null ? "local-model" : Path.GetFileNameWithoutExtension(status.ModelPath);
         return Ok(new
         {
@@ -33,7 +33,7 @@ public sealed class OpenAiCompatibleController(ModelRuntime modelRuntime) : Cont
         {
             var messages = request.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content)).ToArray();
             var model = request.Model ?? "local-model";
-            var backend = modelRuntime.GetStatus().Backend;
+            var backend = modelRuntime.LoadedModel_Read().Backend;
 
             if (backend is "vLLM" or "SGLang" or "dotLLM")
             {

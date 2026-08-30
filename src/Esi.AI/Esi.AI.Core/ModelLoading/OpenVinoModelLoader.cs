@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using OpenVinoSharp;
 using OpenVinoSharp.GenAI;
 using OpenVinoSharp.Internal;
@@ -16,6 +17,7 @@ public sealed class OpenVinoModelLoader : IDisposable
     private VLMPipeline? vlmPipeline;
     private string? loadedModelPath;
     private string? loadedDevice;
+    private double? vramUsageMiB;
 
     public OpenVinoModelLoader()
     {
@@ -32,6 +34,7 @@ public sealed class OpenVinoModelLoader : IDisposable
         loadedModelPath,
         loadedDevice,
         IsLoaded,
+        vramUsageMiB,
         string.Join(Environment.NewLine, loadLog));
 
     /// <summary>
@@ -185,6 +188,8 @@ public sealed class OpenVinoModelLoader : IDisposable
                     loadedPipeline?.Dispose();
                 }
             }
+
+            vramUsageMiB = TryGetVramUsageMiB(device);
         }
         catch (OperationCanceledException)
         {
@@ -233,6 +238,7 @@ public sealed class OpenVinoModelLoader : IDisposable
             DisposePipelines();
             loadedModelPath = null;
             loadedDevice = null;
+            vramUsageMiB = null;
         }
         finally
         {
@@ -248,14 +254,71 @@ public sealed class OpenVinoModelLoader : IDisposable
 
     private void HandleLog(LogLevel level, string message)
     {
+        if (IsCoreLifecycleLog(message))
+            return;
+
         AppendLoadLog($"[{level}] {message}");
     }
+
+    private static bool IsCoreLifecycleLog(string message) =>
+        message.Contains("OpenVINO Core", StringComparison.OrdinalIgnoreCase) &&
+        (message.Contains("Creating OpenVINO Core instance", StringComparison.OrdinalIgnoreCase) ||
+         message.Contains("OpenVINO Core instance created successfully", StringComparison.OrdinalIgnoreCase));
 
     private void AppendLoadLog(string message)
     {
         loadLog.Enqueue(message);
         while (loadLog.Count > 4000)
             loadLog.TryDequeue(out _);
+    }
+
+    private double? TryGetVramUsageMiB(string device)
+    {
+        try
+        {
+            using var core = new OpenVinoSharp.Core();
+            var devices = device.StartsWith("MULTI:", StringComparison.OrdinalIgnoreCase)
+                ? device["MULTI:".Length..].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                : [device];
+            var memoryBytes = devices
+                .SelectMany(selectedDevice => ParseMemoryStatistics(core.GetProperty(selectedDevice, "GPU_MEMORY_STATISTICS")))
+                .Sum();
+            if (memoryBytes <= 0)
+            {
+                AppendLoadLog($"[INFO] OpenVINO VRAM statistics are unavailable for {device}.");
+                return null;
+            }
+
+            var memoryMiB = memoryBytes / 1024d / 1024d;
+            AppendLoadLog($"[INFO] OpenVINO VRAM allocated on {device}: {memoryMiB:F2} MiB.");
+            return memoryMiB;
+        }
+        catch (Exception exception)
+        {
+            AppendLoadLog($"[DEBUG] OpenVINO VRAM statistics unavailable for {device}: {exception.Message}");
+            return null;
+        }
+    }
+
+    private static IEnumerable<long> ParseMemoryStatistics(string statistics)
+    {
+        var entries = Regex.Matches(
+                statistics,
+                @"(?<key>[A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*(?<value>\d+(?:\.\d+)?)\s*(?<unit>GiB|MiB|KiB|B)?",
+                RegexOptions.IgnoreCase)
+            .Select(match =>
+            {
+                var value = double.Parse(match.Groups["value"].Value, System.Globalization.CultureInfo.InvariantCulture);
+                var unit = match.Groups["unit"].Value;
+                var multiplier = unit.Equals("GiB", StringComparison.OrdinalIgnoreCase) ? 1024d * 1024d * 1024d :
+                    unit.Equals("MiB", StringComparison.OrdinalIgnoreCase) ? 1024d * 1024d :
+                    unit.Equals("KiB", StringComparison.OrdinalIgnoreCase) ? 1024d : 1d;
+                return value * multiplier;
+            })
+            .Select(value => checked((long)value));
+
+        return entries.Any() ? entries :
+            long.TryParse(statistics.Trim(), out var value) ? [value] : [];
     }
 
     private void ClearLoadLog()
@@ -535,13 +598,15 @@ public sealed class OpenVinoChatSession : IDisposable
 
         if (vlmPipeline is not null)
         {
+            using var history = new ChatHistory();
+            history.AddUserMessage(prompt);
             if (streamer is null)
             {
-                using var results = vlmPipeline.Generate(prompt);
+                using var results = vlmPipeline.GenerateWithHistory(history);
                 return CreateGenerationResult(results.GetText(), results.GetPerformanceMetrics());
             }
 
-            using var streamedResults = vlmPipeline.Generate(prompt, text =>
+            using var streamedResults = vlmPipeline.GenerateWithHistory(history, null, null, text =>
             {
                 streamer(text);
                 return StreamingStatus.Running;
@@ -585,4 +650,5 @@ public sealed record OpenVinoModelLoadStatus(
     string? ModelPath,
     string? Device,
     bool IsModelLoaded,
+    double? VramUsageMiB,
     string LoadLog);

@@ -11,6 +11,8 @@ using Esi.AI.Core.Chat;
 using Esi.AI.Models;
 using DotChatMessage = DotLLM.Tokenizers.ChatMessage;
 
+using System.Text;
+
 namespace Esi.AI.Core.ModelLoading;
 
 /// <summary>
@@ -119,7 +121,14 @@ public sealed class DotLlmInProcessRuntime : IDisposable
 public sealed class DotLlmInProcessChatSession(IModel model, DotLLM.Tokenizers.ITokenizer tokenizer, JinjaChatTemplate? chatTemplate) : IDisposable
 {
     /// <summary>Generates a response for the supplied chat messages.</summary>
-    public async Task<LlamaGenerationResult> GenerateWithStatsAsync(IReadOnlyList<LlamaChatMessage> messages, CancellationToken cancellationToken = default)
+    public Task<LlamaGenerationResult> GenerateWithStatsAsync(IReadOnlyList<LlamaChatMessage> messages, CancellationToken cancellationToken = default) =>
+        GenerateWithStatsAsync(messages, null, cancellationToken);
+
+    /// <summary>Generates a response while forwarding each streamed text fragment.</summary>
+    public async Task<LlamaGenerationResult> GenerateWithStatsAsync(
+        IReadOnlyList<LlamaChatMessage> messages,
+        Func<string, Task>? onDelta,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(messages);
         if (messages.Count == 0)
@@ -129,12 +138,20 @@ public sealed class DotLlmInProcessChatSession(IModel model, DotLLM.Tokenizers.I
         var generator = new TextGenerator(model, tokenizer);
         var options = new InferenceOptions { MaxTokens = 128, Temperature = 0.7f, TopP = 0.95f, TopK = 40 };
         var stopwatch = Stopwatch.StartNew();
-        var response = await Task.Run(() => generator.Generate(prompt, options), cancellationToken).ConfigureAwait(false);
+        var responseText = new StringBuilder();
+        var generatedTokenCount = 0;
+        await foreach (var token in generator.GenerateStreamingTokensAsync(prompt, options, cancellationToken).ConfigureAwait(false))
+        {
+            responseText.Append(token.Text);
+            generatedTokenCount++;
+            if (!string.IsNullOrEmpty(token.Text) && onDelta is not null)
+                await onDelta(token.Text).ConfigureAwait(false);
+        }
         stopwatch.Stop();
-        var tokensPerSecond = stopwatch.Elapsed.TotalSeconds > 0 ? response.GeneratedTokenCount / stopwatch.Elapsed.TotalSeconds : 0;
-        if (string.IsNullOrWhiteSpace(response.Text))
+        var tokensPerSecond = stopwatch.Elapsed.TotalSeconds > 0 ? generatedTokenCount / stopwatch.Elapsed.TotalSeconds : 0;
+        if (string.IsNullOrWhiteSpace(responseText.ToString()))
             throw new InvalidOperationException("dotLLM returned an empty answer.");
-        return new LlamaGenerationResult(response.Text, response.GeneratedTokenCount, stopwatch.Elapsed, tokensPerSecond);
+        return new LlamaGenerationResult(responseText.ToString(), generatedTokenCount, stopwatch.Elapsed, tokensPerSecond);
     }
 
     /// <inheritdoc />

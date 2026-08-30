@@ -28,6 +28,8 @@ message LoadModelRequest {
   float gpu_memory_utilization = 5;
   bool trust_remote_code = 6;
   bool enforce_eager = 7;
+  string device = 8;
+  repeated string devices = 9;
 }
 
 message UnloadModelRequest {}

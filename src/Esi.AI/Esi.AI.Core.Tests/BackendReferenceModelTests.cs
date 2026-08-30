@@ -98,6 +98,7 @@ public sealed class BackendReferenceModelTests
         var port = int.TryParse(Environment.GetEnvironmentVariable(portVariable), out var configuredPort)
             ? configuredPort
             : backend == ConfigurationBackend.Vllm ? 18000 : 18001;
+        var device = Environment.GetEnvironmentVariable($"ESI_{backend.ToString().ToUpperInvariant()}_DEVICE") ?? "cuda:0";
         using var server = new PythonInferenceServer();
         await server.LoadAsync(new PythonInferenceLoadRequest(
             modelId,
@@ -107,7 +108,8 @@ public sealed class BackendReferenceModelTests
             MaxModelLength: 2048,
             TensorParallelSize: 1,
             TrustRemoteCode: true,
-            EnforceEager: true));
+            EnforceEager: true,
+            Device: device));
         using var session = server.CreateChatSession();
         var result = await session.GenerateWithStatsAsync([new LlamaChatMessage("user", $"Reply with exactly: {backend} reference passed.")]);
 

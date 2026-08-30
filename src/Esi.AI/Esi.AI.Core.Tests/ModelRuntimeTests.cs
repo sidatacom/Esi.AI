@@ -15,7 +15,7 @@ public sealed class ModelRuntimeTests
 
         await loader.StopAsync();
 
-        Assert.IsFalse(loader.GetStatus().IsModelLoaded);
+        Assert.IsFalse(loader.LoadedModel_Read().IsModelLoaded);
         Assert.IsFalse(loader.GetOpenVinoStatus().IsModelLoaded);
     }
 }

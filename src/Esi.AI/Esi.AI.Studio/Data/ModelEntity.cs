@@ -1,6 +1,6 @@
 namespace Esi.AI.Studio.Data;
 
-public sealed class LlamaModelEntity
+public sealed class ModelEntity
 {
     public Guid Id { get; set; }
 
@@ -14,5 +14,5 @@ public sealed class LlamaModelEntity
 
     public DateTime UpdatedAtUtc { get; set; }
 
-    public Guid? ConfigurationProfileId { get; set; }
+    public Guid? ConfigurationId { get; set; }
 }

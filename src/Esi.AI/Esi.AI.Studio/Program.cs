@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Esi.AI.Studio.Client.Pages;
 using Esi.AI.Studio.Components;
@@ -24,6 +25,11 @@ builder.Services.AddRazorComponents()
     .AddInteractiveWebAssemblyComponents()
     .AddAuthenticationStateSerialization();
 builder.Services.AddControllers();
+builder.Services.AddSignalR(options =>
+{
+    options.MaximumParallelInvocationsPerClient = 8;
+    options.EnableDetailedErrors = builder.Environment.IsDevelopment();
+});
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddOpenApi();
@@ -94,14 +100,21 @@ builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSe
 builder.Services.AddSingleton<OpenVinoDiagnosticsService>();
 builder.Services.AddSingleton<OpenVinoDriverInstaller>();
 builder.Services.AddSingleton<BackendPrerequisiteProvisioner>();
+builder.Services.AddSingleton<BackendRequirementMonitor>();
+builder.Services.AddHostedService(services => services.GetRequiredService<BackendRequirementMonitor>());
+builder.Services.AddSingleton<IModelRuntimeStatusPublisher, SignalRModelRuntimeStatusPublisher>();
 builder.Services.AddSingleton<ModelRuntime>();
 builder.Services.AddHostedService(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddScoped<IModelDownloadEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IModelRuntimeEvents, ServerModelDownloadEvents>();
+builder.Services.AddScoped<IBackendRequirementEvents, ServerModelDownloadEvents>();
 builder.Services.AddHttpClient("HuggingFace", client =>
 {
     client.BaseAddress = new Uri("https://huggingface.co/");
     client.DefaultRequestHeaders.UserAgent.ParseAdd("Esi.AI.Studio/1.0");
+    var token = builder.Configuration["ModelLibrary:HuggingFaceToken"] ?? Environment.GetEnvironmentVariable("HF_TOKEN");
+    if (!string.IsNullOrWhiteSpace(token))
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 });
 builder.Services.Configure<ModelLibraryOptions>(builder.Configuration.GetSection("ModelLibrary"));
 builder.Services.AddSingleton<ModelLibraryService>(services =>
@@ -123,9 +136,7 @@ using (var scope = app.Services.CreateScope())
     var library = scope.ServiceProvider.GetRequiredService<ModelLibraryService>();
     await library.RestoreDownloadsAsync();
     var dataService = scope.ServiceProvider.GetRequiredService<DataService>();
-    var models = await library.ScanLocalModelsAsync();
-    await dataService.SyncLlamaModelsAsync(models.Where(model => model.Format == ReferenceModelFormat.Gguf).Select(model => new LlamaModel(
-        Guid.Empty, model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc)).ToArray());
+    await dataService.Model_UpdateAsync();
 }
 
 // Configure the HTTP request pipeline.

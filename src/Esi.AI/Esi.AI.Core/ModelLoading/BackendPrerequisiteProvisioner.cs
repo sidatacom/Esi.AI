@@ -19,7 +19,8 @@ public sealed class BackendPrerequisiteProvisioner
         string requestedPythonExecutable = "python3",
         string? applicationDirectory = null,
         TimeSpan? timeout = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<string>? devices = null)
     {
         if (backend is ConfigurationBackend.Vllm or ConfigurationBackend.Sglang)
         {
@@ -28,7 +29,8 @@ public sealed class BackendPrerequisiteProvisioner
                 requestedPythonExecutable,
                 applicationDirectory ?? AppContext.BaseDirectory,
                 timeout ?? TimeSpan.FromMinutes(10),
-                cancellationToken).ConfigureAwait(false);
+                cancellationToken,
+                devices).ConfigureAwait(false);
             return new(backend, preparation.PythonExecutable, preparation.RequirementsPath, preparation.EnvironmentCreated, preparation.Message);
         }
 
@@ -48,10 +50,11 @@ public sealed class BackendPrerequisiteProvisioner
         string requestedPythonExecutable = "python3",
         string? applicationDirectory = null,
         TimeSpan? timeout = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<string>? devices = null)
     {
         if (backend is ConfigurationBackend.Vllm or ConfigurationBackend.Sglang)
-            return await pythonProvisioner.DiagnoseAsync(backend, requestedPythonExecutable, applicationDirectory ?? AppContext.BaseDirectory, timeout ?? TimeSpan.FromSeconds(20), cancellationToken).ConfigureAwait(false);
+            return await pythonProvisioner.DiagnoseAsync(backend, requestedPythonExecutable, applicationDirectory ?? AppContext.BaseDirectory, timeout ?? TimeSpan.FromSeconds(20), cancellationToken, devices).ConfigureAwait(false);
 
         var name = backend switch
         {

@@ -15,7 +15,34 @@ public sealed record BackendModel(
     long SizeInBytes,
     DateTime LastWriteTimeUtc,
     ConfigurationBackend Backend,
-    Guid? ConfigurationProfileId = null);
+    Guid? ConfigurationId = null,
+    IReadOnlyList<ConfigurationBackend>? CompatibleBackends = null);
+
+public sealed record ModelSettings(
+    string ModelPath,
+    ConfigurationBackend Backend,
+    string ConfigurationJson,
+    Guid? ConfigurationId = null);
+
+public sealed record Model(
+    Guid Id,
+    string Name,
+    string Path,
+    long SizeInBytes,
+    DateTime LastWriteTimeUtc,
+    Guid? ConfigurationId = null);
+
+public sealed record ModelConfiguration(
+    Guid Id,
+    string Name,
+    string? Description,
+    string ModelPath,
+    bool IsDefault,
+    int SchemaVersion,
+    string ConfigurationJson,
+    DateTime CreatedAtUtc,
+    DateTime UpdatedAtUtc,
+    ConfigurationBackend Backend = ConfigurationBackend.Llama);
 
 /// <summary>Describes the prerequisite checks for one inference backend.</summary>
 public sealed record BackendPrerequisiteDiagnostics(
@@ -33,6 +60,19 @@ public sealed record BackendPrerequisiteCheck(
     string Detail,
     bool CanSolve,
     bool IsOptional = false);
+
+/// <summary>Contains the cached prerequisite state for all known backend/vendor routes.</summary>
+public sealed record BackendRequirementState(
+    IReadOnlyList<BackendRequirementSnapshot> Entries,
+    DateTimeOffset UpdatedAtUtc,
+    bool IsRefreshing = false);
+
+/// <summary>Contains prerequisite diagnostics for one backend and vendor route.</summary>
+public sealed record BackendRequirementSnapshot(
+    ConfigurationBackend Backend,
+    string Vendor,
+    IReadOnlyList<string> Devices,
+    BackendPrerequisiteDiagnostics Diagnostics);
 
 /// <summary>Contains the result and output of a backend preparation action.</summary>
 public sealed record BackendPrerequisiteSolveResult(
@@ -61,6 +101,14 @@ public sealed record CreateChatRequest(string? Title = null);
 
 public sealed record ChatExchangeRequest(string Content, string? ModelPath = null, string? Backend = null);
 
+public sealed record ChatSummary(Guid Id, string Title, DateTime UpdatedAtUtc, int MessageCount);
+
+public sealed record PersistedChat(Guid Id, string Title, DateTime CreatedAtUtc, DateTime UpdatedAtUtc, IReadOnlyList<PersistedChatMessage> Messages);
+
+public sealed record PersistedChatMessage(string Role, string Content, DateTime CreatedAtUtc, string? ModelPath = null, string? Backend = null, int? TokenCount = null, double? TokensPerSecond = null);
+
+public sealed record ChatStreamUpdate(Guid ChatId, string Delta, bool IsCompleted = false, PersistedChat? Chat = null);
+
 public sealed record ModelDownloadRequest(string ModelId, string? FileName = null, string Library = "gguf");
 
 public sealed record ModelDownloadOption(string FileName, int FileCount, long? SizeInBytes = null)
@@ -69,7 +117,7 @@ public sealed record ModelDownloadOption(string FileName, int FileCount, long? S
     {
         get
         {
-            var parts = new List<string> { FileName };
+            var parts = new List<string> { string.IsNullOrWhiteSpace(FileName) ? "Repository" : FileName };
             if (FileCount > 1)
                 parts.Add($"{FileCount} Dateien");
             if (SizeInBytes is long size)
@@ -96,14 +144,14 @@ public sealed record ModelDownloadOption(string FileName, int FileCount, long? S
 
 public sealed record HuggingFaceSearchRequest(
     string Query,
-    string Library = "gguf",
-    string Task = "",
-    string ParameterRange = "",
-    string Language = "",
-    string License = "",
-    string Hardware = "",
-    string Other = "",
-    string InferenceProvider = "",
+    IReadOnlyList<string>? Libraries = null,
+    IReadOnlyList<string>? Tasks = null,
+    IReadOnlyList<string>? ParameterRanges = null,
+    IReadOnlyList<string>? Languages = null,
+    IReadOnlyList<string>? Licenses = null,
+    IReadOnlyList<string>? Hardware = null,
+    IReadOnlyList<string>? Other = null,
+    IReadOnlyList<string>? InferenceProviders = null,
     bool BaseOnly = false,
     bool InferenceAvailable = false,
     string Sort = "downloads");
@@ -155,21 +203,9 @@ public sealed record LlamaAdvancedSettings(
     uint Seed = 0,
     bool DecodeSpecialTokens = false);
 
-public sealed record OpenVinoSettings(
-    string ModelPath,
-    string Device,
-    IReadOnlyDictionary<string, OpenVinoDeviceSetting> Devices,
-    string CacheDirectory = "",
-    int MaxNewTokens = 512,
-    float Temperature = .7f,
-    float TopP = .9f,
-    bool DoSample = true,
-    int TopK = 50,
-    float RepetitionPenalty = 1.2f,
-    Guid? ConfigurationProfileId = null,
-    OpenVinoNpuSettings? Npu = null);
-
 public sealed record OpenVinoDeviceSetting(bool Enabled, float Weight);
+
+public sealed record VulkanDeviceSetting(bool Enabled, float Weight);
 
 public sealed record OpenVinoLoadRequest(
     string ModelPath,
@@ -197,7 +233,9 @@ public sealed record PythonInferenceLoadRequest(
     uint MaxTokens = 512,
     float Temperature = .7f,
     float TopP = .9f,
-    bool EnforceEager = false);
+    bool EnforceEager = false,
+    string Device = "cuda:0",
+    IReadOnlyList<string>? Devices = null);
 
 public sealed record DotLlmLoadRequest(
     string ModelPath,
@@ -233,7 +271,13 @@ public sealed record ModelLoadStatus(
     bool IsModelLoaded,
     IReadOnlyList<LoadedModelStatus> LoadedModels);
 
-public sealed record VulkanDeviceStatus(string Name, string? Description, int AssignedLayerCount, double? ModelBufferMiB);
+public sealed record VulkanDeviceStatus(
+    string Name,
+    string? Description,
+    int AssignedLayerCount,
+    double? ModelBufferMiB,
+    string? Vendor = null,
+    string? Driver = null);
 
 public sealed record LoadedModelStatus(
     string ModelPath,
@@ -244,4 +288,5 @@ public sealed record LoadedModelStatus(
     ulong ModelSizeInBytes,
     IReadOnlyList<VulkanDeviceStatus> VulkanDevices,
     double? CpuModelBufferMiB,
-    string LoadLog = "");
+    string LoadLog = "",
+    bool IsLoading = false);

@@ -3,6 +3,9 @@
 **/[Oo]bj/
 **/[Aa]rtifacts/
 
+# Node.js dependencies
+**/node_modules/
+
 # .NET local tool and SDK state
 .dotnet/
 *.nupkg
