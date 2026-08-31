@@ -342,14 +342,32 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
 
     private async Task EnsureConnectedAsync(CancellationToken cancellationToken)
     {
-        if (connection.State == HubConnectionState.Disconnected)
-            await connection.StartAsync(cancellationToken);
+        Exception? lastStartException = null;
+        for (var attempt = 1; connection.State == HubConnectionState.Disconnected && attempt <= 10; attempt++)
+        {
+            try
+            {
+                await connection.StartAsync(cancellationToken);
+                lastStartException = null;
+            }
+            catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+            {
+                lastStartException = exception;
+                if (attempt < 10)
+                    await Task.Delay(TimeSpan.FromMilliseconds(500), cancellationToken);
+            }
+        }
 
         while (connection.State is HubConnectionState.Connecting or HubConnectionState.Reconnecting)
             await Task.Delay(TimeSpan.FromMilliseconds(100), cancellationToken);
 
         if (connection.State != HubConnectionState.Connected)
+        {
+            if (lastStartException is not null)
+                throw new InvalidOperationException("The data connection could not be established.", lastStartException);
+
             throw new InvalidOperationException("The data connection is not active.");
+        }
     }
 
     public async ValueTask DisposeAsync()
