@@ -120,6 +120,51 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
+    public async Task SearchHuggingFaceAsync_VramBudgetAndContextMatch_ReturnsOnlyFittingModels()
+    {
+        var library = new ModelLibraryService(
+            new HttpClient(new MemoryFilterHttpMessageHandler()) { BaseAddress = new Uri("https://huggingface.co/") },
+            null!,
+            null!,
+            Options.Create(new ModelLibraryOptions()));
+
+        var results = await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest("fit", VramBudgetGiB: 12, ContextLength: 131_072));
+
+        CollectionAssert.AreEquivalent(new[] { "owner/fits" }, results.Select(model => model.Id).ToArray());
+        await library.DisposeAsync();
+    }
+
+    [TestMethod]
+    public async Task SearchHuggingFaceAsync_ContextExceedsModelMaximum_ExcludesModel()
+    {
+        var library = new ModelLibraryService(
+            new HttpClient(new MemoryFilterHttpMessageHandler()) { BaseAddress = new Uri("https://huggingface.co/") },
+            null!,
+            null!,
+            Options.Create(new ModelLibraryOptions()));
+
+        var results = await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest("context", VramBudgetGiB: 32, ContextLength: 131_072));
+
+        CollectionAssert.AreEquivalent(new[] { "owner/fits" }, results.Select(model => model.Id).ToArray());
+        await library.DisposeAsync();
+    }
+
+    [TestMethod]
+    public async Task SearchHuggingFaceAsync_MissingMemoryMetadata_ExcludesModelWhenFilterActive()
+    {
+        var library = new ModelLibraryService(
+            new HttpClient(new MemoryFilterHttpMessageHandler()) { BaseAddress = new Uri("https://huggingface.co/") },
+            null!,
+            null!,
+            Options.Create(new ModelLibraryOptions()));
+
+        var results = await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest("missing", VramBudgetGiB: 32, ContextLength: 131_072));
+
+        CollectionAssert.AreEquivalent(new[] { "owner/fits" }, results.Select(model => model.Id).ToArray());
+        await library.DisposeAsync();
+    }
+
+    [TestMethod]
     public async Task GetHuggingFaceModelMetadataAsync_UnauthorizedExplainsTokenConfiguration()
     {
         var library = new ModelLibraryService(
@@ -866,6 +911,58 @@ public sealed class BackendCatalogIntegrationTests
                 Content = new StringContent(content)
             });
         }
+    }
+
+    private sealed class MemoryFilterHttpMessageHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var path = request.RequestUri?.AbsolutePath ?? string.Empty;
+            var segments = path.Split('/', StringSplitOptions.RemoveEmptyEntries);
+            if (path.Equals("/api/models", StringComparison.Ordinal))
+            {
+                var query = request.RequestUri?.Query ?? string.Empty;
+                var models = query.Contains("search=context", StringComparison.Ordinal)
+                    ? "[{\"id\":\"owner/fits\",\"author\":\"owner\",\"downloads\":1,\"likes\":1},{\"id\":\"owner/short\",\"author\":\"owner\",\"downloads\":1,\"likes\":1}]"
+                    : query.Contains("search=missing", StringComparison.Ordinal)
+                        ? "[{\"id\":\"owner/fits\",\"author\":\"owner\",\"downloads\":1,\"likes\":1},{\"id\":\"owner/missing\",\"author\":\"owner\",\"downloads\":1,\"likes\":1}]"
+                        : "[{\"id\":\"owner/fits\",\"author\":\"owner\",\"downloads\":1,\"likes\":1},{\"id\":\"owner/large\",\"author\":\"owner\",\"downloads\":1,\"likes\":1}]";
+                return Task.FromResult(JsonResponse(models));
+            }
+
+            if (segments.Length >= 4 && segments[0].Equals("api", StringComparison.Ordinal) && segments[1].Equals("models", StringComparison.Ordinal))
+            {
+                var modelId = $"{segments[2]}/{segments[3]}";
+                if (segments.Length == 6 && segments[4].Equals("tree", StringComparison.Ordinal))
+                {
+                    var weightSize = modelId.Equals("owner/large", StringComparison.Ordinal) ? 11_000_000_000L : 1_000_000_000L;
+                    return Task.FromResult(JsonResponse($"[{{\"path\":\"model.safetensors\",\"size\":{weightSize}}}]"));
+                }
+                if (modelId.Equals("owner/large", StringComparison.Ordinal))
+                    return Task.FromResult(JsonResponse("{\"sha\":\"revision\",\"siblings\":[{\"rfilename\":\"model.safetensors\"}]}"));
+                if (modelId.Equals("owner/short", StringComparison.Ordinal))
+                    return Task.FromResult(JsonResponse("{\"sha\":\"revision\",\"siblings\":[{\"rfilename\":\"model.safetensors\"}]}"));
+                if (modelId.Equals("owner/missing", StringComparison.Ordinal))
+                    return Task.FromResult(JsonResponse("{\"sha\":\"revision\",\"siblings\":[{\"rfilename\":\"model.safetensors\"}]}"));
+                return Task.FromResult(JsonResponse("{\"sha\":\"revision\",\"siblings\":[{\"rfilename\":\"model.safetensors\"}]}"));
+            }
+
+            if (path.EndsWith("/resolve/revision/config.json", StringComparison.Ordinal))
+            {
+                if (path.Contains("/short/", StringComparison.Ordinal))
+                    return Task.FromResult(JsonResponse("{\"num_hidden_layers\":16,\"hidden_size\":4096,\"num_attention_heads\":32,\"num_key_value_heads\":8,\"max_position_embeddings\":4096}"));
+                if (path.Contains("/missing/", StringComparison.Ordinal))
+                    return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
+                return Task.FromResult(JsonResponse("{\"num_hidden_layers\":8,\"hidden_size\":2048,\"num_attention_heads\":32,\"num_key_value_heads\":4,\"max_position_embeddings\":131072}"));
+            }
+
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.NotFound));
+        }
+
+        private static HttpResponseMessage JsonResponse(string content) => new(System.Net.HttpStatusCode.OK)
+        {
+            Content = new StringContent(content, System.Text.Encoding.UTF8, "application/json")
+        };
     }
 
     private sealed class HuggingFaceMetadataHttpMessageHandler : HttpMessageHandler

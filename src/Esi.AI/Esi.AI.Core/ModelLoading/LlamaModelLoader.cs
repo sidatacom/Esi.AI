@@ -279,7 +279,18 @@ public sealed class LlamaModelLoader : IDisposable
         return discoveredDevices
             .Concat(loadedDevices)
             .GroupBy(device => device.Name, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.Last())
+            .Select(group =>
+            {
+                var discovered = group.FirstOrDefault(device => device.MemoryCapacityMiB is not null);
+                var loaded = group.Last();
+                return loaded with
+                {
+                    Description = loaded.Description ?? discovered?.Description,
+                    Vendor = loaded.Vendor ?? discovered?.Vendor,
+                    Driver = loaded.Driver ?? discovered?.Driver,
+                    MemoryCapacityMiB = loaded.MemoryCapacityMiB ?? discovered?.MemoryCapacityMiB
+                };
+            })
             .OrderBy(device => device.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
     }
@@ -331,7 +342,7 @@ public sealed class LlamaModelLoader : IDisposable
             using var process = Process.Start(new ProcessStartInfo
             {
                 FileName = "vulkaninfo",
-                Arguments = "--summary",
+                Arguments = string.Empty,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 UseShellExecute = false,
@@ -344,15 +355,7 @@ public sealed class LlamaModelLoader : IDisposable
                 process.WaitForExit(5000);
                 var output = outputTask.GetAwaiter().GetResult();
                 var error = errorTask.GetAwaiter().GetResult();
-                var matches = Regex.Matches(output + Environment.NewLine + error, @"deviceName\s*=\s*(.+)", RegexOptions.IgnoreCase);
-                var deviceIndex = 0;
-                foreach (Match match in matches)
-                {
-                    var description = match.Groups[1].Value.Trim();
-                    if (!description.Contains("llvmpipe", StringComparison.OrdinalIgnoreCase))
-                        devices.Add(new VulkanDeviceStatus($"Vulkan{deviceIndex}", description, 0, null));
-                    deviceIndex++;
-                }
+                devices.AddRange(ParseDiscoveredVulkanDevices(output + Environment.NewLine + error));
             }
         }
         catch (Exception)
@@ -372,6 +375,36 @@ public sealed class LlamaModelLoader : IDisposable
             new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase),
             false,
             []);
+    }
+
+    private static IReadOnlyList<VulkanDeviceStatus> ParseDiscoveredVulkanDevices(string output)
+    {
+        var devices = new List<VulkanDeviceStatus>();
+        foreach (Match match in Regex.Matches(output, @"(?ms)^GPU(?<index>\d+):\s*(?<block>.*?)(?=^GPU\d+:|\z)"))
+        {
+            var block = match.Groups["block"].Value;
+            var description = Regex.Match(block, @"(?m)^\s*deviceName\s*=\s*(.+)$").Groups[1].Value.Trim();
+            if (string.IsNullOrWhiteSpace(description) || description.Contains("llvmpipe", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var memoryMatch = Regex.Match(block, @"(?m)^\s*memoryHeaps\[\d+\]:\s*\r?\n\s*size\s*=\s*(\d+)");
+            var memoryCapacityMiB = memoryMatch.Success && long.TryParse(memoryMatch.Groups[1].Value, out var bytes)
+                ? bytes / 1024d / 1024d
+                : (double?)null;
+            var vendor = description.Contains("Intel", StringComparison.OrdinalIgnoreCase)
+                ? "Intel"
+                : description.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) ? "NVIDIA" : null;
+            devices.Add(new VulkanDeviceStatus(
+                $"Vulkan{match.Groups["index"].Value}",
+                description,
+                0,
+                null,
+                vendor,
+                vendor is null ? null : $"{vendor} Vulkan driver",
+                memoryCapacityMiB));
+        }
+
+        return devices;
     }
 
     private void ConfigureBackend(string backend)

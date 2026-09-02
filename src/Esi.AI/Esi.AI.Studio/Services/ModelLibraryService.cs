@@ -27,6 +27,7 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IAsyncDisposable
     private readonly CancellationTokenSource queueCancellation = new();
     private readonly SemaphoreSlim downloadSlots;
     private readonly SemaphoreSlim fileDownloadSlots;
+    private readonly ConcurrentDictionary<string, ModelMemoryProfile> modelMemoryProfiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Task queueWorker;
 
     public ModelLibraryService(
@@ -255,24 +256,151 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IAsyncDisposable
             var merged = new List<HuggingFaceModelInfo>();
             var seenModelIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var resultLimit = Math.Clamp(options.SearchLimit, 1, 100);
-            for (var index = 0; index < results.Max(models => models.Count) && merged.Count < resultLimit; index++)
+            for (var index = 0; index < results.Max(modelSet => modelSet.Count) && merged.Count < resultLimit; index++)
             {
-                foreach (var models in results)
+                foreach (var modelSet in results)
                 {
-                    if (index >= models.Count || !seenModelIds.Add(models[index].Id))
+                    if (index >= modelSet.Count || !seenModelIds.Add(modelSet[index].Id))
                         continue;
-                    merged.Add(models[index]);
+                    merged.Add(modelSet[index]);
                     if (merged.Count == resultLimit)
                         break;
                 }
             }
 
-            return merged;
+            return await ApplyMemoryFilterAsync(merged, request, cancellationToken);
         }
 
-        return await SearchHuggingFaceQueryAsync(
+        var searchModels = await SearchHuggingFaceQueryAsync(
             libraries.Length == 1 ? request with { Libraries = libraries } : request with { Libraries = null },
             cancellationToken);
+        return await ApplyMemoryFilterAsync(searchModels, request, cancellationToken);
+    }
+
+    private async Task<IReadOnlyList<HuggingFaceModelInfo>> ApplyMemoryFilterAsync(
+        IReadOnlyList<HuggingFaceModelInfo> models,
+        HuggingFaceSearchRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.VramBudgetGiB is not > 0 || request.ContextLength is not > 0)
+            return models;
+
+        using var limiter = new SemaphoreSlim(4);
+        var matches = await Task.WhenAll(models.Select(async model =>
+        {
+            await limiter.WaitAsync(cancellationToken);
+            try
+            {
+                return await FitsMemoryBudgetAsync(model.Id, request.VramBudgetGiB.Value, request.ContextLength.Value, cancellationToken);
+            }
+            finally
+            {
+                limiter.Release();
+            }
+        }));
+
+        return models.Where((_, index) => matches[index]).ToArray();
+    }
+
+    private async Task<bool> FitsMemoryBudgetAsync(string modelId, int vramBudgetGiB, uint contextLength, CancellationToken cancellationToken)
+    {
+        if (!modelMemoryProfiles.TryGetValue(modelId, out var profile))
+        {
+            profile = await ReadModelMemoryProfileAsync(modelId, cancellationToken);
+            if (profile is null)
+                return false;
+            modelMemoryProfiles.TryAdd(modelId, profile);
+        }
+
+        if (profile.MaximumContextLength < contextLength)
+            return false;
+
+        var kvCacheBytes = (double)contextLength * 2 * profile.LayerCount * profile.KeyValueHeadCount * profile.HeadDimension * 2;
+        var estimatedBytes = profile.WeightBytes * 1.1 + kvCacheBytes * 1.1;
+        var usableBytes = vramBudgetGiB * 1024d * 1024d * 1024d * .9;
+        return estimatedBytes <= usableBytes;
+    }
+
+    private async Task<ModelMemoryProfile?> ReadModelMemoryProfileAsync(string modelId, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var repository = await ResolveRepositoryAsync(modelId, cancellationToken);
+            var weightBytes = GetModelWeightBytes(repository.Files);
+            if (weightBytes is null)
+                return null;
+
+            using var response = await httpClient.GetAsync($"{GetRepositoryPath(modelId)}/resolve/{Uri.EscapeDataString(repository.Revision)}/config.json", cancellationToken);
+            if (!response.IsSuccessStatusCode)
+                return null;
+            await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+            using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+            var config = document.RootElement;
+            var layerCount = GetConfigNumber(config, "num_hidden_layers", "n_layer", "num_layers");
+            var hiddenSize = GetConfigNumber(config, "hidden_size", "d_model", "n_embd");
+            var attentionHeadCount = GetConfigNumber(config, "num_attention_heads", "n_head");
+            var keyValueHeadCount = GetConfigNumber(config, "num_key_value_heads", "num_kv_heads") ?? attentionHeadCount;
+            var maximumContextLength = GetConfigNumber(config, "max_position_embeddings", "max_seq_len", "max_model_len", "max_sequence_length", "seq_length");
+            if (layerCount is null || hiddenSize is null || attentionHeadCount is null || keyValueHeadCount is null || maximumContextLength is null || attentionHeadCount == 0)
+                return null;
+
+            var headDimension = GetConfigNumber(config, "head_dim") ?? hiddenSize / attentionHeadCount.Value;
+            return headDimension > 0
+                ? new ModelMemoryProfile(weightBytes.Value, layerCount.Value, keyValueHeadCount.Value, headDimension.Value, maximumContextLength.Value)
+                : null;
+        }
+        catch (HttpRequestException)
+        {
+            return null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static long? GetModelWeightBytes(IReadOnlyList<RepositoryFile> files)
+    {
+        var weightFiles = files.Where(file => IsWeightFile(file.Name)).ToArray();
+        if (weightFiles.Length == 0 || weightFiles.Any(file => file.SizeInBytes is null))
+            return null;
+
+        var ggufGroups = weightFiles
+            .Where(file => file.Name.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase))
+            .GroupBy(file => GetGgufSetKey(file.Name), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.Sum(file => file.SizeInBytes!.Value))
+            .ToArray();
+        return ggufGroups.Length > 0 ? ggufGroups.Min() : weightFiles.Sum(file => file.SizeInBytes!.Value);
+    }
+
+    private static bool IsWeightFile(string fileName) =>
+        fileName.EndsWith(".safetensors", StringComparison.OrdinalIgnoreCase) ||
+        fileName.EndsWith(".bin", StringComparison.OrdinalIgnoreCase) ||
+        fileName.EndsWith(".pt", StringComparison.OrdinalIgnoreCase) ||
+        fileName.EndsWith(".pth", StringComparison.OrdinalIgnoreCase) ||
+        fileName.EndsWith(".gguf", StringComparison.OrdinalIgnoreCase);
+
+    private static long? GetConfigNumber(JsonElement config, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            if (!config.TryGetProperty(name, out var value))
+                continue;
+            if (value.TryGetInt64(out var number))
+                return number;
+            if (value.ValueKind == JsonValueKind.String && long.TryParse(value.GetString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out number))
+                return number;
+        }
+
+        if (config.TryGetProperty("text_config", out var textConfig) && textConfig.ValueKind == JsonValueKind.Object)
+            return GetConfigNumber(textConfig, names);
+        return null;
+    }
+
+    private static string GetRepositoryPath(string modelId)
+    {
+        var segments = modelId.Split('/');
+        return $"{Uri.EscapeDataString(segments[0])}/{Uri.EscapeDataString(segments[1])}";
     }
 
     private async Task<IReadOnlyList<HuggingFaceModelInfo>> SearchHuggingFaceQueryAsync(
@@ -919,6 +1047,13 @@ public sealed record HuggingFaceRepositoryMetadata(
     string? LibraryName,
     string? PipelineTag,
     IReadOnlyList<string> Tags);
+
+internal sealed record ModelMemoryProfile(
+    long WeightBytes,
+    long LayerCount,
+    long KeyValueHeadCount,
+    long HeadDimension,
+    long MaximumContextLength);
 
 public sealed record ModelDownloadStatus(Guid Id, string ModelId, string FileName, string DestinationPath, long BytesDownloaded, long? TotalBytes, bool Completed, string? Error, bool Paused = false, bool Queued = false, IReadOnlyList<DownloadFileStatus>? Files = null);
 

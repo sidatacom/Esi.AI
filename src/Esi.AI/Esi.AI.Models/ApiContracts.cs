@@ -344,7 +344,9 @@ public sealed record HuggingFaceSearchRequest(
     IReadOnlyList<string>? InferenceProviders = null,
     bool BaseOnly = false,
     bool InferenceAvailable = false,
-    string Sort = "downloads");
+    string Sort = "downloads",
+    int? VramBudgetGiB = null,
+    uint? ContextLength = null);
 
 public sealed record SelectModelRequest(string Path);
 
@@ -467,7 +469,8 @@ public sealed record VulkanDeviceStatus(
     int AssignedLayerCount,
     double? ModelBufferMiB,
     string? Vendor = null,
-    string? Driver = null);
+    string? Driver = null,
+    double? MemoryCapacityMiB = null);
 
 public sealed record LoadedModelStatus(
     string ModelPath,
