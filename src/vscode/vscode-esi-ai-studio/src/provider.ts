@@ -4,6 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const apiKeySecret = "esiAiStudio.apiKey";
+const defaultTraceFilePath = join(tmpdir(), "esi-ai-studio-provider.jsonl");
+const loggingEnabledStateKey = "loggingEnabled";
+const loggingPathStateKey = "loggingPath";
 
 interface OpenAiModel {
   id?: unknown;
@@ -80,7 +83,6 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
   private backendModelIds = new Map<string, string>();
   private refreshPromise?: Promise<number>;
   private retryTimer?: ReturnType<typeof setInterval>;
-  private readonly traceFilePath = join(tmpdir(), "esi-ai-studio-provider.jsonl");
   private traceSequence = 0;
 
   public readonly onDidChangeLanguageModelChatInformation = this.changeEmitter.event;
@@ -313,6 +315,33 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     this.output.dispose();
   }
 
+  public getLoggingEnabled(): boolean {
+    const configuration = vscode.workspace.getConfiguration("esiAiStudio");
+    return configuration.inspect<boolean>(loggingEnabledStateKey) ? configuration.get<boolean>(loggingEnabledStateKey, true) : this.context.globalState.get(loggingEnabledStateKey, true);
+  }
+
+  public getLoggingPath(): string {
+    const configuration = vscode.workspace.getConfiguration("esiAiStudio");
+    return configuration.inspect<string>(loggingPathStateKey) ? configuration.get<string>(loggingPathStateKey, "") : this.context.globalState.get(loggingPathStateKey, "");
+  }
+
+  public async updateLoggingSetting(key: typeof loggingEnabledStateKey | typeof loggingPathStateKey, value: boolean | string): Promise<void> {
+    const configuration = vscode.workspace.getConfiguration("esiAiStudio");
+    if (!configuration.inspect(key)) {
+      await this.context.globalState.update(key, value);
+      return;
+    }
+
+    try {
+      await configuration.update(key, value, vscode.ConfigurationTarget.Global);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("is not a registered configuration")) {
+        throw error;
+      }
+      await this.context.globalState.update(key, value);
+    }
+  }
+
   private async listModels(token?: vscode.CancellationToken): Promise<OpenAiModel[]> {
     const response = await this.request("/models", undefined, token);
     const payload = (await response.json()) as OpenAiModelsResponse;
@@ -399,9 +428,15 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
   }
 
   private trace(event: string, details: Record<string, unknown>): void {
+    if (!this.getLoggingEnabled()) {
+      return;
+    }
+
+    const configuredPath = this.getLoggingPath().trim();
+    const traceFilePath = configuredPath || defaultTraceFilePath;
     const entry = JSON.stringify({ timestamp: new Date().toISOString(), event, ...details });
     try {
-      appendFileSync(this.traceFilePath, `${entry}\n`, "utf8");
+      appendFileSync(traceFilePath, `${entry}\n`, "utf8");
     } catch {
       // Request tracing must never change provider behavior.
     }

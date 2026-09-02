@@ -1,6 +1,10 @@
 import { randomBytes } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as vscode from "vscode";
 import { EsiAiStudioProvider } from "./provider.js";
+
+const defaultTraceFilePath = join(tmpdir(), "esi-ai-studio-provider.jsonl");
 
 export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewProvider {
   public static readonly viewId = "esiAiStudio.configuration";
@@ -29,6 +33,17 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
         case "saveTimeout":
           await this.saveSetting("requestTimeoutMs", message.value, "Timeout gespeichert.");
           return;
+        case "saveLoggingEnabled":
+          if (typeof message.value !== "boolean") {
+            await this.postStatus("Bitte den Logging-Schalter verwenden.", true);
+            return;
+          }
+          await this.provider.updateLoggingSetting("loggingEnabled", message.value);
+          await this.postStatus(message.value ? "Request-Logging aktiviert." : "Request-Logging deaktiviert.");
+          return;
+        case "saveLoggingPath":
+          await this.saveSetting("loggingPath", message.value, "Logpfad gespeichert.", true);
+          return;
         case "refresh":
           await this.postStatus("Modellliste wird aktualisiert.");
           await this.provider.refresh();
@@ -51,8 +66,8 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
     }
   }
 
-  private async saveSetting(key: string, value: unknown, successMessage: string): Promise<void> {
-    if (typeof value !== "string" || value.trim().length === 0) {
+  private async saveSetting(key: string, value: unknown, successMessage: string, allowEmpty = false): Promise<void> {
+    if (typeof value !== "string" || (!allowEmpty && value.trim().length === 0)) {
       await this.postStatus("Bitte einen Wert eingeben.", true);
       return;
     }
@@ -91,6 +106,8 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
     const configuration = vscode.workspace.getConfiguration("esiAiStudio");
     const baseUrl = escapeHtml(configuration.get<string>("baseUrl", "http://127.0.0.1:7010/v1"));
     const timeout = configuration.get<number>("requestTimeoutMs", 120000).toString();
+    const loggingEnabled = this.provider.getLoggingEnabled();
+    const loggingPath = escapeHtml(this.provider.getLoggingPath().trim() || defaultTraceFilePath);
     const nonce = randomBytes(16).toString("base64");
 
     return `<!DOCTYPE html>
@@ -128,6 +145,11 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
   <label><span>Request Timeout (ms)</span><input id="timeout" type="number" min="1000" step="1000" value="${timeout}"></label>
   <button id="save-timeout" type="button">Timeout speichern</button>
 
+  <h2>Logging</h2>
+  <label><span><input id="logging-enabled" type="checkbox" ${loggingEnabled ? "checked" : ""}> Request-Logging aktivieren</span></label>
+  <label><span>Logpfad</span><input id="logging-path" type="text" value="${loggingPath}" spellcheck="false"></label>
+  <button id="save-logging-path" type="button">Logpfad speichern</button>
+
   <h2>Modelle</h2>
   <p class="endpoint">GET /models</p>
   <button id="test-connection" class="secondary" type="button">Verbindung testen</button>
@@ -148,6 +170,8 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
     };
     document.getElementById("save-url").addEventListener("click", () => vscode.postMessage({ command: "saveBaseUrl", value: document.getElementById("base-url").value }));
     document.getElementById("save-timeout").addEventListener("click", () => vscode.postMessage({ command: "saveTimeout", value: document.getElementById("timeout").value }));
+    document.getElementById("logging-enabled").addEventListener("change", event => vscode.postMessage({ command: "saveLoggingEnabled", value: event.target.checked }));
+    document.getElementById("save-logging-path").addEventListener("click", () => vscode.postMessage({ command: "saveLoggingPath", value: document.getElementById("logging-path").value }));
     document.getElementById("test-connection").addEventListener("click", () => { showStatus("Verbindung wird geprüft."); vscode.postMessage({ command: "testConnection" }); });
     document.getElementById("refresh").addEventListener("click", () => { showStatus("Modellliste wird aktualisiert."); vscode.postMessage({ command: "refresh" }); });
     document.getElementById("api-key").addEventListener("click", () => vscode.postMessage({ command: "configureApiKey" }));

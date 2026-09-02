@@ -2,7 +2,7 @@
   "name": "vscode-esi-ai-studio",
   "displayName": "Esi.AI Studio Models",
   "description": "Use models loaded by Esi.AI Studio as VS Code language models.",
-  "version": "0.1.13",
+  "version": "0.1.15",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
@@ -85,6 +85,16 @@
           "default": 120000,
           "minimum": 1000,
           "description": "Maximum time in milliseconds for one Esi.AI Studio request."
+        },
+        "esiAiStudio.loggingEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write provider requests, responses, and bounded SSE traces to the configured log path."
+        },
+        "esiAiStudio.loggingPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path for the provider JSONL trace. Leave empty to use the operating system temporary directory."
         },
         "esiAiStudio.maxInputTokens": {
           "type": "number",
