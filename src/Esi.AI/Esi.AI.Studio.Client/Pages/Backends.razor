@@ -1704,7 +1704,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         public string Device { get; set; } = "CPU";
         public Dictionary<string, OpenVinoDeviceSetting> Devices { get; } = new(StringComparer.OrdinalIgnoreCase);
         public string CacheDirectory { get; set; } = string.Empty;
-        public int MaxNewTokens { get; set; } = 512;
+        public int MaxNewTokens { get; set; } = 128;
         public float Temperature { get; set; } = 0.7f;
         public float TopP { get; set; } = 0.9f;
         public bool DoSample { get; set; } = true;
@@ -2518,7 +2518,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     {
         openVinoForm.Device = string.Empty;
         openVinoForm.CacheDirectory = string.Empty;
-        openVinoForm.MaxNewTokens = 512;
+        openVinoForm.MaxNewTokens = 128;
         openVinoForm.Temperature = .7f;
         openVinoForm.TopP = .9f;
         openVinoForm.DoSample = true;

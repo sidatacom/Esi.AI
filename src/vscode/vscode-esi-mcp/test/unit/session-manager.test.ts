@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { DebugEvent } from "../../src/debug/manager.js";
 
 class MockTerminal {
   readonly name: string;
@@ -20,6 +21,7 @@ const mockState = vi.hoisted(() => ({
   onDidCloseTerminal: vi.fn(() => ({ dispose: vi.fn() })),
   onDidStartTerminalShellExecution: vi.fn(() => ({ dispose: vi.fn() })),
   onDidEndTerminalShellExecution: vi.fn(() => ({ dispose: vi.fn() })),
+  debugEventListeners: [] as Array<(event: DebugEvent) => void>,
 }));
 
 vi.mock("vscode", () => ({
@@ -57,6 +59,7 @@ describe("SessionManager terminal recovery", () => {
     mockState.terminals.length = 0;
     mockState.includeAllTerminals = false;
     mockState.debugHostReadinessTimeoutSeconds = 60;
+    mockState.debugEventListeners.length = 0;
     vi.clearAllMocks();
   });
 
@@ -193,6 +196,36 @@ describe("SessionManager terminal recovery", () => {
     });
 
     await expect(manager.waitForDebugHostReadiness()).resolves.toBe(true);
+    manager.dispose();
+  });
+
+  it("aborts readiness waiting when the debug session raises an exception", async () => {
+    const debugEventDisposable = { dispose: vi.fn() };
+    const debugManager = {
+      onDebugEvent: vi.fn((listener: (event: DebugEvent) => void) => {
+        mockState.debugEventListeners.push(listener);
+        return debugEventDisposable;
+      }),
+    };
+    const manager = new SessionManager();
+    const readiness = manager.waitForDebugHostReadiness(debugManager);
+
+    mockState.debugEventListeners[0]?.({
+      id: 1,
+      type: "paused",
+      sessionId: "session-1",
+      sessionName: "Esi.Web .NET Server",
+      timestamp: new Date().toISOString(),
+      reason: "exception",
+      exceptionType: "System.InvalidOperationException",
+      exceptionMessage: "startup failed",
+    });
+
+    await expect(readiness).rejects.toMatchObject({
+      code: "DEBUG_SESSION_EXCEPTION",
+      message: "Debug session exception: startup failed",
+    });
+    expect(debugEventDisposable.dispose).toHaveBeenCalledOnce();
     manager.dispose();
   });
 

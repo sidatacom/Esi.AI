@@ -7,7 +7,8 @@ public sealed record LocalModel(
     DateTime LastWriteTimeUtc,
     ReferenceModelFormat Format = ReferenceModelFormat.Gguf,
     IReadOnlyList<ConfigurationBackend>? CompatibleBackends = null,
-    string? HuggingFaceModelId = null);
+    string? HuggingFaceModelId = null,
+    ModelCapabilities? Capabilities = null);
 
 public sealed record HuggingFaceModel(
     string Id,
@@ -22,8 +23,9 @@ public sealed record HuggingFaceModel(
 
 public sealed record ModelCompatibilityUpdate(
     string ModelPath,
-    IReadOnlyList<ConfigurationBackend> CompatibleBackends,
-    string? HuggingFaceModelId = null);
+    IReadOnlyList<ConfigurationBackend>? CompatibleBackends = null,
+    string? HuggingFaceModelId = null,
+    ModelCapabilities? Capabilities = null);
 
 public sealed record ModelDeletionRequest(string ModelPath, bool DeleteFiles);
 
@@ -75,6 +77,24 @@ public static class ModelBackendCompatibility
             values.Add(ConfigurationBackend.Sglang);
 
         return Enum.GetValues<ConfigurationBackend>().Where(values.Contains).ToArray();
+    }
+
+    /// <summary>Infers provider capabilities from Hugging Face repository metadata.</summary>
+    public static ModelCapabilities CapabilitiesFromHuggingFace(
+        string? pipelineTag,
+        IReadOnlyList<string>? tags)
+    {
+        var normalizedTags = tags?
+            .Where(tag => !string.IsNullOrWhiteSpace(tag))
+            .Select(tag => tag.Trim().ToLowerInvariant())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase) ?? [];
+        var normalizedPipeline = pipelineTag?.Trim().ToLowerInvariant() ?? string.Empty;
+        var tooling = normalizedTags.Any(tag => tag is "tool-use" or "tool_use" or "tool-calling" or "tool_calling" or "function-calling" or "function_calling" or "function-calling-capable" or "agents");
+        var vision = normalizedPipeline is "image-text-to-text" or "image-to-text" or "visual-question-answering" or "video-text-to-text"
+            || normalizedTags.Any(tag => tag is "vision" or "multimodal" or "vision-language-model" or "image-text-to-text");
+        var thinking = normalizedTags.Any(tag => tag is "thinking" or "reasoning" or "chain-of-thought" or "chain_of_thought" or "cot");
+
+        return new ModelCapabilities(ToolCalling: tooling, ImageInput: vision, Thinking: thinking);
     }
 }
 

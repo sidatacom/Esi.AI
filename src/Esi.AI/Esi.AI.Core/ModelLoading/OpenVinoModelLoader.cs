@@ -11,6 +11,7 @@ namespace Esi.AI.Core.ModelLoading;
 public sealed class OpenVinoModelLoader : IDisposable
 {
     private readonly SemaphoreSlim loadLock = new(1, 1);
+    private readonly SemaphoreSlim generationLock = new(1, 1);
     private readonly ConcurrentQueue<string> loadLog = new();
     private static int linuxRuntimeInitialized;
     private LLMPipeline? llmPipeline;
@@ -221,8 +222,8 @@ public sealed class OpenVinoModelLoader : IDisposable
                 throw new InvalidOperationException("Load an OpenVINO model before starting a chat.");
 
             return llmPipeline is not null
-                ? new OpenVinoChatSession(llmPipeline)
-                : new OpenVinoChatSession(vlmPipeline!);
+                ? new OpenVinoChatSession(llmPipeline, generationLock)
+                : new OpenVinoChatSession(vlmPipeline!, generationLock);
         }
         finally
         {
@@ -249,6 +250,7 @@ public sealed class OpenVinoModelLoader : IDisposable
     public void Dispose()
     {
         DisposePipelines();
+        generationLock.Dispose();
         loadLock.Dispose();
     }
 
@@ -570,15 +572,18 @@ public sealed class OpenVinoChatSession : IDisposable
 {
     private readonly LLMPipeline? llmPipeline;
     private readonly VLMPipeline? vlmPipeline;
+    private readonly SemaphoreSlim generationLock;
 
-    internal OpenVinoChatSession(LLMPipeline pipeline)
+    internal OpenVinoChatSession(LLMPipeline pipeline, SemaphoreSlim generationLock)
     {
         llmPipeline = pipeline;
+        this.generationLock = generationLock;
     }
 
-    internal OpenVinoChatSession(VLMPipeline pipeline)
+    internal OpenVinoChatSession(VLMPipeline pipeline, SemaphoreSlim generationLock)
     {
         vlmPipeline = pipeline;
+        this.generationLock = generationLock;
     }
 
     public string Generate(string prompt, Action<string>? streamer = null) => GenerateWithStats(prompt, streamer).Text;
@@ -588,33 +593,41 @@ public sealed class OpenVinoChatSession : IDisposable
         if (string.IsNullOrWhiteSpace(prompt))
             throw new ArgumentException("A prompt is required.", nameof(prompt));
 
-        if (llmPipeline is not null)
+        generationLock.Wait();
+        try
         {
-            using var results = streamer is null
-                ? llmPipeline.Generate(prompt)
-                : llmPipeline.Generate(prompt, streamer);
-            return CreateGenerationResult(results.GetText(), results.GetPerformanceMetrics());
-        }
-
-        if (vlmPipeline is not null)
-        {
-            using var history = new ChatHistory();
-            history.AddUserMessage(prompt);
-            if (streamer is null)
+            if (llmPipeline is not null)
             {
-                using var results = vlmPipeline.GenerateWithHistory(history);
+                using var results = streamer is null
+                    ? llmPipeline.Generate(prompt)
+                    : llmPipeline.Generate(prompt, streamer);
                 return CreateGenerationResult(results.GetText(), results.GetPerformanceMetrics());
             }
 
-            using var streamedResults = vlmPipeline.GenerateWithHistory(history, null, null, text =>
+            if (vlmPipeline is not null)
             {
-                streamer(text);
-                return StreamingStatus.Running;
-            });
-            return CreateGenerationResult(streamedResults.GetText(), streamedResults.GetPerformanceMetrics());
-        }
+                using var history = new ChatHistory();
+                history.AddUserMessage(prompt);
+                if (streamer is null)
+                {
+                    using var nonStreamingResults = vlmPipeline.GenerateWithHistory(history);
+                    return CreateGenerationResult(nonStreamingResults.GetText(), nonStreamingResults.GetPerformanceMetrics());
+                }
 
-        throw new InvalidOperationException("No OpenVINO pipeline is available for this chat session.");
+                using var streamedResults = vlmPipeline.GenerateWithHistory(history, null, null, text =>
+                {
+                    streamer(text);
+                    return StreamingStatus.Running;
+                });
+                return CreateGenerationResult(streamedResults.GetText(), streamedResults.GetPerformanceMetrics());
+            }
+
+            throw new InvalidOperationException("No OpenVINO pipeline is available for this chat session.");
+        }
+        finally
+        {
+            generationLock.Release();
+        }
     }
 
     private static OpenVinoGenerationResult CreateGenerationResult(string text, PerformanceMetrics metrics)
@@ -633,7 +646,7 @@ public sealed class OpenVinoChatSession : IDisposable
 public sealed record OpenVinoGenerationResult(string Text, int TokenCount, double TokensPerSecond);
 
 public sealed record OpenVinoGenerationOptions(
-    int MaxNewTokens = 512,
+    int MaxNewTokens = 128,
     float Temperature = .7f,
     float TopP = .9f,
     bool DoSample = true,

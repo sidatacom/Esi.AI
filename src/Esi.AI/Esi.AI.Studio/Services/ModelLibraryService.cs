@@ -15,7 +15,7 @@ using YamlDotNet.RepresentationModel;
 
 namespace Esi.AI.Studio.Services;
 
-public sealed class ModelLibraryService : IAsyncDisposable
+public sealed class ModelLibraryService : ILocalModelCatalog, IAsyncDisposable
 {
     private readonly HttpClient httpClient;
     private readonly IHubContext<DataHub> hubContext;

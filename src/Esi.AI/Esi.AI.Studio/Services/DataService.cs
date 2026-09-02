@@ -47,6 +47,7 @@ public sealed class DataService(
                     Id = Guid.NewGuid(),
                     ModelPath = model.Path,
                     CompatibleBackendsJson = JsonSerializer.Serialize(ModelBackendCompatibility.ForFormat(model.Format)),
+                    CapabilitiesJson = JsonSerializer.Serialize(new ModelCapabilities()),
                     UpdatedAtUtc = now
                 };
                 db.ModelMetadata.Add(entity);
@@ -63,7 +64,8 @@ public sealed class DataService(
             }
 
             var compatibleBackends = JsonSerializer.Deserialize<ConfigurationBackend[]>(entity.CompatibleBackendsJson) ?? [];
-            result.Add(new LocalModel(model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc, model.Format, compatibleBackends, entity.HuggingFaceModelId));
+            var capabilities = JsonSerializer.Deserialize<ModelCapabilities>(entity.CapabilitiesJson) ?? new ModelCapabilities();
+            result.Add(new LocalModel(model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc, model.Format, compatibleBackends, entity.HuggingFaceModelId, capabilities));
         }
 
         if (db.ChangeTracker.HasChanges())
@@ -121,11 +123,15 @@ public sealed class DataService(
     public async Task<IReadOnlyList<LocalModel>> LocalModel_UpdateAsync(ModelCompatibilityUpdate update, CancellationToken cancellationToken = default)
     {
         var modelPath = Path.GetFullPath(update.ModelPath.Trim());
-        var compatibleBackends = NormalizeBackends(update.CompatibleBackends);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var entity = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == modelPath, cancellationToken);
         entity ??= new ModelMetadataEntity { Id = Guid.NewGuid(), ModelPath = modelPath };
+        var existingBackends = JsonSerializer.Deserialize<ConfigurationBackend[]>(entity.CompatibleBackendsJson) ?? [];
+        var compatibleBackends = update.CompatibleBackends is null
+            ? existingBackends
+            : NormalizeBackends(update.CompatibleBackends);
         entity.CompatibleBackendsJson = JsonSerializer.Serialize(compatibleBackends);
+        entity.CapabilitiesJson = JsonSerializer.Serialize(update.Capabilities ?? new ModelCapabilities());
         entity.HuggingFaceModelId = string.IsNullOrWhiteSpace(update.HuggingFaceModelId) ? null : update.HuggingFaceModelId.Trim();
         entity.IsManuallyConfigured = true;
         entity.UpdatedAtUtc = DateTime.UtcNow;
@@ -150,6 +156,7 @@ public sealed class DataService(
             var entity = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == normalizedPath, cancellationToken);
             entity ??= new ModelMetadataEntity { Id = Guid.NewGuid(), ModelPath = normalizedPath };
             entity.CompatibleBackendsJson = JsonSerializer.Serialize(compatibleBackends);
+            entity.CapabilitiesJson = JsonSerializer.Serialize(ModelBackendCompatibility.CapabilitiesFromHuggingFace(metadata.PipelineTag, metadata.Tags));
             entity.HuggingFaceModelId = normalizedModelId;
             entity.HuggingFaceRevision = metadata.Revision;
             entity.HuggingFaceSynchronizedAtUtc = DateTime.UtcNow;

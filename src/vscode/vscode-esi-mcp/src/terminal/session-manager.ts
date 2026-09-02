@@ -1,11 +1,25 @@
 import * as vscode from "vscode";
 import { TerminalSession } from "./session.js";
+import type { DebugEvent, DebugManager } from "../debug/manager.js";
 import type {
   TerminalSessionConfig,
   TerminalSessionInfo,
   SecurityConfig,
 } from "../types/index.js";
 import { log, logError } from "../utils/logger.js";
+
+export const DEBUG_SESSION_EXCEPTION_ERROR_CODE = "DEBUG_SESSION_EXCEPTION";
+
+export class DebugSessionExceptionError extends Error {
+  readonly code = DEBUG_SESSION_EXCEPTION_ERROR_CODE;
+  readonly event: DebugEvent;
+
+  constructor(event: DebugEvent) {
+    super(event.exceptionMessage ? `Debug session exception: ${event.exceptionMessage}` : "Debug session exception occurred");
+    this.name = "DebugSessionExceptionError";
+    this.event = event;
+  }
+}
 
 export interface TerminalOutputWaiter {
   promise: Promise<void>;
@@ -185,16 +199,46 @@ export class SessionManager {
     this.debugHostReadyRecentOutput = "";
   }
 
-  async waitForDebugHostReadiness(): Promise<boolean> {
+  async waitForDebugHostReadiness(debugManager?: Pick<DebugManager, "onDebugEvent">): Promise<boolean> {
     const timeoutMs = this.getDebugHostReadinessTimeoutMs();
     const startedAt = Date.now();
 
-    while (Date.now() - startedAt < timeoutMs) {
-      if (this.debugHostReady) return true;
-      await new Promise((resolve) => setTimeout(resolve, Math.min(1000, timeoutMs - (Date.now() - startedAt))));
-    }
+    if (this.debugHostReady) return true;
 
-    return this.debugHostReady;
+    return new Promise<boolean>((resolve, reject) => {
+      let settled = false;
+      let pollTimer: ReturnType<typeof setTimeout> | undefined;
+      let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+      let debugEventDisposable: { dispose(): unknown } | undefined;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (pollTimer) clearTimeout(pollTimer);
+        if (timeoutTimer) clearTimeout(timeoutTimer);
+        debugEventDisposable?.dispose();
+        error ? reject(error) : resolve(this.debugHostReady);
+      };
+      const checkReadiness = () => {
+        if (this.debugHostReady) {
+          finish();
+          return;
+        }
+
+        const remainingMs = timeoutMs - (Date.now() - startedAt);
+        if (remainingMs <= 0) {
+          finish();
+          return;
+        }
+
+        pollTimer = setTimeout(checkReadiness, Math.min(1000, remainingMs));
+      };
+
+      debugEventDisposable = debugManager?.onDebugEvent((event) => {
+        if (event.type === "paused" && event.reason === "exception") finish(new DebugSessionExceptionError(event));
+      });
+      timeoutTimer = setTimeout(() => finish(), timeoutMs);
+      checkReadiness();
+    });
   }
 
   waitForTerminalOutput(expectedText: string, timeoutMs: number): TerminalOutputWaiter {

@@ -8,6 +8,8 @@ public sealed class ModelMetadataEntity
 
     public string CompatibleBackendsJson { get; set; } = "[]";
 
+    public string CapabilitiesJson { get; set; } = "{}";
+
     public string? HuggingFaceModelId { get; set; }
 
     public string? HuggingFaceRevision { get; set; }

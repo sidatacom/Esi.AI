@@ -121,7 +121,7 @@ export function createMcpRequestHandler(
         },
         serverInfo: {
           name: "EsiMCP",
-          version: "1.0.12",
+          version: "1.0.13",
         },
       };
     }
@@ -157,10 +157,12 @@ export function createMcpRequestHandler(
         return result;
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
+        const errorCode = typeof err === "object" && err !== null && "code" in err && typeof err.code === "string" ? err.code : undefined;
         logError(`Tool ${name} failed`, err);
         return {
-          content: [{ type: "text", text: `Error: ${errorMsg}` }],
+          content: [{ type: "text", text: errorCode ? JSON.stringify({ errorCode, error: errorMsg }) : `Error: ${errorMsg}` }],
           isError: true,
+          ...(errorCode ? { errorCode } : {}),
         };
       }
     }

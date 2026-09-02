@@ -15,6 +15,10 @@ using Esi.AI.Studio.Client.Services;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Core.Chat;
 using Esi.AI.Models;
+using Esi.AI.Studio;
+
+EnsureStudioWatchdogIsRunning();
+StudioProcessIsolation.Configure();
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseStaticWebAssets();
@@ -90,7 +94,6 @@ builder.Services.AddDatabaseDeveloperPageExceptionFilter();
 builder.Services.AddIdentityCore<ApplicationUser>(options =>
     {
         options.SignIn.RequireConfirmedAccount = true;
-        options.Stores.SchemaVersion = IdentitySchemaVersions.Version3;
     })
     .AddEntityFrameworkStores<ApplicationDbContext>()
     .AddSignInManager()
@@ -102,6 +105,7 @@ builder.Services.AddSingleton<OpenVinoDriverInstaller>();
 builder.Services.AddSingleton<BackendPrerequisiteProvisioner>();
 builder.Services.AddSingleton<BackendRequirementMonitor>();
 builder.Services.AddHostedService(services => services.GetRequiredService<BackendRequirementMonitor>());
+builder.Services.AddHostedService<StudioWatchdogLease>();
 builder.Services.AddSingleton<IModelRuntimeStatusPublisher, SignalRModelRuntimeStatusPublisher>();
 builder.Services.AddSingleton<ModelRuntime>();
 builder.Services.AddHostedService(services => services.GetRequiredService<ModelRuntime>());
@@ -116,6 +120,16 @@ builder.Services.AddHttpClient("HuggingFace", client =>
     if (!string.IsNullOrWhiteSpace(token))
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 });
+builder.Services.Configure<OmniRouteOptions>(builder.Configuration.GetSection("OmniRoute"));
+builder.Services.AddHttpClient<IOmniRouteClient, OmniRouteClient>((services, client) =>
+{
+    var options = services.GetRequiredService<IOptions<OmniRouteOptions>>().Value;
+    if (!Uri.TryCreate(options.BaseUrl.TrimEnd('/') + "/v1/", UriKind.Absolute, out var baseUri))
+        throw new InvalidOperationException("OmniRoute:BaseUrl must be an absolute URI.");
+
+    client.BaseAddress = baseUri;
+    client.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.TimeoutSeconds));
+});
 builder.Services.Configure<ModelLibraryOptions>(builder.Configuration.GetSection("ModelLibrary"));
 builder.Services.AddSingleton<ModelLibraryService>(services =>
     new ModelLibraryService(
@@ -123,6 +137,7 @@ builder.Services.AddSingleton<ModelLibraryService>(services =>
         services.GetRequiredService<IHubContext<DataHub>>(),
         services.GetRequiredService<IDbContextFactory<ApplicationDbContext>>(),
         services.GetRequiredService<IOptions<ModelLibraryOptions>>()));
+builder.Services.AddSingleton<ILocalModelCatalog>(services => services.GetRequiredService<ModelLibraryService>());
 builder.Services.AddScoped<DataService>();
     builder.Services.AddScoped<IDataService>(services => services.GetRequiredService<DataService>());
 
@@ -174,4 +189,14 @@ app.MapHub<DataHub>("/hubs/data");
 app.MapAdditionalIdentityEndpoints();
 
 app.Run();
+
+static void EnsureStudioWatchdogIsRunning()
+{
+    var pidFile = Environment.GetEnvironmentVariable("ESI_AI_STUDIO_WATCHDOG_PID_FILE");
+    if (string.IsNullOrWhiteSpace(pidFile) || !File.Exists(pidFile))
+        throw new InvalidOperationException("Esi.AI Studio refuses to start without the project watchdog.");
+
+    if (!StudioProcessIsolation.IsWatchdogAlive(pidFile))
+        throw new InvalidOperationException("Esi.AI Studio refuses to start because the watchdog is not running.");
+}
 

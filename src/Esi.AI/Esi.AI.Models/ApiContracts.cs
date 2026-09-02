@@ -1,3 +1,6 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
 namespace Esi.AI.Models;
 
 public enum ConfigurationBackend
@@ -96,6 +99,97 @@ public sealed record ChatRequest(IReadOnlyList<ChatMessageRequest> Messages, str
 public sealed record ChatMessageRequest(string Role, string Content);
 
 public sealed record ChatResponse(string Content);
+
+public sealed record OpenAiChatRequest(
+    string? Model,
+    IReadOnlyList<OpenAiChatMessage>? Messages,
+    bool Stream = false)
+{
+    [JsonExtensionData]
+    public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
+}
+
+/// <summary>Configures the optional OmniRoute OpenAI-compatible upstream.</summary>
+public sealed class OmniRouteOptions
+{
+    /// <summary>Gets or sets a value indicating whether OmniRoute should be used as an upstream.</summary>
+    public bool Enabled { get; set; }
+
+    /// <summary>Gets or sets the base URL of the OmniRoute server.</summary>
+    public string BaseUrl { get; set; } = "http://localhost:20128";
+
+    /// <summary>Gets or sets the optional bearer token used for OmniRoute requests.</summary>
+    public string? ApiKey { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether the incoming bearer token may be forwarded.</summary>
+    public bool ForwardAuthorizationHeader { get; set; }
+
+    /// <summary>Gets or sets the request timeout in seconds.</summary>
+    public int TimeoutSeconds { get; set; } = 120;
+}
+
+public sealed record OpenAiChatMessage(
+    string Role,
+    string? Content = null,
+    [property: JsonPropertyName("tool_calls")] IReadOnlyList<OpenAiToolCall>? ToolCalls = null,
+    [property: JsonPropertyName("tool_call_id")] string? ToolCallId = null);
+
+public sealed record OpenAiToolCall(
+    string Id,
+    string Type,
+    OpenAiToolCallFunction Function);
+
+public sealed record OpenAiToolCallFunction(
+    string Name,
+    string Arguments);
+
+public sealed record OpenAiModelListResponse(string Object, IReadOnlyList<OpenAiModel> Data);
+
+/// <summary>Describes the capabilities supported by an individual language model.</summary>
+public sealed record ModelCapabilities(
+    bool ToolCalling = false,
+    bool ImageInput = false,
+    bool AgentMode = false,
+    bool Thinking = false);
+
+public sealed record OpenAiModel(
+    string Id,
+    string Object,
+    long Created,
+    [property: JsonPropertyName("owned_by")] string OwnedBy,
+    string? Name = null,
+    ModelCapabilities? Capabilities = null,
+    bool Loaded = false);
+
+public sealed record OpenAiChatCompletionResponse(
+    string Id,
+    string Object,
+    long Created,
+    string Model,
+    IReadOnlyList<OpenAiChatCompletionChoice> Choices);
+
+public sealed record OpenAiChatCompletionChoice(
+    int Index,
+    OpenAiChatMessage Message,
+    [property: JsonPropertyName("finish_reason")] string FinishReason);
+
+public sealed record OpenAiChatCompletionChunk(
+    string Id,
+    string Object,
+    long Created,
+    string Model,
+    IReadOnlyList<OpenAiChatCompletionChunkChoice> Choices);
+
+public sealed record OpenAiChatCompletionChunkChoice(
+    int Index,
+    OpenAiChatCompletionDelta Delta,
+    [property: JsonPropertyName("finish_reason")] string? FinishReason);
+
+public sealed record OpenAiChatCompletionDelta(string? Role = null, string? Content = null);
+
+public sealed record OpenAiErrorResponse(OpenAiError Error);
+
+public sealed record OpenAiError(string Message, string Type);
 
 public sealed record CreateChatRequest(string? Title = null);
 
@@ -211,7 +305,7 @@ public sealed record OpenVinoLoadRequest(
     string ModelPath,
     string Device,
     string CacheDirectory = "",
-    int MaxNewTokens = 512,
+    int MaxNewTokens = 128,
     float Temperature = .7f,
     float TopP = .9f,
     bool DoSample = true,

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.13] - 2026-09-02
+
+### Fixed
+- Abort debug host readiness waiting when the active debug session raises an exception, returning `DEBUG_SESSION_EXCEPTION`
+
 ## [1.0.12] - 2026-08-22
 
 ### Fixed

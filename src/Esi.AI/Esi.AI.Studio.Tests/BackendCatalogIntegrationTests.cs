@@ -524,6 +524,18 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
+    public void ModelBackendCompatibility_CapabilitiesFromHuggingFaceMetadata_MapsToolingVisionAndThinking()
+    {
+        var capabilities = ModelBackendCompatibility.CapabilitiesFromHuggingFace(
+            "image-text-to-text",
+            ["tool-use", "reasoning"]);
+
+        Assert.IsTrue(capabilities.ToolCalling);
+        Assert.IsTrue(capabilities.ImageInput);
+        Assert.IsTrue(capabilities.Thinking);
+    }
+
+    [TestMethod]
     public async Task LocalModel_UpdateAsync_ManualAssignmentControlsBackendPicker()
     {
         await using var context = await TestContext.CreateAsync();
@@ -542,6 +554,26 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
+    public async Task LocalModel_UpdateAsync_CapabilityUpdatePreservesBackendAssignment()
+    {
+        await using var context = await TestContext.CreateAsync();
+
+        await context.DataService.LocalModel_UpdateAsync(new ModelCompatibilityUpdate(
+            context.ModelPath,
+            [ConfigurationBackend.Vllm]));
+
+        var models = await context.DataService.LocalModel_UpdateAsync(new ModelCompatibilityUpdate(
+            context.ModelPath,
+            Capabilities: new ModelCapabilities(ToolCalling: true)));
+        var model = models.Single(item => item.Path == context.ModelPath);
+
+        CollectionAssert.AreEquivalent(
+            new[] { ConfigurationBackend.Vllm },
+            model.CompatibleBackends!.ToArray());
+        Assert.IsTrue(model.Capabilities!.ToolCalling);
+    }
+
+    [TestMethod]
     public async Task LocalModel_UpdateAsync_FromHuggingFaceUsesRepositoryMetadata()
     {
         await using var context = await TestContext.CreateAsync(new HuggingFaceMetadataHttpMessageHandler());
@@ -553,6 +585,8 @@ public sealed class BackendCatalogIntegrationTests
             new[] { ConfigurationBackend.Vllm, ConfigurationBackend.Sglang },
             model.CompatibleBackends!.ToArray());
         Assert.AreEqual("owner/repository", model.HuggingFaceModelId);
+        Assert.IsTrue(model.Capabilities!.ToolCalling);
+        Assert.IsTrue(model.Capabilities.Thinking);
     }
 
     [TestMethod]
@@ -791,7 +825,7 @@ public sealed class BackendCatalogIntegrationTests
         {
             var content = request.RequestUri?.AbsolutePath.Contains("/tree/", StringComparison.Ordinal) == true
                 ? "[{\"path\":\"config.json\",\"size\":10}]"
-                : "{\"sha\":\"revision\",\"library_name\":\"transformers\",\"pipeline_tag\":\"text-generation\",\"tags\":[\"vllm\"],\"siblings\":[{\"rfilename\":\"config.json\"}]}";
+                : "{\"sha\":\"revision\",\"library_name\":\"transformers\",\"pipeline_tag\":\"text-generation\",\"tags\":[\"vllm\",\"tool-use\",\"thinking\"],\"siblings\":[{\"rfilename\":\"config.json\"}]}";
             return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
             {
                 Content = new StringContent(content)

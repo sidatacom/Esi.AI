@@ -7,6 +7,8 @@ description: "Use when starting, stopping, restarting, or validating a VS Code o
 
 Use this workflow for every debug-session lifecycle operation.
 
+Esi.AI Studio may only be started through the `Esi.AI Studio (Server Debug)` launch configuration or the `build-and-watch-esi-ai-studio` task chain. The `start-esi-ai-studio-watchdog` task must be active before the Studio process starts; never launch the Studio binary or `dotnet run` directly. Studio startup validates the watchdog PID marker supplied by that launch configuration and exits when it is absent or invalid.
+
 ## Session lifecycle
 
 1. Inspect the active debug session before starting anything. Reuse it when it already matches the requested configuration.

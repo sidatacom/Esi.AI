@@ -5,7 +5,7 @@
 		}
 	],
 	"settings": {
-		"esimcp.debugConfigurationName": "Esi.AI Studio (F5 Debug + Hot Reload)",
+		"esimcp.debugConfigurationName": "Esi.AI Studio (Server Debug)",
 		"dotnet.projectLoad.exclude": [
 			"**/origins/**"
 		],

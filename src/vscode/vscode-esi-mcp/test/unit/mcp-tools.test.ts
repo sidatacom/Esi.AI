@@ -42,4 +42,22 @@ describe("EsiMCP tool catalog", () => {
     ]);
     expect(result.tools.every((tool) => tool.description.startsWith("EsiMCP "))).toBe(true);
   });
+
+  it("returns the debug exception error code when readiness is aborted", async () => {
+    const readinessError = Object.assign(new Error("Debug session exception: startup failed"), { code: "DEBUG_SESSION_EXCEPTION" });
+    const sessionManager = { waitForDebugHostReadiness: vi.fn().mockRejectedValue(readinessError) } as unknown as SessionManager;
+    const handler = createMcpRequestHandler(sessionManager, {} as DebugManager);
+
+    const result = await handler("tools/call", {
+      name: "debug_check_host_readyness",
+      arguments: {},
+    }) as { content: Array<{ text: string }>; isError?: boolean; errorCode?: string };
+
+    expect(result.isError).toBe(true);
+    expect(result.errorCode).toBe("DEBUG_SESSION_EXCEPTION");
+    expect(JSON.parse(result.content[0].text)).toEqual({
+      errorCode: "DEBUG_SESSION_EXCEPTION",
+      error: "Debug session exception: startup failed",
+    });
+  });
 });

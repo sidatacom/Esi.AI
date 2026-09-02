@@ -36,7 +36,7 @@ export const DEBUG_TOOLS: DebugToolDefinition[] = [
     });
     return text(started);
   } },
-  { name: "debug_check_host_readyness", description: "EsiMCP Debug: wait for the configured readiness string in any VS Code terminal", schema: debugCheckHostReadinessSchema, handler: async (_, _manager, sessionManager) => text({ ready: await sessionManager.waitForDebugHostReadiness() }) },
+  { name: "debug_check_host_readyness", description: "EsiMCP Debug: wait for the configured readiness string in any VS Code terminal and abort if the debug session raises an exception", schema: debugCheckHostReadinessSchema, handler: async (_, manager, sessionManager) => text({ ready: await sessionManager.waitForDebugHostReadiness(manager) }) },
   { name: "debug_wait_for_event", description: "EsiMCP Debug: wait for a debugger pause, exception, continue, or termination event", schema: debugWaitForEventSchema, handler: async (params, manager) => { const input = debugWaitForEventSchema.parse(params); return text(await manager.waitForDebugEvent(input.timeoutMs, input.type)); } },
   { name: "debug_stop", description: "EsiMCP Debug: stop the active debug session", schema: empty, handler: stopDebugSession },
   { name: "debug_step_over", description: "EsiMCP Debug: step over the current statement", schema: empty, handler: async (_, manager) => { await manager.stepOver(); return text({ stepped: true }); } },

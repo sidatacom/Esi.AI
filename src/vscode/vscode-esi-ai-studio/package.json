@@ -2,7 +2,7 @@
   "name": "vscode-esi-ai-studio",
   "displayName": "Esi.AI Studio Models",
   "description": "Use models loaded by Esi.AI Studio as VS Code language models.",
-  "version": "0.1.0",
+  "version": "0.1.13",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
@@ -22,16 +22,35 @@
     "local-ai"
   ],
   "engines": {
-    "vscode": "^1.99.0"
+    "vscode": "^1.134.0"
   },
   "categories": [
-    "Other"
+    "AI",
+    "Chat"
   ],
   "activationEvents": [
     "onStartupFinished"
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "esiAiStudio",
+          "title": "Esi.AI Studio",
+          "icon": "resources/esi-ai-studio.svg"
+        }
+      ]
+    },
+    "views": {
+      "esiAiStudio": [
+        {
+          "type": "webview",
+          "id": "esiAiStudio.configuration",
+          "name": "Provider"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "esiAiStudio.refreshModels",
@@ -40,6 +59,16 @@
       {
         "command": "esiAiStudio.configureApiKey",
         "title": "Esi AI Studio: Configure API Key"
+      },
+      {
+        "command": "esiAiStudio.inspectModels",
+        "title": "Esi AI Studio: Inspect Registered Models"
+      }
+    ],
+    "languageModelChatProviders": [
+      {
+        "vendor": "esi-ai-studio",
+        "displayName": "Esi.AI Studio"
       }
     ],
     "configuration": {
@@ -79,11 +108,12 @@
     "lint": "eslint src/ --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "test": "vitest run",
-    "package": "vsce package"
+    "package": "vsce package",
+    "install:local": "bash scripts/install.sh"
   },
   "devDependencies": {
     "@types/node": "^20.12.0",
-    "@types/vscode": "^1.99.0",
+    "@types/vscode": "^1.134.0",
     "@vscode/vsce": "^2.26.0",
     "esbuild": "^0.21.0",
     "eslint": "^8.57.0",

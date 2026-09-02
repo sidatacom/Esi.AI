@@ -54,7 +54,6 @@ namespace Esi.AI.Studio.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("PhoneNumber")
-                        .HasMaxLength(256)
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("PhoneNumberConfirmed")
@@ -100,7 +99,7 @@ namespace Esi.AI.Studio.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("ChatConversations");
+                    b.ToTable("ChatConversations", (string)null);
                 });
 
             modelBuilder.Entity("Esi.AI.Studio.Data.ChatMessageEntity", b =>
@@ -139,7 +138,7 @@ namespace Esi.AI.Studio.Migrations
 
                     b.HasIndex("ConversationId");
 
-                    b.ToTable("ChatMessages");
+                    b.ToTable("ChatMessages", (string)null);
                 });
 
             modelBuilder.Entity("Esi.AI.Studio.Data.ModelConfigurationEntity", b =>
@@ -230,7 +229,7 @@ namespace Esi.AI.Studio.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("ModelDownloads");
+                    b.ToTable("ModelDownloads", (string)null);
                 });
 
             modelBuilder.Entity("Esi.AI.Studio.Data.ModelEntity", b =>
@@ -270,6 +269,10 @@ namespace Esi.AI.Studio.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("CapabilitiesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("CompatibleBackendsJson")
                         .IsRequired()
                         .HasColumnType("TEXT");
@@ -301,7 +304,7 @@ namespace Esi.AI.Studio.Migrations
                     b.HasIndex("ModelPath")
                         .IsUnique();
 
-                    b.ToTable("ModelMetadata");
+                    b.ToTable("ModelMetadata", (string)null);
                 });
 
             modelBuilder.Entity("Esi.AI.Studio.Data.ModelSettingsEntity", b =>
@@ -332,7 +335,7 @@ namespace Esi.AI.Studio.Migrations
                     b.HasIndex("Backend")
                         .IsUnique();
 
-                    b.ToTable("ModelSettings");
+                    b.ToTable("ModelSettings", (string)null);
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>
@@ -410,11 +413,9 @@ namespace Esi.AI.Studio.Migrations
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserLogin<string>", b =>
                 {
                     b.Property<string>("LoginProvider")
-                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderKey")
-                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ProviderDisplayName")
@@ -429,23 +430,6 @@ namespace Esi.AI.Studio.Migrations
                     b.HasIndex("UserId");
 
                     b.ToTable("AspNetUserLogins", (string)null);
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserPasskey<string>", b =>
-                {
-                    b.Property<byte[]>("CredentialId")
-                        .HasMaxLength(1024)
-                        .HasColumnType("BLOB");
-
-                    b.Property<string>("UserId")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("CredentialId");
-
-                    b.HasIndex("UserId");
-
-                    b.ToTable("AspNetUserPasskeys", (string)null);
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserRole<string>", b =>
@@ -469,11 +453,9 @@ namespace Esi.AI.Studio.Migrations
                         .HasColumnType("TEXT");
 
                     b.Property<string>("LoginProvider")
-                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Name")
-                        .HasMaxLength(128)
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Value")
@@ -519,57 +501,6 @@ namespace Esi.AI.Studio.Migrations
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-                });
-
-            modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityUserPasskey<string>", b =>
-                {
-                    b.HasOne("Esi.AI.Studio.Data.ApplicationUser", null)
-                        .WithMany()
-                        .HasForeignKey("UserId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.OwnsOne("Microsoft.AspNetCore.Identity.IdentityPasskeyData", "Data", b1 =>
-                        {
-                            b1.Property<byte[]>("IdentityUserPasskeyCredentialId");
-
-                            b1.Property<byte[]>("AttestationObject")
-                                .IsRequired();
-
-                            b1.Property<byte[]>("ClientDataJson")
-                                .IsRequired();
-
-                            b1.Property<DateTimeOffset>("CreatedAt");
-
-                            b1.Property<bool>("IsBackedUp");
-
-                            b1.Property<bool>("IsBackupEligible");
-
-                            b1.Property<bool>("IsUserVerified");
-
-                            b1.Property<string>("Name");
-
-                            b1.Property<byte[]>("PublicKey")
-                                .IsRequired();
-
-                            b1.Property<uint>("SignCount");
-
-                            b1.PrimitiveCollection<string>("Transports");
-
-                            b1.HasKey("IdentityUserPasskeyCredentialId");
-
-                            b1.ToTable("AspNetUserPasskeys");
-
-                            b1
-                                .ToJson("Data")
-                                .HasColumnType("TEXT");
-
-                            b1.WithOwner()
-                                .HasForeignKey("IdentityUserPasskeyCredentialId");
-                        });
-
-                    b.Navigation("Data")
                         .IsRequired();
                 });
 

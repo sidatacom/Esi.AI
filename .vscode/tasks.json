@@ -20,6 +20,11 @@
         "${workspaceFolder}/.vscode/studio-watchdog.sh",
         "7010"
       ],
+      "options": {
+        "env": {
+          "ESI_AI_STUDIO_WATCHDOG_PID_FILE": "/tmp/esi-ai-studio-watchdog-7010.pid"
+        }
+      },
       "isBackground": true,
       "problemMatcher": {
         "owner": "esi-ai-studio-watchdog",
@@ -42,6 +47,11 @@
         "--stop",
         "7010"
       ],
+      "options": {
+        "env": {
+          "ESI_AI_STUDIO_WATCHDOG_PID_FILE": "/tmp/esi-ai-studio-watchdog-7010.pid"
+        }
+      },
       "problemMatcher": []
     },
     {
