@@ -98,6 +98,22 @@ public sealed record ChatRequest(IReadOnlyList<ChatMessageRequest> Messages, str
 
 public sealed record ChatMessageRequest(string Role, string Content);
 
+public sealed record ChatMessage(string Role, string Content);
+
+/// <summary>Contains sampling and stopping options shared by every local inference backend.</summary>
+public sealed record ChatGenerationOptions(
+    int MaxTokens = 128,
+    float Temperature = .7f,
+    float TopP = .9f,
+    int TopK = 50,
+    float MinP = .1f,
+    float RepetitionPenalty = 1f,
+    float FrequencyPenalty = 0,
+    float PresencePenalty = 0,
+    int PenaltyCount = 64,
+    int? Seed = null,
+    IReadOnlyList<string>? StopSequences = null);
+
 public sealed record ChatResponse(string Content);
 
 public sealed record OpenAiChatRequest(
@@ -105,6 +121,66 @@ public sealed record OpenAiChatRequest(
     IReadOnlyList<OpenAiChatMessage>? Messages,
     bool Stream = false)
 {
+    [JsonPropertyName("max_tokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? MaxTokens { get; init; }
+
+    [JsonPropertyName("max_completion_tokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? MaxCompletionTokens { get; init; }
+
+    [JsonPropertyName("temperature")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? Temperature { get; init; }
+
+    [JsonPropertyName("top_p")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? TopP { get; init; }
+
+    [JsonPropertyName("top_k")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? TopK { get; init; }
+
+    [JsonPropertyName("min_p")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? MinP { get; init; }
+
+    [JsonPropertyName("repetition_penalty")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? RepetitionPenalty { get; init; }
+
+    [JsonPropertyName("frequency_penalty")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? FrequencyPenalty { get; init; }
+
+    [JsonPropertyName("presence_penalty")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public float? PresencePenalty { get; init; }
+
+    [JsonPropertyName("seed")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Seed { get; init; }
+
+    [JsonPropertyName("stop")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<string>? Stop { get; init; }
+
+    [JsonPropertyName("tools")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public IReadOnlyList<OpenAiToolDefinition>? Tools { get; init; }
+
+    [JsonPropertyName("tool_choice")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? ToolChoice { get; init; }
+
+    [JsonPropertyName("stream_options")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public OpenAiStreamOptions? StreamOptions { get; init; }
+
+    [JsonPropertyName("response_format")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public JsonElement? ResponseFormat { get; init; }
+
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
 }
@@ -130,9 +206,21 @@ public sealed class OmniRouteOptions
 
 public sealed record OpenAiChatMessage(
     string Role,
-    string? Content = null,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] object? Content = null,
     [property: JsonPropertyName("tool_calls")] IReadOnlyList<OpenAiToolCall>? ToolCalls = null,
     [property: JsonPropertyName("tool_call_id")] string? ToolCallId = null);
+
+public sealed record OpenAiToolDefinition(
+    string Type,
+    OpenAiToolFunction Function);
+
+public sealed record OpenAiToolFunction(
+    string Name,
+    string? Description = null,
+    JsonElement? Parameters = null);
+
+public sealed record OpenAiStreamOptions(
+    [property: JsonPropertyName("include_usage")] bool IncludeUsage = false);
 
 public sealed record OpenAiToolCall(
     string Id,
@@ -166,7 +254,8 @@ public sealed record OpenAiChatCompletionResponse(
     string Object,
     long Created,
     string Model,
-    IReadOnlyList<OpenAiChatCompletionChoice> Choices);
+    IReadOnlyList<OpenAiChatCompletionChoice> Choices,
+    OpenAiUsage? Usage = null);
 
 public sealed record OpenAiChatCompletionChoice(
     int Index,
@@ -178,7 +267,8 @@ public sealed record OpenAiChatCompletionChunk(
     string Object,
     long Created,
     string Model,
-    IReadOnlyList<OpenAiChatCompletionChunkChoice> Choices);
+    IReadOnlyList<OpenAiChatCompletionChunkChoice> Choices,
+    OpenAiUsage? Usage = null);
 
 public sealed record OpenAiChatCompletionChunkChoice(
     int Index,
@@ -186,6 +276,12 @@ public sealed record OpenAiChatCompletionChunkChoice(
     [property: JsonPropertyName("finish_reason")] string? FinishReason);
 
 public sealed record OpenAiChatCompletionDelta(string? Role = null, string? Content = null);
+
+public sealed record OpenAiUsage(
+    [property: JsonPropertyName("prompt_tokens")] int? PromptTokens = null,
+    [property: JsonPropertyName("completion_tokens")] int? CompletionTokens = null,
+    [property: JsonPropertyName("total_tokens")] int? TotalTokens = null,
+    [property: JsonPropertyName("tokens_per_second")] double? TokensPerSecond = null);
 
 public sealed record OpenAiErrorResponse(OpenAiError Error);
 

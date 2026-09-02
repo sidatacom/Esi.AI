@@ -20,6 +20,7 @@ interface OpenAiModelsResponse {
 }
 
 interface OpenAiStreamChunk {
+  usage?: OpenAiUsage;
   choices?: Array<{
     delta?: {
       content?: unknown;
@@ -29,12 +30,20 @@ interface OpenAiStreamChunk {
 }
 
 interface OpenAiCompletionResponse {
+  usage?: OpenAiUsage;
   choices?: Array<{
     message?: {
       content?: unknown;
       tool_calls?: OpenAiToolCall[];
     };
   }>;
+}
+
+interface OpenAiUsage {
+  prompt_tokens?: unknown;
+  completion_tokens?: unknown;
+  total_tokens?: unknown;
+  tokens_per_second?: unknown;
 }
 
 interface OpenAiToolCall {
@@ -64,7 +73,7 @@ interface EsiModel {
 
 interface OpenAiMessage {
   role: "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | OpenAiContentPart[] | null;
   tool_calls?: Array<{
     id: string;
     type: "function";
@@ -74,6 +83,12 @@ interface OpenAiMessage {
     };
   }>;
   tool_call_id?: string;
+}
+
+interface OpenAiContentPart {
+  type: "text" | "image_url";
+  text?: string;
+  image_url?: { url: string };
 }
 
 export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<EsiModel>, vscode.Disposable {
@@ -113,18 +128,29 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken,
   ): Promise<void> {
+    const supportsImages = model.capabilities.imageInput === true;
+    const supportsTools = model.capabilities.toolCalling === true || typeof model.capabilities.toolCalling === "number";
+    if (!supportsTools && options.tools && options.tools.length > 0) {
+      throw new Error("The selected Esi.AI Studio model does not support tool calling.");
+    }
     const requestBody = {
       model: this.backendModelIds.get(model.id) ?? model.id,
-      messages: messages.map((message) => this.toOpenAiMessage(message)),
-      tools: options.tools?.map((tool) => ({
+      messages: messages.map((message) => this.toOpenAiMessage(message, supportsImages)),
+      max_tokens: model.maxOutputTokens,
+      temperature: 0.7,
+      top_p: 0.9,
+      tools: supportsTools ? options.tools?.map((tool) => ({
         type: "function",
         function: {
           name: tool.name,
           description: tool.description,
           parameters: tool.inputSchema ?? {},
         },
-      })),
-      tool_choice: options.toolMode === vscode.LanguageModelChatToolMode.Required ? "required" : "auto",
+      })) : undefined,
+      tool_choice: supportsTools && options.tools && options.tools.length > 0
+        ? options.toolMode === vscode.LanguageModelChatToolMode.Required ? "required" : "auto"
+        : undefined,
+      stream_options: { include_usage: true },
       stream: true,
     };
     let response: Response;
@@ -160,11 +186,13 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
         }
       }
       this.reportToolCalls(completion.choices?.[0]?.message?.tool_calls, progress);
+      this.reportUsage(completion.usage, progress);
       return;
     }
 
     const toolCalls = new Map<number, Partial<OpenAiToolCall>>();
     const textFilter = new VisibleResponseTextFilter();
+    let usage: OpenAiUsage | undefined;
     let loggedSseChunks = 0;
     for await (const data of readServerSentEvents(response.body, token)) {
       if (loggedSseChunks < 200) {
@@ -181,10 +209,12 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
           progress.report(new vscode.LanguageModelTextPart(finalText));
         }
         this.reportToolCalls([...toolCalls.values()], progress);
+        this.reportUsage(usage, progress);
         return;
       }
 
       const chunk = JSON.parse(data) as OpenAiStreamChunk;
+      usage = chunk.usage ?? usage;
       const content = chunk.choices?.[0]?.delta?.content;
       if (typeof content === "string" && content.length > 0) {
         const visibleContent = textFilter.push(content);
@@ -211,6 +241,22 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
       progress.report(new vscode.LanguageModelTextPart(finalText));
     }
     this.reportToolCalls([...toolCalls.values()], progress);
+    this.reportUsage(usage, progress);
+  }
+
+  private reportUsage(usage: OpenAiUsage | undefined, progress: vscode.Progress<vscode.LanguageModelResponsePart>): void {
+    const promptTokens = toFiniteNumber(usage?.prompt_tokens);
+    const completionTokens = toFiniteNumber(usage?.completion_tokens);
+    const totalTokens = toFiniteNumber(usage?.total_tokens);
+    const tokensPerSecond = toFiniteNumber(usage?.tokens_per_second);
+    if (promptTokens === undefined && completionTokens === undefined && totalTokens === undefined && tokensPerSecond === undefined) {
+      return;
+    }
+
+    const promptText = promptTokens === undefined ? "n/a" : String(Math.round(promptTokens));
+    const tokenText = completionTokens === undefined ? "n/a" : String(Math.round(completionTokens));
+    const throughputText = tokensPerSecond === undefined ? "n/a" : tokensPerSecond.toFixed(1);
+    progress.report(new vscode.LanguageModelTextPart(`\n\n---\n*Esi.AI Studio: ${promptText} prompt + ${tokenText} completion Tokens | ${throughputText} Tok/s*`));
   }
 
   public provideTokenCount(
@@ -481,36 +527,51 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     };
   }
 
-  private toOpenAiMessage(message: vscode.LanguageModelChatRequestMessage): OpenAiMessage {
-    const toolCall = message.content.find((part): part is vscode.LanguageModelToolCallPart => part instanceof vscode.LanguageModelToolCallPart);
-    if (toolCall) {
-      return {
-        role: "assistant",
-        content: null,
-        tool_calls: [{
-          id: toolCall.callId,
-          type: "function",
-          function: { name: toolCall.name, arguments: JSON.stringify(toolCall.input) },
-        }],
-      };
-    }
-
+  private toOpenAiMessage(message: vscode.LanguageModelChatRequestMessage, supportsImages: boolean): OpenAiMessage {
     const toolResult = message.content.find((part): part is vscode.LanguageModelToolResultPart => part instanceof vscode.LanguageModelToolResultPart);
     if (toolResult) {
       return {
         role: "tool",
-        content: toolResult.content
-          .filter((part): part is vscode.LanguageModelTextPart => part instanceof vscode.LanguageModelTextPart)
-          .map((part) => part.value)
-          .join(""),
+        content: this.toOpenAiContent(toolResult.content, supportsImages),
         tool_call_id: toolResult.callId,
       };
     }
 
+    const toolCalls = message.content
+      .filter((part): part is vscode.LanguageModelToolCallPart => part instanceof vscode.LanguageModelToolCallPart)
+      .map((toolCall) => ({
+        id: toolCall.callId,
+        type: "function" as const,
+        function: { name: toolCall.name, arguments: JSON.stringify(toolCall.input) },
+      }));
+    const contentParts = message.content.filter((part) => !(part instanceof vscode.LanguageModelToolCallPart));
     return {
-      role: message.role === vscode.LanguageModelChatMessageRole.Assistant ? "assistant" : "user",
-      content: this.messageText(message),
+      role: message.role === vscode.LanguageModelChatMessageRole.Assistant || toolCalls.length > 0 ? "assistant" : "user",
+      content: contentParts.length > 0 ? this.toOpenAiContent(contentParts, supportsImages) : null,
+      tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
     };
+  }
+
+  private toOpenAiContent(parts: readonly unknown[], supportsImages: boolean): string | OpenAiContentPart[] {
+    const content: OpenAiContentPart[] = [];
+    for (const part of parts) {
+      if (part instanceof vscode.LanguageModelTextPart) {
+        content.push({ type: "text", text: part.value });
+        continue;
+      }
+      if (part instanceof vscode.LanguageModelDataPart) {
+        if (!supportsImages || !part.mimeType.startsWith("image/")) {
+          throw new Error("The selected Esi.AI Studio model does not support this input content type.");
+        }
+        content.push({
+          type: "image_url",
+          image_url: { url: `data:${part.mimeType};base64,${Buffer.from(part.data).toString("base64")}` },
+        });
+        continue;
+      }
+      throw new Error("The selected Esi.AI Studio model does not support this input content type.");
+    }
+    return content.length === 1 && content[0].type === "text" ? content[0].text ?? "" : content;
   }
 
   private reportToolCalls(toolCalls: Iterable<OpenAiToolCall | Partial<OpenAiToolCall>> | undefined, progress: vscode.Progress<vscode.LanguageModelResponsePart>): void {
@@ -570,12 +631,16 @@ function toLanguageModelCapabilities(value: unknown): vscode.LanguageModelChatCa
 
   return {
     imageInput: value.imageInput === true,
-    toolCalling: value.toolCalling === true,
+    toolCalling: value.toolCalling === true || typeof value.toolCalling === "number" ? value.toolCalling : false,
   };
 }
 
 function appendValue(existing: unknown, next: unknown): string {
   return `${typeof existing === "string" ? existing : ""}${typeof next === "string" ? next : ""}`;
+}
+
+function toFiniteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function parseToolInput(value: string): object {

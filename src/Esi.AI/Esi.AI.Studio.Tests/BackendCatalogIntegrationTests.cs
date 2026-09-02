@@ -601,6 +601,17 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
+    public async Task LocalModel_ReadAsync_RestoresHuggingFaceIdFromCompletedTransformersDownload()
+    {
+        await using var context = await TestContext.CreateAsync();
+        var modelPath = await context.AddCompletedTransformersDownloadAsync("owner/transformer");
+
+        var model = (await context.DataService.LocalModel_ReadAsync()).Single(item => item.Path == modelPath);
+
+        Assert.AreEqual("owner/transformer", model.HuggingFaceModelId);
+    }
+
+    [TestMethod]
     public async Task Chat_DeleteAsync_ExistingChat_RemovesChatAndMessages()
     {
         await using var context = await TestContext.CreateAsync();
@@ -664,6 +675,22 @@ public sealed class BackendCatalogIntegrationTests
         await Assert.ThrowsExceptionAsync<ArgumentException>(() => context.DataService.ModelConfiguration_CreateAsync(configuration));
     }
 
+    [TestMethod]
+    public async Task LoadPythonModelAsync_SglangPreparationFails_ReturnsFailureStatus()
+    {
+        await using var context = await TestContext.CreateAsync();
+        var request = new PythonInferenceLoadRequest(
+            context.ModelPath,
+            ConfigurationBackend.Sglang,
+            PythonExecutable: "/missing/sglang-python");
+
+        var status = await context.DataService.LoadPythonModelAsync(request);
+
+        Assert.IsFalse(status.IsModelLoaded);
+        Assert.IsFalse(string.IsNullOrWhiteSpace(status.LoadLog));
+        Assert.IsFalse(status.LoadLog.Contains("SGLang could not load", StringComparison.OrdinalIgnoreCase));
+    }
+
     private sealed class TestContext : IAsyncDisposable
     {
         private readonly string directory;
@@ -697,6 +724,28 @@ public sealed class BackendCatalogIntegrationTests
                 UpdatedAtUtc = DateTime.UtcNow
             });
             await db.SaveChangesAsync();
+        }
+
+        public async Task<string> AddCompletedTransformersDownloadAsync(string modelId)
+        {
+            var modelDirectory = Directory.CreateDirectory(Path.Combine(directory, "transformer-model")).FullName;
+            await File.WriteAllTextAsync(Path.Combine(modelDirectory, "config.json"), "{}");
+            await File.WriteAllTextAsync(Path.Combine(modelDirectory, "model.safetensors"), "model");
+
+            await using var db = await dbContextFactory.CreateDbContextAsync();
+            db.ModelDownloads.Add(new ModelDownloadEntity
+            {
+                Id = Guid.NewGuid(),
+                ModelId = modelId,
+                Library = "transformers",
+                DestinationPath = modelDirectory,
+                FileNamesJson = "[]",
+                Completed = true,
+                CreatedAtUtc = DateTime.UtcNow,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+            await db.SaveChangesAsync();
+            return modelDirectory;
         }
 
         public async Task AddChatMessageAsync(Guid chatId)

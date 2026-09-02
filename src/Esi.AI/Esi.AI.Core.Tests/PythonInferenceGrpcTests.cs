@@ -3,6 +3,7 @@ using Esi.AI.Core.Chat;
 using Esi.AI.Core.Grpc;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
+using ModelChatMessage = Esi.AI.Models.ChatMessage;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Esi.AI.Core.Tests;
@@ -43,6 +44,32 @@ public sealed class PythonInferenceGrpcTests
     }
 
     [TestMethod]
+    public void ToGrpcRequest_GenerationOptions_MapsSharedSamplingValues()
+    {
+        var request = PythonInferenceGrpcMapper.ToGrpcRequest(
+            [new ModelChatMessage("user", "Hello")],
+            "local-model",
+            new ChatGenerationOptions(
+                MaxTokens: 17,
+                Temperature: .25f,
+                TopP: .8f,
+                TopK: 12,
+                MinP: .05f,
+                RepetitionPenalty: 1.1f,
+                Seed: 42,
+                StopSequences: ["END"]));
+
+        Assert.AreEqual((uint)17, request.MaxTokens);
+        Assert.AreEqual(.25f, request.Temperature, .001f);
+        Assert.AreEqual(.8f, request.TopP, .001f);
+        Assert.AreEqual(12, request.TopK);
+        Assert.AreEqual(.05f, request.MinP, .001f);
+        Assert.AreEqual(1.1f, request.RepetitionPenalty, .001f);
+        Assert.AreEqual(42, request.Seed);
+        CollectionAssert.AreEqual(new[] { "END" }, request.StopSequences.ToArray());
+    }
+
+    [TestMethod]
     public async Task GenerateWithStatsAsync_FakeStream_ReturnsMappedTextAndStatistics()
     {
         GenerateRequest? capturedRequest = null;
@@ -52,11 +79,12 @@ public sealed class PythonInferenceGrpcTests
             () => "Qwen/test");
 
         var result = await session.GenerateWithStatsAsync([
-            new LlamaChatMessage("system", "Be brief."),
-            new LlamaChatMessage("user", "Hello")]);
+            new ModelChatMessage("system", "Be brief."),
+            new ModelChatMessage("user", "Hello")]);
 
         Assert.AreEqual("Hello world", result.Text);
         Assert.AreEqual(3, result.TokenCount);
+        Assert.AreEqual(0, result.PromptTokenCount);
         Assert.AreEqual(4.2d, result.TokensPerSecond, .001d);
         Assert.IsNotNull(capturedRequest);
         Assert.AreEqual("Qwen/test", capturedRequest.ModelId);
@@ -74,7 +102,7 @@ public sealed class PythonInferenceGrpcTests
             () => "Qwen/test");
 
         var exception = await Assert.ThrowsExceptionAsync<InvalidOperationException>(
-            () => session.GenerateWithStatsAsync([new LlamaChatMessage("user", "Hello")]));
+            () => session.GenerateWithStatsAsync([new ModelChatMessage("user", "Hello")]));
 
         StringAssert.Contains(exception.Message, "vLLM generation failed");
         StringAssert.Contains(exception.Message, "backend unavailable");
@@ -91,7 +119,7 @@ public sealed class PythonInferenceGrpcTests
         cancellation.Cancel();
 
         await Assert.ThrowsExceptionAsync<TaskCanceledException>(
-            () => session.GenerateWithStatsAsync([new LlamaChatMessage("user", "Hello")], cancellation.Token));
+            () => session.GenerateWithStatsAsync([new ModelChatMessage("user", "Hello")], cancellation.Token));
     }
 
     private static async IAsyncEnumerable<GenerateResponse> CaptureAndStreamAsync(

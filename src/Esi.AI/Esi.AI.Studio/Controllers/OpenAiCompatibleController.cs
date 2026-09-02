@@ -43,7 +43,7 @@ public sealed class OpenAiCompatibleController(
                 .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, Loaded: IsLoaded(model.Path)))
                 .ToList()
             : (await dataService.LocalModel_ReadAsync(cancellationToken).ConfigureAwait(false))
-                .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, model.Capabilities, IsLoaded(model.Path)))
+                .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, model.Capabilities ?? new ModelCapabilities(), IsLoaded(model.Path)))
                 .ToList();
         foreach (var loadedModel in loadedModels.Where(loadedModel => apiModels.All(model => !string.Equals(model.Id, loadedModel.ModelPath, StringComparison.OrdinalIgnoreCase))))
             apiModels.Add(new OpenAiModel(loadedModel.ModelPath, "model", created, "esi-ai", Path.GetFileName(loadedModel.ModelPath), Loaded: true));
@@ -66,17 +66,25 @@ public sealed class OpenAiCompatibleController(
                 return await ForwardToOmniRouteAsync(request!, cancellationToken).ConfigureAwait(false);
 
             var status = GetLoadedModelStatus(request!.Model);
-            var messages = request!.Messages!.Select(message => new LlamaChatMessage(message.Role, message.Content ?? string.Empty)).ToArray();
+            var messages = request!.Messages!.Select(message => new ChatMessage(message.Role, GetTextContent(message.Content))).ToArray();
             var model = string.IsNullOrWhiteSpace(request.Model) ? GetModelId(status) : request.Model;
+            var options = ToGenerationOptions(request);
 
             if (request.Stream)
             {
-                await StreamCompletionAsync(status.Backend!, status.ModelPath, messages, model, cancellationToken).ConfigureAwait(false);
+                await StreamCompletionAsync(
+                    status.Backend!,
+                    status.ModelPath,
+                    messages,
+                    model,
+                    options,
+                    request.StreamOptions?.IncludeUsage == true,
+                    cancellationToken).ConfigureAwait(false);
                 return new EmptyResult();
             }
 
-            var result = await GenerateAsync(status.Backend!, status.ModelPath, messages, null, cancellationToken).ConfigureAwait(false);
-            return Ok(CreateCompletion(result.Text, model));
+            var result = await GenerateAsync(status.Backend!, status.ModelPath, messages, null, options, cancellationToken).ConfigureAwait(false);
+            return Ok(CreateCompletion(result, model, result.FinishReason));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -127,7 +135,14 @@ public sealed class OpenAiCompatibleController(
         return new EmptyResult();
     }
 
-    private async Task StreamCompletionAsync(string backend, string? modelPath, IReadOnlyList<LlamaChatMessage> messages, string model, CancellationToken cancellationToken)
+    private async Task StreamCompletionAsync(
+        string backend,
+        string? modelPath,
+        IReadOnlyList<ChatMessage> messages,
+        string model,
+        ChatGenerationOptions options,
+        bool includeUsage,
+        CancellationToken cancellationToken)
     {
         Response.ContentType = "text/event-stream";
         Response.Headers.CacheControl = "no-cache, no-transform";
@@ -141,7 +156,7 @@ public sealed class OpenAiCompatibleController(
         {
             deltas.Writer.TryWrite(delta);
             return Task.CompletedTask;
-        }, cancellationToken);
+        }, options, cancellationToken);
         _ = CompleteChannelAsync(generationTask, deltas.Writer);
 
         try
@@ -158,24 +173,31 @@ public sealed class OpenAiCompatibleController(
             throw exception.InnerException;
         }
 
-        await WriteSseAsync(CreateChunk(completionId, model, new OpenAiChatCompletionDelta(), "stop"), cancellationToken).ConfigureAwait(false);
+        var generationResult = await generationTask.ConfigureAwait(false);
+        await WriteSseAsync(CreateChunk(
+            completionId,
+            model,
+            new OpenAiChatCompletionDelta(),
+            generationResult.FinishReason,
+            includeUsage ? CreateUsage(generationResult) : null), cancellationToken).ConfigureAwait(false);
         await Response.WriteAsync("data: [DONE]\n\n", cancellationToken).ConfigureAwait(false);
         await Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private Task<LlamaGenerationResult> GenerateAsync(string backend, string? modelPath, IReadOnlyList<LlamaChatMessage> messages, Func<string, Task>? onDelta, CancellationToken cancellationToken) =>
+    private Task<GenerationResult> GenerateAsync(string backend, string? modelPath, IReadOnlyList<ChatMessage> messages, Func<string, Task>? onDelta, ChatGenerationOptions options, CancellationToken cancellationToken) =>
         backend switch
         {
-            "OpenVINO" => StartOpenVinoGeneration(messages, onDelta, cancellationToken),
-            "vLLM" or "SGLang" => GeneratePythonAsync(messages, onDelta, cancellationToken),
-            "dotLLM" => GenerateDotLlmAsync(messages, onDelta, cancellationToken),
-            "Vulkan" or "VULKAN" or "CPU" => GenerateLlamaAsync(modelPath, messages, onDelta, cancellationToken),
+            "OpenVINO" => StartOpenVinoGeneration(messages, onDelta, options, cancellationToken),
+            "vLLM" or "SGLang" => GeneratePythonAsync(messages, onDelta, options, cancellationToken),
+            "dotLLM" => GenerateDotLlmAsync(messages, onDelta, options, cancellationToken),
+            "Vulkan" or "VULKAN" or "CPU" => GenerateLlamaAsync(modelPath, messages, onDelta, options, cancellationToken),
             _ => throw new ArgumentException($"Unsupported model backend '{backend}'.", nameof(backend))
         };
 
-    private Task<LlamaGenerationResult> StartOpenVinoGeneration(
-        IReadOnlyList<LlamaChatMessage> messages,
+    private Task<GenerationResult> StartOpenVinoGeneration(
+        IReadOnlyList<ChatMessage> messages,
         Func<string, Task>? onDelta,
+        ChatGenerationOptions options,
         CancellationToken cancellationToken)
     {
         return Task.Factory.StartNew(() =>
@@ -189,27 +211,27 @@ public sealed class OpenAiCompatibleController(
                     cancellationToken.ThrowIfCancellationRequested();
                     onDelta(delta).GetAwaiter().GetResult();
                 };
-            var result = session.GenerateWithStats(CreateOpenVinoPrompt(messages), streamer);
-            return new LlamaGenerationResult(result.Text, result.TokenCount, TimeSpan.Zero, result.TokensPerSecond);
+            var result = session.GenerateWithStats(CreateOpenVinoPrompt(messages), streamer, ToOpenVinoOptions(options));
+            return new GenerationResult(result.Text, result.TokenCount, TimeSpan.Zero, result.TokensPerSecond, result.PromptTokenCount);
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
-    private async Task<LlamaGenerationResult> GenerateLlamaAsync(string? modelPath, IReadOnlyList<LlamaChatMessage> messages, Func<string, Task>? onDelta, CancellationToken cancellationToken)
+    private async Task<GenerationResult> GenerateLlamaAsync(string? modelPath, IReadOnlyList<ChatMessage> messages, Func<string, Task>? onDelta, ChatGenerationOptions options, CancellationToken cancellationToken)
     {
-        using var session = modelRuntime.CreateLlamaChatSession("You are a helpful assistant.", modelPath);
-        return await session.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
+        using var session = modelRuntime.CreateLlamaChatSession(string.Empty, modelPath);
+        return await session.GenerateWithStatsAsync(messages, onDelta, options, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<LlamaGenerationResult> GeneratePythonAsync(IReadOnlyList<LlamaChatMessage> messages, Func<string, Task>? onDelta, CancellationToken cancellationToken)
+    private async Task<GenerationResult> GeneratePythonAsync(IReadOnlyList<ChatMessage> messages, Func<string, Task>? onDelta, ChatGenerationOptions options, CancellationToken cancellationToken)
     {
         using var session = modelRuntime.CreatePythonChatSession();
-        return await session.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
+        return await session.GenerateWithStatsAsync(messages, onDelta, options, cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<LlamaGenerationResult> GenerateDotLlmAsync(IReadOnlyList<LlamaChatMessage> messages, Func<string, Task>? onDelta, CancellationToken cancellationToken)
+    private async Task<GenerationResult> GenerateDotLlmAsync(IReadOnlyList<ChatMessage> messages, Func<string, Task>? onDelta, ChatGenerationOptions options, CancellationToken cancellationToken)
     {
         using var session = modelRuntime.CreateDotLlmChatSession();
-        return await session.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
+        return await session.GenerateWithStatsAsync(messages, onDelta, options, cancellationToken).ConfigureAwait(false);
     }
 
     private ModelLoadStatus GetLoadedModelStatus(string? requestedModel)
@@ -256,15 +278,47 @@ public sealed class OpenAiCompatibleController(
             return CreateError("At least one chat message is required.", "invalid_request_error");
         if (request.Messages.Any(message => message is null || string.IsNullOrWhiteSpace(message.Role)))
             return CreateError("Every chat message requires a non-empty role.", "invalid_request_error");
-        if (!allowToolCalls && request.Messages.Any(message => string.IsNullOrWhiteSpace(message.Content)))
+        if (!allowToolCalls && request.Messages.Any(message => !IsTextContent(message.Content)))
+            return CreateError("Only string message content is supported by local backends.", "invalid_request_error");
+        if (!allowToolCalls && (request.Tools is { Count: > 0 } || request.ToolChoice is not null || request.Messages.Any(message => message.ToolCalls is { Count: > 0 })))
+            return CreateError("Tool calling is not supported by the selected local backend.", "unsupported_request_error");
+        if (!allowToolCalls && (request.ResponseFormat is not null || request.Messages.Any(message => string.IsNullOrWhiteSpace(GetTextContent(message.Content)))))
             return CreateError("Every chat message requires a non-empty role and content.", "invalid_request_error");
+        if (request.MaxTokens is <= 0 || request.MaxCompletionTokens is <= 0)
+            return CreateError("max_tokens must be greater than zero.", "invalid_request_error");
+        if (request.Temperature is < 0 or > 2 || request.TopP is <= 0 or > 1)
+            return CreateError("temperature must be between 0 and 2 and top_p must be greater than 0 and at most 1.", "invalid_request_error");
+        if (!allowToolCalls && (request.FrequencyPenalty is not null || request.PresencePenalty is not null))
+            return CreateError("frequency_penalty and presence_penalty are not supported by local backends.", "unsupported_request_error");
+        if (request.TopK is <= 0 || request.MinP is < 0 or > 1 || request.RepetitionPenalty is <= 0)
+            return CreateError("top_k must be greater than zero, min_p must be between 0 and 1, and repetition_penalty must be greater than zero.", "invalid_request_error");
         return null;
     }
+
+    private static ChatGenerationOptions ToGenerationOptions(OpenAiChatRequest request) => new(
+        MaxTokens: request.MaxCompletionTokens ?? request.MaxTokens ?? 128,
+        Temperature: request.Temperature ?? .7f,
+        TopP: request.TopP ?? .9f,
+        TopK: request.TopK ?? 50,
+        MinP: request.MinP ?? .1f,
+        RepetitionPenalty: request.RepetitionPenalty ?? 1f,
+        Seed: request.Seed,
+        StopSequences: request.Stop);
+
+    private static OpenVinoGenerationOptions ToOpenVinoOptions(ChatGenerationOptions options) => new(
+        MaxNewTokens: options.MaxTokens,
+        Temperature: options.Temperature,
+        TopP: options.TopP,
+        RepetitionPenalty: options.RepetitionPenalty,
+        FrequencyPenalty: options.FrequencyPenalty,
+        PresencePenalty: options.PresencePenalty,
+        Seed: options.Seed,
+        StopSequences: options.StopSequences);
 
     private static string GetModelId(ModelLoadStatus status) =>
         string.IsNullOrWhiteSpace(status.ModelPath) ? "local-model" : Path.GetFileNameWithoutExtension(status.ModelPath);
 
-    private static string CreateOpenVinoPrompt(IReadOnlyList<LlamaChatMessage> messages)
+    private static string CreateOpenVinoPrompt(IReadOnlyList<ChatMessage> messages)
     {
         if (messages.Count == 1)
             return messages[0].Content;
@@ -272,13 +326,38 @@ public sealed class OpenAiCompatibleController(
         return string.Join("\n", messages.Select(message => $"{message.Role}: {message.Content}")) + "\nassistant:";
     }
 
-    private static OpenAiChatCompletionResponse CreateCompletion(string content, string model) =>
+    private static OpenAiChatCompletionResponse CreateCompletion(GenerationResult result, string model, string finishReason) =>
         new($"chatcmpl-{Guid.NewGuid():N}", "chat.completion", DateTimeOffset.UtcNow.ToUnixTimeSeconds(), model,
-            new[] { new OpenAiChatCompletionChoice(0, new OpenAiChatMessage("assistant", content), "stop") });
+            new[] { new OpenAiChatCompletionChoice(0, new OpenAiChatMessage("assistant", result.Text), finishReason) },
+            CreateUsage(result));
 
-    private static OpenAiChatCompletionChunk CreateChunk(string id, string model, OpenAiChatCompletionDelta delta, string? finishReason) =>
+    private static OpenAiUsage CreateUsage(GenerationResult result)
+    {
+        int? totalTokens = result.PromptTokenCount is int promptTokens
+            ? promptTokens + result.TokenCount
+            : null;
+        return new OpenAiUsage(result.PromptTokenCount, result.TokenCount, totalTokens, result.TokensPerSecond);
+    }
+
+    private static string GetTextContent(object? content) => content switch
+    {
+        null => string.Empty,
+        string text => text,
+        JsonElement element when element.ValueKind == JsonValueKind.String => element.GetString() ?? string.Empty,
+        _ => throw new ArgumentException("Only string message content is supported by local backends.", nameof(content))
+    };
+
+    private static bool IsTextContent(object? content) => content is null or string ||
+        content is JsonElement element && element.ValueKind == JsonValueKind.String;
+
+    private static OpenAiChatCompletionChunk CreateChunk(
+        string id,
+        string model,
+        OpenAiChatCompletionDelta delta,
+        string? finishReason,
+        OpenAiUsage? usage = null) =>
         new(id, "chat.completion.chunk", DateTimeOffset.UtcNow.ToUnixTimeSeconds(), model,
-            new[] { new OpenAiChatCompletionChunkChoice(0, delta, finishReason) });
+            new[] { new OpenAiChatCompletionChunkChoice(0, delta, finishReason) }, usage);
 
     private static OpenAiErrorResponse CreateError(string message, string type) => new(new OpenAiError(message, type));
 
@@ -294,7 +373,7 @@ public sealed class OpenAiCompatibleController(
         await Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private static async Task CompleteChannelAsync(Task<LlamaGenerationResult> generationTask, ChannelWriter<string> writer)
+    private static async Task CompleteChannelAsync(Task<GenerationResult> generationTask, ChannelWriter<string> writer)
     {
         try
         {

@@ -5,6 +5,7 @@ using LLama.Sampling;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
+using Esi.AI.Models;
 
 namespace Esi.AI.Core.Chat;
 
@@ -12,6 +13,7 @@ public sealed class LlamaChatSession : IDisposable
 {
     private readonly LLamaContext context;
     private readonly Action onDispose;
+    private readonly string? systemPrompt;
     private int disposed;
 
     public ChatSession Session { get; }
@@ -20,46 +22,55 @@ public sealed class LlamaChatSession : IDisposable
     {
         this.context = context;
         this.onDispose = onDispose;
+        this.systemPrompt = systemPrompt;
         Session = new ChatSession(new InteractiveExecutor(context));
         Session.HistoryTransform = new ChatMlHistoryTransform();
         if (!string.IsNullOrWhiteSpace(systemPrompt))
             Session.AddSystemMessage(systemPrompt);
     }
 
-    public async Task<string> GenerateAsync(IReadOnlyList<LlamaChatMessage> messages, CancellationToken cancellationToken = default)
+    public async Task<string> GenerateAsync(IReadOnlyList<ChatMessage> messages, CancellationToken cancellationToken = default)
     {
         return (await GenerateWithStatsAsync(messages, cancellationToken).ConfigureAwait(false)).Text;
     }
 
-    public Task<LlamaGenerationResult> GenerateWithStatsAsync(IReadOnlyList<LlamaChatMessage> messages, CancellationToken cancellationToken = default) =>
-        GenerateWithStatsAsync(messages, null, cancellationToken);
+    public Task<GenerationResult> GenerateWithStatsAsync(IReadOnlyList<ChatMessage> messages, CancellationToken cancellationToken = default) =>
+        GenerateWithStatsAsync(messages, null, new ChatGenerationOptions(), cancellationToken);
 
-    public async Task<LlamaGenerationResult> GenerateWithStatsAsync(
-        IReadOnlyList<LlamaChatMessage> messages,
+    public Task<GenerationResult> GenerateWithStatsAsync(
+        IReadOnlyList<ChatMessage> messages,
         Func<string, Task>? onToken,
+        CancellationToken cancellationToken = default) =>
+        GenerateWithStatsAsync(messages, onToken, new ChatGenerationOptions(), cancellationToken);
+
+    public async Task<GenerationResult> GenerateWithStatsAsync(
+        IReadOnlyList<ChatMessage> messages,
+        Func<string, Task>? onToken,
+        ChatGenerationOptions options,
         CancellationToken cancellationToken = default)
     {
         var result = string.Empty;
-        var tokenCount = 0;
         var stopwatch = Stopwatch.StartNew();
-        await foreach (var token in GenerateStreamingAsync(messages, cancellationToken).ConfigureAwait(false))
+        await foreach (var token in GenerateStreamingAsync(messages, options, cancellationToken).ConfigureAwait(false))
         {
             result += token;
-            tokenCount++;
             if (onToken is not null)
                 await onToken(token).ConfigureAwait(false);
         }
         stopwatch.Stop();
+        var tokenCount = context.Tokenize(result, addBos: false, special: true).Length;
         var tokensPerSecond = stopwatch.Elapsed.TotalSeconds > 0 ? tokenCount / stopwatch.Elapsed.TotalSeconds : 0;
         var cleanedResult = CleanGeneratedText(result);
         if (string.IsNullOrWhiteSpace(cleanedResult))
             throw new InvalidOperationException("The model returned an empty answer.");
 
-        return new LlamaGenerationResult(cleanedResult, tokenCount, stopwatch.Elapsed, tokensPerSecond);
+        var promptTokenCount = context.Tokenize(CreatePrompt(messages), addBos: true, special: true).Length;
+        return new GenerationResult(cleanedResult, tokenCount, stopwatch.Elapsed, tokensPerSecond, promptTokenCount);
     }
 
     public async IAsyncEnumerable<string> GenerateStreamingAsync(
-        IReadOnlyList<LlamaChatMessage> messages,
+        IReadOnlyList<ChatMessage> messages,
+        ChatGenerationOptions options,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (messages.Count == 0)
@@ -76,9 +87,20 @@ public sealed class LlamaChatSession : IDisposable
             new ChatHistory.Message(ParseRole(lastMessage.Role), lastMessage.Content),
             new InferenceParams
             {
-                MaxTokens = 128,
-                AntiPrompts = ["<|im_end|>", "\nUser:"],
-                SamplingPipeline = new DefaultSamplingPipeline { RepeatPenalty = 1.0f }
+                MaxTokens = options.MaxTokens,
+                AntiPrompts = ["<|im_end|>", "\nUser:", .. options.StopSequences ?? []],
+                SamplingPipeline = new DefaultSamplingPipeline
+                {
+                    Temperature = options.Temperature,
+                    TopP = options.TopP,
+                    TopK = options.TopK,
+                    MinP = options.MinP,
+                    RepeatPenalty = options.RepetitionPenalty,
+                    FrequencyPenalty = options.FrequencyPenalty,
+                    PresencePenalty = options.PresencePenalty,
+                    PenaltyCount = options.PenaltyCount,
+                    Seed = (uint)(options.Seed ?? Random.Shared.Next())
+                }
             },
             cancellationToken).ConfigureAwait(false))
         {
@@ -124,6 +146,17 @@ public sealed class LlamaChatSession : IDisposable
         return cleaned;
     }
 
+    private string CreatePrompt(IReadOnlyList<ChatMessage> messages)
+    {
+        var builder = new StringBuilder();
+        if (!string.IsNullOrWhiteSpace(systemPrompt))
+            builder.Append("<|im_start|>system\n").Append(systemPrompt).Append("<|im_end|>\n");
+        foreach (var message in messages)
+            builder.Append("<|im_start|>").Append(message.Role).Append('\n').Append(message.Content).Append("<|im_end|>\n");
+        builder.Append("<|im_start|>assistant\n");
+        return builder.ToString();
+    }
+
     private sealed class ChatMlHistoryTransform : IHistoryTransform
     {
         public string HistoryToText(ChatHistory history)
@@ -161,6 +194,10 @@ public sealed class LlamaChatSession : IDisposable
     }
 }
 
-public sealed record LlamaChatMessage(string Role, string Content);
-
-public sealed record LlamaGenerationResult(string Text, int TokenCount, TimeSpan Duration, double TokensPerSecond);
+public sealed record GenerationResult(
+    string Text,
+    int TokenCount,
+    TimeSpan Duration,
+    double TokensPerSecond,
+    int? PromptTokenCount = null,
+    string FinishReason = "stop");

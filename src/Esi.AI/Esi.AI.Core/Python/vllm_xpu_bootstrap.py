@@ -4,6 +4,7 @@ from types import ModuleType
 from functools import wraps
 import importlib.abc
 import importlib.machinery
+import importlib
 import sys
 
 
@@ -57,6 +58,61 @@ def enable_xpu_memory_probe_fallback() -> None:
 
     get_memory_info._esi_xpu_fallback = True
     accelerator.get_memory_info = get_memory_info
+
+
+def enable_sglang_xpu_memory_probe_fallback() -> None:
+    """Use the XPU device properties when SGLang requests unsupported free memory."""
+    try:
+        import torch
+        import sglang.srt.utils.common as sglang_common
+    except ImportError:
+        return
+
+    original_get_xpu_memory_capacity = sglang_common.get_xpu_memory_capacity
+    if getattr(original_get_xpu_memory_capacity, "_esi_xpu_fallback", False):
+        return
+
+    @wraps(original_get_xpu_memory_capacity)
+    def get_xpu_memory_capacity():
+        try:
+            return original_get_xpu_memory_capacity()
+        except RuntimeError as exception:
+            if "doesn't support querying" not in str(exception):
+                raise
+            if not torch.xpu.is_available():
+                raise
+            return torch.xpu.get_device_properties().total_memory // (1 << 20)
+
+    get_xpu_memory_capacity._esi_xpu_fallback = True
+    sglang_common.get_xpu_memory_capacity = get_xpu_memory_capacity
+
+
+def enable_sglang_xpu_eager_sampling_fallback() -> None:
+    """Keep XPU sampling eager when TorchInductor cannot compile without a C compiler."""
+    try:
+        import torch
+        repetition_penalty = importlib.import_module(
+            "sglang.srt.sampling.penaltylib.repetition_penalty"
+        )
+    except ImportError:
+        return
+
+    original_apply_scaling_penalties = repetition_penalty.apply_scaling_penalties
+    if getattr(original_apply_scaling_penalties, "_esi_xpu_eager", False):
+        return
+
+    def apply_scaling_penalties(logits, scaling_penalties):
+        logits[:] = torch.where(
+            logits < 0,
+            logits * scaling_penalties,
+            logits / scaling_penalties,
+        )
+
+    apply_scaling_penalties._esi_xpu_eager = True
+    repetition_penalty.apply_scaling_penalties = apply_scaling_penalties
+    sampling_batch_info = sys.modules.get("sglang.srt.sampling.sampling_batch_info")
+    if sampling_batch_info is not None:
+        sampling_batch_info.apply_scaling_penalties = apply_scaling_penalties
 
 
 def install_vllm_memory_probe_hook() -> None:

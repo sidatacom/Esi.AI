@@ -1,9 +1,10 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
-using Esi.AI.Core.Chat;
+using GenerationResult = Esi.AI.Core.Chat.GenerationResult;
 using Esi.AI.Core.Grpc;
 using Esi.AI.Models;
+using ModelChatMessage = Esi.AI.Models.ChatMessage;
 using Grpc.Core;
 using Grpc.Net.Client;
 
@@ -145,13 +146,15 @@ public sealed class PythonInferenceServer : IDisposable
                 PythonInferenceGrpcMapper.ToGrpcRequest(request),
                 cancellationToken: startupCancellation.Token).ResponseAsync.ConfigureAwait(false);
             if (!response.Succeeded)
-                throw new InvalidOperationException($"{GetBackendName(request.Backend)} could not load '{request.ModelPath}': {response.Error}{Environment.NewLine}{loadLog}");
+                throw new InvalidOperationException(response.Error);
 
             modelId = response.ModelId;
             await WaitUntilModelReadyAsync(newClient, newProcess, startupTimeout, startupCancellation.Token).ConfigureAwait(false);
         }
-        catch
+        catch (Exception exception)
         {
+            lock (sync)
+                loadLog = ExtractRootCause(exception.Message);
             await StopAsync(CancellationToken.None).ConfigureAwait(false);
             throw;
         }
@@ -233,7 +236,7 @@ public sealed class PythonInferenceServer : IDisposable
         {
             timeout.Token.ThrowIfCancellationRequested();
             if (activeProcess.HasExited)
-                throw new InvalidOperationException($"The Python gRPC bridge exited with code {activeProcess.ExitCode}. {loadLog}");
+                throw new InvalidOperationException(ExtractRootCause(loadLog));
             try
             {
                 var response = await activeClient.CheckReadinessAsync(new ReadinessRequest(), cancellationToken: timeout.Token).ResponseAsync.ConfigureAwait(false);
@@ -259,7 +262,7 @@ public sealed class PythonInferenceServer : IDisposable
         {
             timeout.Token.ThrowIfCancellationRequested();
             if (activeProcess.HasExited)
-                throw new InvalidOperationException($"The Python gRPC bridge exited while loading the model. {loadLog}");
+                throw new InvalidOperationException(ExtractRootCause(loadLog));
             try
             {
                 var response = await activeClient.CheckReadinessAsync(new ReadinessRequest(), cancellationToken: timeout.Token).ResponseAsync.ConfigureAwait(false);
@@ -287,6 +290,42 @@ public sealed class PythonInferenceServer : IDisposable
     {
         lock (sync)
             sessions.Remove(session);
+    }
+
+    private static string ExtractRootCause(string message)
+    {
+        var lines = message.Split(["\r\n", "\n"], StringSplitOptions.None);
+        var exceptionStart = -1;
+        for (var index = lines.Length - 1; index >= 0; index--)
+        {
+            var candidate = lines[index].Trim();
+            var separator = candidate.IndexOf(": ", StringComparison.Ordinal);
+            if (separator <= 0)
+                continue;
+
+            var exceptionType = candidate[..separator];
+            if (exceptionType.EndsWith("Error", StringComparison.Ordinal) ||
+                exceptionType.EndsWith("Exception", StringComparison.Ordinal) ||
+                exceptionType.EndsWith("Failure", StringComparison.Ordinal))
+            {
+                exceptionStart = index;
+                break;
+            }
+        }
+
+        if (exceptionStart < 0)
+            return message.Trim();
+
+        var errorLines = new List<string> { lines[exceptionStart].Trim() };
+        for (var index = exceptionStart + 1; index < lines.Length; index++)
+        {
+            var line = lines[index].Trim();
+            if (line.StartsWith("[", StringComparison.Ordinal))
+                break;
+            if (line.Length > 0)
+                errorLines.Add(line);
+        }
+        return string.Join(Environment.NewLine, errorLines);
     }
 
     private static void ApplyDeviceEnvironment(ProcessStartInfo startInfo, IReadOnlyList<string> devices, string pythonExecutable)
@@ -429,15 +468,22 @@ public sealed class PythonInferenceChatSession : IDisposable
     }
 
     /// <summary>Generates a response and collects token statistics from the gRPC stream.</summary>
-    public async Task<LlamaGenerationResult> GenerateWithStatsAsync(
-        IReadOnlyList<LlamaChatMessage> messages,
+    public async Task<GenerationResult> GenerateWithStatsAsync(
+        IReadOnlyList<ModelChatMessage> messages,
         CancellationToken cancellationToken = default)
-        => await GenerateWithStatsAsync(messages, null, cancellationToken).ConfigureAwait(false);
+        => await GenerateWithStatsAsync(messages, null, new ChatGenerationOptions(), cancellationToken).ConfigureAwait(false);
+
+    public Task<GenerationResult> GenerateWithStatsAsync(
+        IReadOnlyList<ModelChatMessage> messages,
+        Func<string, Task>? onDelta,
+        CancellationToken cancellationToken = default)
+        => GenerateWithStatsAsync(messages, onDelta, new ChatGenerationOptions(), cancellationToken);
 
     /// <summary>Generates a response while forwarding each streamed delta.</summary>
-    public async Task<LlamaGenerationResult> GenerateWithStatsAsync(
-        IReadOnlyList<LlamaChatMessage> messages,
+    public async Task<GenerationResult> GenerateWithStatsAsync(
+        IReadOnlyList<ModelChatMessage> messages,
         Func<string, Task>? onDelta,
+        ChatGenerationOptions options,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(messages);
@@ -446,10 +492,11 @@ public sealed class PythonInferenceChatSession : IDisposable
         ObjectDisposedException.ThrowIf(disposed != 0, this);
 
         using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, disposeCancellation.Token);
-        var request = PythonInferenceGrpcMapper.ToGrpcRequest(messages, modelId());
+        var request = PythonInferenceGrpcMapper.ToGrpcRequest(messages, modelId(), options);
         var started = Stopwatch.StartNew();
         var text = new StringBuilder();
         var tokenCount = 0;
+        var promptTokenCount = 0;
         var tokensPerSecond = 0d;
 
         await foreach (var response in generate(request, linkedCancellation.Token).WithCancellation(linkedCancellation.Token).ConfigureAwait(false))
@@ -460,6 +507,7 @@ public sealed class PythonInferenceChatSession : IDisposable
             if (!string.IsNullOrEmpty(response.Delta) && onDelta is not null)
                 await onDelta(response.Delta).ConfigureAwait(false);
             tokenCount = Math.Max(tokenCount, (int)response.GeneratedTokens);
+            promptTokenCount = Math.Max(promptTokenCount, (int)response.PromptTokens);
             if (response.TokensPerSecond > 0)
                 tokensPerSecond = response.TokensPerSecond;
         }
@@ -468,7 +516,7 @@ public sealed class PythonInferenceChatSession : IDisposable
             throw new InvalidOperationException($"{backendName()} returned an empty answer.");
         if (tokensPerSecond <= 0 && started.Elapsed.TotalSeconds > 0)
             tokensPerSecond = tokenCount / started.Elapsed.TotalSeconds;
-        return new LlamaGenerationResult(text.ToString(), tokenCount, started.Elapsed, tokensPerSecond);
+        return new GenerationResult(text.ToString(), tokenCount, started.Elapsed, tokensPerSecond, promptTokenCount);
     }
 
     /// <inheritdoc />

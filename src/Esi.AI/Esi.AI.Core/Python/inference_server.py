@@ -25,6 +25,31 @@ import inference_pb2
 import inference_pb2_grpc
 
 
+def _extract_root_error(output: str) -> str:
+    lines = output.splitlines()
+    exception_start = -1
+    for index in range(len(lines) - 1, -1, -1):
+        candidate = lines[index].strip()
+        separator = candidate.find(": ")
+        if separator <= 0:
+            continue
+        exception_type = candidate[:separator]
+        if exception_type.endswith(("Error", "Exception", "Failure")):
+            exception_start = index
+            break
+
+    if exception_start < 0:
+        return next((line.strip() for line in reversed(lines) if line.strip()), "The Python backend exited without an error message.")
+
+    error_lines = [lines[exception_start].strip()]
+    for line in lines[exception_start + 1:]:
+        if line.strip().startswith("["):
+            break
+        if line.strip():
+            error_lines.append(line.strip())
+    return "\n".join(error_lines)
+
+
 if os.environ.get("VLLM_TARGET_DEVICE", "").lower() == "xpu":
     import vllm_xpu_bootstrap
 
@@ -92,7 +117,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 )
             except Exception as exception:
                 return inference_pb2.ModelOperationResponse(
-                    error=f"vLLM failed to load: {exception}\n{traceback.format_exc()}"
+                    error=_extract_root_error(f"{exception}\n{traceback.format_exc()}")
                 )
 
     async def UnloadModel(self, request, context):
@@ -112,8 +137,13 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                     "model": self._model_id,
                     "messages": [{"role": message.role, "content": message.content} for message in request.messages],
                     "max_tokens": request.max_tokens or 512,
-                    "temperature": request.temperature if request.temperature > 0 else 0.7,
-                    "top_p": request.top_p if request.top_p > 0 else 0.9,
+                    "temperature": request.temperature,
+                    "top_p": request.top_p,
+                    "top_k": request.top_k,
+                    "min_p": request.min_p,
+                    "repetition_penalty": request.repetition_penalty or 1.0,
+                    "seed": request.seed or None,
+                    "stop": list(request.stop_sequences) or None,
                 }
                 response = await asyncio.to_thread(self._post_json, "/v1/chat/completions", payload)
                 content = response["choices"][0]["message"].get("content", "")
@@ -141,8 +171,13 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
 
             sampling_params = SamplingParams(
                 max_tokens=request.max_tokens or 512,
-                temperature=request.temperature if request.temperature > 0 else 0.7,
-                top_p=request.top_p if request.top_p > 0 else 0.9,
+                temperature=request.temperature,
+                top_p=request.top_p,
+                top_k=request.top_k or -1,
+                min_p=request.min_p,
+                repetition_penalty=request.repetition_penalty or 1.0,
+                seed=request.seed or None,
+                stop=list(request.stop_sequences) or None,
             )
             async for output in self._engine.generate(prompt, sampling_params, request_id):
                 if context.cancelled():
@@ -199,10 +234,18 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 error="CUDA and XPU devices cannot be mixed in one SGLang worker."
             )
 
+        bridge_directory = os.path.dirname(os.path.abspath(__file__))
+        bootstrap = (
+            f"import sys; sys.path.insert(0, {json.dumps(bridge_directory)}); "
+            "import runpy; import vllm_xpu_bootstrap; "
+            "vllm_xpu_bootstrap.enable_sglang_xpu_memory_probe_fallback(); "
+            "vllm_xpu_bootstrap.enable_sglang_xpu_eager_sampling_fallback(); "
+            "runpy.run_module('sglang.launch_server', run_name='__main__')"
+        )
         command = [
             sys.executable,
-            "-m",
-            "sglang.launch_server",
+            "-c",
+            bootstrap,
             "--model-path",
             request.model_path,
             "--host",
@@ -215,7 +258,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
             str(request.tensor_parallel_size or 1),
         ]
         if "xpu" in vendors:
-            command.extend(["--device", "xpu"])
+            command.extend(["--device", "xpu", "--attention-backend", "torch_native"])
         if request.gpu_memory_utilization > 0:
             command.extend(["--mem-fraction-static", str(request.gpu_memory_utilization)])
         if request.trust_remote_code:
@@ -231,7 +274,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 self._sglang_process = None
                 output, _ = await process.communicate()
                 return inference_pb2.ModelOperationResponse(
-                    error=f"SGLang exited with code {process.returncode}: {(output or b'').decode(errors='replace')[-2000:]}"
+                    error=_extract_root_error((output or b"").decode(errors="replace"))
                 )
             try:
                 models = await asyncio.to_thread(self._get_json, "/v1/models")

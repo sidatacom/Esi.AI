@@ -22,7 +22,7 @@ public sealed class BackendReferenceModelTests
         using var loader = new LlamaModelLoader();
         await loader.LoadAsync(modelPath, "CPU", 0);
         using var session = loader.CreateChatSession("Answer briefly.");
-        var response = await session.GenerateAsync([new LlamaChatMessage("user", "Reply with exactly: LLama reference passed.")]);
+        var response = await session.GenerateAsync([new ChatMessage("user", "Reply with exactly: LLama reference passed.")]);
 
         Assert.IsFalse(string.IsNullOrWhiteSpace(response));
     }
@@ -78,7 +78,7 @@ public sealed class BackendReferenceModelTests
         using var runtime = new DotLlmInProcessRuntime();
         await runtime.LoadAsync(new DotLlmLoadRequest(modelPath));
         using var session = runtime.CreateChatSession();
-        var result = await session.GenerateWithStatsAsync([new LlamaChatMessage("user", "Reply with exactly: dotLLM reference passed.")]);
+        var result = await session.GenerateWithStatsAsync([new ChatMessage("user", "Reply with exactly: dotLLM reference passed.")]);
 
         Assert.IsFalse(string.IsNullOrWhiteSpace(result.Text));
     }
@@ -111,7 +111,7 @@ public sealed class BackendReferenceModelTests
             EnforceEager: true,
             Device: device));
         using var session = server.CreateChatSession();
-        var result = await session.GenerateWithStatsAsync([new LlamaChatMessage("user", $"Reply with exactly: {backend} reference passed.")]);
+        var result = await session.GenerateWithStatsAsync([new ChatMessage("user", $"Reply with exactly: {backend} reference passed.")]);
 
         Assert.IsFalse(string.IsNullOrWhiteSpace(result.Text));
     }

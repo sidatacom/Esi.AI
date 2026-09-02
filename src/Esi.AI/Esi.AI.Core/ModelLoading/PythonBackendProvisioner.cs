@@ -61,11 +61,27 @@ public sealed class PythonBackendProvisioner
                 environmentCreated = true;
             }
 
+            if (definition.PackagesToRemoveBeforeInstall.Count > 0)
+            {
+                await RunProcessAsync(
+                    environmentPython,
+                    ["-m", "pip", "uninstall", "--yes", .. definition.PackagesToRemoveBeforeInstall],
+                    timeout,
+                    preparationTimeout.Token).ConfigureAwait(false);
+            }
+
             if (!await HasDependenciesAsync(environmentPython, definition, timeout, preparationTimeout.Token, applicationDirectory).ConfigureAwait(false))
             {
+                var installArguments = new List<string>
+                {
+                    "-m", "pip", "install", "--disable-pip-version-check"
+                };
+                if (backend == ConfigurationBackend.Sglang && IsXpuRoute(devices))
+                    installArguments.Add("--no-deps");
+                installArguments.AddRange(["-r", requirementsPath]);
                 var installResult = await RunProcessAsync(
                     environmentPython,
-                    ["-m", "pip", "install", "--disable-pip-version-check", "-r", requirementsPath],
+                    installArguments,
                     timeout,
                     preparationTimeout.Token).ConfigureAwait(false);
                 EnsureProcessSucceeded(installResult, $"Installing {definition.DisplayName} Python dependencies", installResult.Output);
@@ -310,10 +326,10 @@ public sealed class PythonBackendProvisioner
 
     private static BackendDefinition GetDefinition(ConfigurationBackend backend, IReadOnlyList<string>? devices) => backend switch
     {
-        ConfigurationBackend.Vllm when IsXpuRoute(devices) => new("vLLM Intel XPU", "vllm", "vllm-xpu-requirements.txt", "esi-ai-vllm-xpu", ["grpc", "google.protobuf", "vllm", "vllm_xpu_kernels"], true),
-        ConfigurationBackend.Vllm => new("vLLM CUDA", "vllm", "vllm-requirements.txt", "esi-ai-vllm", ["grpc", "google.protobuf", "vllm"], false),
-        ConfigurationBackend.Sglang when IsXpuRoute(devices) => new("SGLang Intel XPU", "sglang", "sglang-requirements.txt", "esi-ai-sglang", ["grpc", "google.protobuf", "sglang"], false),
-        ConfigurationBackend.Sglang => new("SGLang CUDA", "sglang", "sglang-cuda-requirements.txt", "esi-ai-sglang-cuda", ["grpc", "google.protobuf", "sglang"], false),
+        ConfigurationBackend.Vllm when IsXpuRoute(devices) => new("vLLM Intel XPU", "vllm", "vllm-xpu-requirements.txt", "esi-ai-vllm-xpu", ["grpc", "google.protobuf", "vllm", "vllm_xpu_kernels"], true, []),
+        ConfigurationBackend.Vllm => new("vLLM CUDA", "vllm", "vllm-requirements.txt", "esi-ai-vllm", ["grpc", "google.protobuf", "vllm"], false, []),
+        ConfigurationBackend.Sglang when IsXpuRoute(devices) => new("SGLang Intel XPU", "sglang", "sglang-requirements.txt", "esi-ai-sglang", ["grpc", "google.protobuf", "sglang"], false, ["sglang-kernel", "flashinfer-python"]),
+        ConfigurationBackend.Sglang => new("SGLang CUDA", "sglang", "sglang-cuda-requirements.txt", "esi-ai-sglang-cuda", ["grpc", "google.protobuf", "sglang"], false, []),
         _ => throw new ArgumentException("Only vLLM and SGLang have Python environments.", nameof(backend))
     };
 
@@ -348,7 +364,8 @@ public sealed class PythonBackendProvisioner
         string RequirementsFileName,
         string EnvironmentName,
         IReadOnlyList<string> RequiredModules,
-        bool RequiresVllmXpuBootstrap)
+        bool RequiresVllmXpuBootstrap,
+        IReadOnlyList<string> PackagesToRemoveBeforeInstall)
     {
         public string DependencyDescription => string.Join(", ", RequiredModules);
     }

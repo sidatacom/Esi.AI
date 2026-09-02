@@ -586,9 +586,9 @@ public sealed class OpenVinoChatSession : IDisposable
         this.generationLock = generationLock;
     }
 
-    public string Generate(string prompt, Action<string>? streamer = null) => GenerateWithStats(prompt, streamer).Text;
+    public string Generate(string prompt, Action<string>? streamer = null, OpenVinoGenerationOptions? generationOptions = null) => GenerateWithStats(prompt, streamer, generationOptions).Text;
 
-    public OpenVinoGenerationResult GenerateWithStats(string prompt, Action<string>? streamer = null)
+    public OpenVinoGenerationResult GenerateWithStats(string prompt, Action<string>? streamer = null, OpenVinoGenerationOptions? generationOptions = null)
     {
         if (string.IsNullOrWhiteSpace(prompt))
             throw new ArgumentException("A prompt is required.", nameof(prompt));
@@ -596,11 +596,16 @@ public sealed class OpenVinoChatSession : IDisposable
         generationLock.Wait();
         try
         {
+            using var generationConfig = GetGenerationConfig(generationOptions);
             if (llmPipeline is not null)
             {
                 using var results = streamer is null
-                    ? llmPipeline.Generate(prompt)
-                    : llmPipeline.Generate(prompt, streamer);
+                    ? llmPipeline.Generate(prompt, generationConfig)
+                    : llmPipeline.Generate(prompt, generationConfig, text =>
+                    {
+                        streamer(text);
+                        return StreamingStatus.Running;
+                    });
                 return CreateGenerationResult(results.GetText(), results.GetPerformanceMetrics());
             }
 
@@ -610,11 +615,11 @@ public sealed class OpenVinoChatSession : IDisposable
                 history.AddUserMessage(prompt);
                 if (streamer is null)
                 {
-                    using var nonStreamingResults = vlmPipeline.GenerateWithHistory(history);
+                    using var nonStreamingResults = vlmPipeline.GenerateWithHistory(history, null, generationConfig);
                     return CreateGenerationResult(nonStreamingResults.GetText(), nonStreamingResults.GetPerformanceMetrics());
                 }
 
-                using var streamedResults = vlmPipeline.GenerateWithHistory(history, null, null, text =>
+                using var streamedResults = vlmPipeline.GenerateWithHistory(history, null, generationConfig, text =>
                 {
                     streamer(text);
                     return StreamingStatus.Running;
@@ -634,8 +639,34 @@ public sealed class OpenVinoChatSession : IDisposable
     {
         using (metrics)
         {
-            return new OpenVinoGenerationResult(text, checked((int)metrics.NumGenerationTokens), metrics.Throughput.Mean);
+            return new OpenVinoGenerationResult(text, checked((int)metrics.NumGenerationTokens), metrics.Throughput.Mean, checked((int)metrics.NumInputTokens));
         }
+    }
+
+    private GenerationConfig GetGenerationConfig(OpenVinoGenerationOptions? options)
+    {
+        var generationConfig = llmPipeline?.GetGenerationConfig() ?? vlmPipeline?.GetGenerationConfig();
+        if (generationConfig is null)
+            throw new InvalidOperationException("No OpenVINO pipeline is available for this chat session.");
+        ConfigureGenerationConfig(generationConfig, options);
+        return generationConfig;
+    }
+
+    private static void ConfigureGenerationConfig(GenerationConfig generationConfig, OpenVinoGenerationOptions? options)
+    {
+        var value = options ?? new OpenVinoGenerationOptions();
+        generationConfig.SetMaxNewTokens((ulong)Math.Max(1, value.MaxNewTokens));
+        generationConfig.SetTemperature(value.Temperature);
+        generationConfig.SetTopK((ulong)Math.Max(1, value.TopK));
+        generationConfig.SetTopP(value.TopP);
+        generationConfig.SetDoSample(value.DoSample);
+        generationConfig.SetRepetitionPenalty(value.RepetitionPenalty);
+        generationConfig.SetPresencePenalty(value.PresencePenalty);
+        generationConfig.SetFrequencyPenalty(value.FrequencyPenalty);
+        if (value.Seed is int seed)
+            generationConfig.SetRngSeed((ulong)seed);
+        if (value.StopSequences is { Count: > 0 })
+            generationConfig.SetStopStrings(value.StopSequences);
     }
 
     public void Dispose()
@@ -643,7 +674,7 @@ public sealed class OpenVinoChatSession : IDisposable
     }
 }
 
-public sealed record OpenVinoGenerationResult(string Text, int TokenCount, double TokensPerSecond);
+public sealed record OpenVinoGenerationResult(string Text, int TokenCount, double TokensPerSecond, int PromptTokenCount = 0);
 
 public sealed record OpenVinoGenerationOptions(
     int MaxNewTokens = 128,
@@ -651,7 +682,11 @@ public sealed record OpenVinoGenerationOptions(
     float TopP = .9f,
     bool DoSample = true,
     int TopK = 50,
-    float RepetitionPenalty = 1.2f);
+    float RepetitionPenalty = 1.2f,
+    float FrequencyPenalty = 0,
+    float PresencePenalty = 0,
+    int? Seed = null,
+    IReadOnlyList<string>? StopSequences = null);
 
 public sealed record OpenVinoNpuOptions(
     int MaxPromptLength = 1024,

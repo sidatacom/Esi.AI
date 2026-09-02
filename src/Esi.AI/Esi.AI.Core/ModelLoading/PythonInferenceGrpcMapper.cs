@@ -1,6 +1,6 @@
-using Esi.AI.Core.Chat;
 using Esi.AI.Core.Grpc;
 using Esi.AI.Models;
+using ModelChatMessage = Esi.AI.Models.ChatMessage;
 
 namespace Esi.AI.Core.ModelLoading;
 
@@ -25,7 +25,10 @@ internal static class PythonInferenceGrpcMapper
         return grpcRequest;
     }
 
-    public static GenerateRequest ToGrpcRequest(IReadOnlyList<LlamaChatMessage> messages, string modelId)
+    public static GenerateRequest ToGrpcRequest(
+        IReadOnlyList<ModelChatMessage> messages,
+        string modelId,
+        ChatGenerationOptions? options = null)
     {
         ArgumentNullException.ThrowIfNull(messages);
         if (messages.Count == 0)
@@ -33,15 +36,21 @@ internal static class PythonInferenceGrpcMapper
         if (string.IsNullOrWhiteSpace(modelId))
             throw new ArgumentException("A model id is required.", nameof(modelId));
 
+        var generationOptions = options ?? new ChatGenerationOptions();
         var request = new GenerateRequest
         {
             RequestId = Guid.NewGuid().ToString("N"),
             ModelId = modelId,
-            MaxTokens = 512,
-            Temperature = .7f,
-            TopP = .9f
+            MaxTokens = (uint)Math.Max(1, generationOptions.MaxTokens),
+            Temperature = generationOptions.Temperature,
+            TopP = generationOptions.TopP,
+            TopK = generationOptions.TopK,
+            MinP = generationOptions.MinP,
+            RepetitionPenalty = generationOptions.RepetitionPenalty,
+            Seed = generationOptions.Seed ?? 0
         };
-        request.Messages.AddRange(messages.Select(message => new ChatMessage
+        request.StopSequences.AddRange(generationOptions.StopSequences ?? []);
+        request.Messages.AddRange(messages.Select(message => new Esi.AI.Core.Grpc.ChatMessage
         {
             Role = message.Role,
             Content = message.Content

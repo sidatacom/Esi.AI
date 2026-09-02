@@ -7,8 +7,9 @@ using DotLLM.Models;
 using DotLLM.Models.Gguf;
 using DotLLM.Tokenizers;
 using DotLLM.Tokenizers.ChatTemplates;
-using Esi.AI.Core.Chat;
+using GenerationResult = Esi.AI.Core.Chat.GenerationResult;
 using Esi.AI.Models;
+using ModelChatMessage = Esi.AI.Models.ChatMessage;
 using DotChatMessage = DotLLM.Tokenizers.ChatMessage;
 
 using System.Text;
@@ -121,13 +122,20 @@ public sealed class DotLlmInProcessRuntime : IDisposable
 public sealed class DotLlmInProcessChatSession(IModel model, DotLLM.Tokenizers.ITokenizer tokenizer, JinjaChatTemplate? chatTemplate) : IDisposable
 {
     /// <summary>Generates a response for the supplied chat messages.</summary>
-    public Task<LlamaGenerationResult> GenerateWithStatsAsync(IReadOnlyList<LlamaChatMessage> messages, CancellationToken cancellationToken = default) =>
-        GenerateWithStatsAsync(messages, null, cancellationToken);
+    public Task<GenerationResult> GenerateWithStatsAsync(IReadOnlyList<ModelChatMessage> messages, CancellationToken cancellationToken = default) =>
+        GenerateWithStatsAsync(messages, null, new ChatGenerationOptions(), cancellationToken);
+
+    public Task<GenerationResult> GenerateWithStatsAsync(
+        IReadOnlyList<ModelChatMessage> messages,
+        Func<string, Task>? onDelta,
+        CancellationToken cancellationToken = default) =>
+        GenerateWithStatsAsync(messages, onDelta, new ChatGenerationOptions(), cancellationToken);
 
     /// <summary>Generates a response while forwarding each streamed text fragment.</summary>
-    public async Task<LlamaGenerationResult> GenerateWithStatsAsync(
-        IReadOnlyList<LlamaChatMessage> messages,
+    public async Task<GenerationResult> GenerateWithStatsAsync(
+        IReadOnlyList<ModelChatMessage> messages,
         Func<string, Task>? onDelta,
+        ChatGenerationOptions options,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(messages);
@@ -136,11 +144,21 @@ public sealed class DotLlmInProcessChatSession(IModel model, DotLLM.Tokenizers.I
 
         var prompt = CreatePrompt(messages);
         var generator = new TextGenerator(model, tokenizer);
-        var options = new InferenceOptions { MaxTokens = 128, Temperature = 0.7f, TopP = 0.95f, TopK = 40 };
+        var inferenceOptions = new InferenceOptions
+        {
+            MaxTokens = options.MaxTokens,
+            Temperature = options.Temperature,
+            TopP = options.TopP,
+            TopK = options.TopK,
+            MinP = options.MinP,
+            RepetitionPenalty = options.RepetitionPenalty,
+            StopSequences = options.StopSequences ?? [],
+            Seed = options.Seed
+        };
         var stopwatch = Stopwatch.StartNew();
         var responseText = new StringBuilder();
         var generatedTokenCount = 0;
-        await foreach (var token in generator.GenerateStreamingTokensAsync(prompt, options, cancellationToken).ConfigureAwait(false))
+        await foreach (var token in generator.GenerateStreamingTokensAsync(prompt, inferenceOptions, cancellationToken).ConfigureAwait(false))
         {
             responseText.Append(token.Text);
             generatedTokenCount++;
@@ -151,7 +169,8 @@ public sealed class DotLlmInProcessChatSession(IModel model, DotLLM.Tokenizers.I
         var tokensPerSecond = stopwatch.Elapsed.TotalSeconds > 0 ? generatedTokenCount / stopwatch.Elapsed.TotalSeconds : 0;
         if (string.IsNullOrWhiteSpace(responseText.ToString()))
             throw new InvalidOperationException("dotLLM returned an empty answer.");
-        return new LlamaGenerationResult(responseText.ToString(), generatedTokenCount, stopwatch.Elapsed, tokensPerSecond);
+        var promptTokenCount = tokenizer.Encode(prompt).Length;
+        return new GenerationResult(responseText.ToString(), generatedTokenCount, stopwatch.Elapsed, tokensPerSecond, promptTokenCount);
     }
 
     /// <inheritdoc />
@@ -159,7 +178,7 @@ public sealed class DotLlmInProcessChatSession(IModel model, DotLLM.Tokenizers.I
     {
     }
 
-    private string CreatePrompt(IReadOnlyList<LlamaChatMessage> messages)
+    private string CreatePrompt(IReadOnlyList<ModelChatMessage> messages)
     {
         var templateMessages = messages.Select(message => new DotChatMessage { Role = message.Role, Content = message.Content }).ToArray();
         if (chatTemplate is not null)

@@ -45,10 +45,10 @@ public sealed class BackendRequirementMonitor : BackgroundService
     {
         while (!stoppingToken.IsCancellationRequested)
         {
-            await RefreshAsync(stoppingToken).ConfigureAwait(false);
-
             try
             {
+                await RefreshAsync(stoppingToken).ConfigureAwait(false);
+
                 var interval = Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
                 var requested = refreshRequests.Reader.WaitToReadAsync(stoppingToken).AsTask();
                 await Task.WhenAny(interval, requested).ConfigureAwait(false);
@@ -108,6 +108,10 @@ public sealed class BackendRequirementMonitor : BackgroundService
                     TimeSpan.FromSeconds(20),
                     cancellationToken,
                     route.Devices).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
             catch (Exception exception)
             {

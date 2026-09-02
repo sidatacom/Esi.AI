@@ -85,7 +85,8 @@ public sealed class DataService(
 
         foreach (var download in downloads)
         {
-            if (download.Library.Equals("openvino", StringComparison.OrdinalIgnoreCase))
+            if (download.Library.Equals("openvino", StringComparison.OrdinalIgnoreCase) ||
+                download.Library.Equals("transformers", StringComparison.OrdinalIgnoreCase))
             {
                 modelIds[Path.GetFullPath(download.DestinationPath)] = download.ModelId;
                 continue;
@@ -557,7 +558,7 @@ public sealed class DataService(
         await db.SaveChangesAsync(cancellationToken);
     }
 
-    private async Task<PersistedChat?> Chat_UpdateCoreAsync(Guid id, string userContent, LlamaGenerationResult generation, string modelPath, string backend, CancellationToken cancellationToken = default) =>
+    private async Task<PersistedChat?> Chat_UpdateCoreAsync(Guid id, string userContent, GenerationResult generation, string modelPath, string backend, CancellationToken cancellationToken = default) =>
         await PersistChatUpdateAsync(id, userContent, generation.Text, modelPath, backend, generation.TokenCount, generation.TokensPerSecond, cancellationToken);
 
     private async Task<PersistedChat?> PersistChatUpdateAsync(Guid id, string userContent, string assistantContent, string modelPath, string backend, int? tokenCount, double? tokensPerSecond, CancellationToken cancellationToken = default)
@@ -596,8 +597,26 @@ public sealed class DataService(
         if (request.Backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
             throw new ArgumentException("A vLLM or SGLang backend is required.", nameof(request));
 
-        await modelRuntime.LoadAsync(request, cancellationToken);
-        return modelRuntime.LoadedModel_Read();
+        try
+        {
+            await modelRuntime.LoadAsync(request, cancellationToken);
+            return modelRuntime.LoadedModel_Read();
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            var status = modelRuntime.LoadedModel_Read();
+            return status with
+            {
+                ModelPath = request.ModelPath,
+                Backend = request.Backend == ConfigurationBackend.Sglang ? "SGLang" : "vLLM",
+                LoadLog = exception.Message,
+                IsModelLoaded = false
+            };
+        }
     }
 
     public async Task<ModelLoadStatus> LoadDotLlmModelAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default)
@@ -766,7 +785,7 @@ public sealed class DataService(
 
     #region Helpers
 
-    private async Task<LlamaGenerationResult> GenerateChatWithStatsAsync(
+    private async Task<GenerationResult> GenerateChatWithStatsAsync(
         PersistedChat chat,
         ChatExchangeRequest request,
         string backend,
@@ -790,11 +809,11 @@ public sealed class DataService(
                 if (onDelta is not null)
                     onDelta(delta).GetAwaiter().GetResult();
             });
-            return new LlamaGenerationResult(openVinoGeneration.Text, openVinoGeneration.TokenCount, TimeSpan.Zero, openVinoGeneration.TokensPerSecond);
+            return new GenerationResult(openVinoGeneration.Text, openVinoGeneration.TokenCount, TimeSpan.Zero, openVinoGeneration.TokensPerSecond);
         }
 
-        var messages = chat.Messages.Select(message => new LlamaChatMessage(message.Role, message.Content))
-            .Append(new LlamaChatMessage("user", content)).ToArray();
+        var messages = chat.Messages.Select(message => new ChatMessage(message.Role, message.Content))
+            .Append(new ChatMessage("user", content)).ToArray();
         if (string.Equals(backend, "vLLM", StringComparison.OrdinalIgnoreCase) || string.Equals(backend, "SGLang", StringComparison.OrdinalIgnoreCase))
         {
             using var pythonSession = modelRuntime.CreatePythonChatSession();
@@ -829,7 +848,7 @@ public sealed class DataService(
         return normalizedBackend;
     }
 
-    private static async Task CompleteGenerationChannelAsync(Task<LlamaGenerationResult> generationTask, ChannelWriter<string> writer)
+    private static async Task CompleteGenerationChannelAsync(Task<GenerationResult> generationTask, ChannelWriter<string> writer)
     {
         try
         {

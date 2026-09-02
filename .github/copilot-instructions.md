@@ -9,6 +9,14 @@
 - Nach einem Debug- oder Testlauf muss `stop-esi-ai-studio-watchdog` ausgeführt werden; Watchdog- und Studio-Prozesse dürfen nicht unkontrolliert im Hintergrund verbleiben.
 - Diese Regeln allein erzwingen keinen Prozessstart. Das Studio prüft deshalb beim Start die von der überwachten VS-Code-Konfiguration gesetzte Watchdog-PID-Datei und beendet sich bei einem direkten Start ohne aktiven Watchdog sofort.
 
+## Esi.AI Studio Build- und Debug-Lebenszyklus
+
+- Vor jedem Build, Rebuild oder Test des Studio-Projekts muss die aktive VS-Code-Debugsession geprüft werden.
+- Läuft eine Studio-Debugsession, muss sie vor einem separaten Build kontrolliert beendet werden. Ein Build darf niemals parallel zu einer laufenden Studio-Debugsession ausgeführt werden.
+- Wenn die Debugsession weiter benötigt wird, ist stattdessen ein kontrollierter Debug-Restart zu verwenden; dieser führt den notwendigen Rebuild aus. Danach muss die Host-Readiness erneut geprüft werden.
+- Nach dem Beenden der Debugsession ist zu verifizieren, dass keine alte Studio-Instanz den Port `7010` belegt, bevor ein separater Build oder ein neuer Start erfolgt.
+- Für Änderungen am Studio gilt daher verbindlich: aktive Debugsession prüfen, stoppen oder per Debug-Restart neu bauen, anschließend validieren und erst dann eine neue überwachte Instanz starten.
+
 ## Application Architecture
 
 - The application exposes exactly one HTTP API controller: `OpenAiCompatibleController`.

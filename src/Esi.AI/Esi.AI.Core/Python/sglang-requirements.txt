@@ -1,6 +1,59 @@
 -r requirements.txt
 --extra-index-url https://download.pytorch.org/whl/xpu
+# The SGLang XPU provisioner installs this file with --no-deps because the
+# regular SGLang wheel declares the CUDA-only sglang-kernel dependency.
+--extra-index-url https://sgl-project.github.io/whl/xpu
+addict
+aiohttp
+anthropic>=0.20.0
+blobfile==3.0.0
+build
+compressed-tensors
+datasets
+easydict
+einops
+fastapi
+gguf
+grpcio
+interegular
+IPython
+llguidance>=1.7.6,<2.0.0
+mistral_common>=1.11.5
+modelscope
+msgspec
+ninja
+numpy
+openai==2.6.1
+openai-harmony==0.0.4
+orjson
+outlines==0.1.11
+packaging
+partial_json_parser
+pillow
+prometheus-client>=0.20.0
+psutil
+py-spy
+pybase64
+pydantic
+python-multipart
+pyzmq>=25.1.2
+requests
+scipy
+sentencepiece
+setproctitle
+smg-grpc-servicer>=0.5.0
+soundfile==0.13.1
+tiktoken
+timm==1.0.16
 torch==2.13.0+xpu
-torchvision==0.28.0+xpu
 torchaudio==2.11.0+xpu
-sglang[all]==0.5.18
+torchcodec==0.13.0; sys_platform != 'linux' or platform_machine not in 'aarch64 arm64 armv7l'
+torchvision==0.28.0+xpu
+tqdm
+transformers==5.12.1
+uvicorn
+xxhash
+uvloop
+sglang==0.5.18
+sglang-kernel-xpu==0.1.0
+protobuf
