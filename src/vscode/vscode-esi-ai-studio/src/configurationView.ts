@@ -33,6 +33,12 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
         case "saveTimeout":
           await this.saveSetting("requestTimeoutMs", message.value, "Timeout gespeichert.");
           return;
+        case "saveMaxInputTokens":
+          await this.saveTokenLimit("maxInputTokens", message.value, "Maximale Input-Tokens gespeichert.");
+          return;
+        case "saveMaxOutputTokens":
+          await this.saveTokenLimit("maxOutputTokens", message.value, "Maximale Output-Tokens gespeichert.");
+          return;
         case "saveLoggingEnabled":
           if (typeof message.value !== "boolean") {
             await this.postStatus("Bitte den Logging-Schalter verwenden.", true);
@@ -88,6 +94,23 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
     }
   }
 
+  private async saveTokenLimit(key: "maxInputTokens" | "maxOutputTokens", value: unknown, successMessage: string): Promise<void> {
+    const settingValue = Number(value);
+    if (!Number.isSafeInteger(settingValue) || settingValue < 1) {
+      await this.postStatus("Das Token-Limit muss eine positive ganze Zahl sein.", true);
+      return;
+    }
+
+    try {
+      const configuration = vscode.workspace.getConfiguration("esiAiStudio");
+      await configuration.update(key, settingValue, vscode.ConfigurationTarget.Global);
+      await this.provider.refresh();
+      await this.postStatus(successMessage);
+    } catch (error) {
+      await this.postStatus(error instanceof Error ? error.message : String(error), true);
+    }
+  }
+
   private async postStatus(message: string, isError = false): Promise<void> {
     const view = this.view;
     if (view) {
@@ -106,6 +129,8 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
     const configuration = vscode.workspace.getConfiguration("esiAiStudio");
     const baseUrl = escapeHtml(configuration.get<string>("baseUrl", "http://127.0.0.1:7010/v1"));
     const timeout = configuration.get<number>("requestTimeoutMs", 120000).toString();
+    const maxInputTokens = configuration.get<number>("maxInputTokens", 32768).toString();
+    const maxOutputTokens = configuration.get<number>("maxOutputTokens", 32768).toString();
     const loggingEnabled = this.provider.getLoggingEnabled();
     const loggingPath = escapeHtml(this.provider.getLoggingPath().trim() || defaultTraceFilePath);
     const nonce = randomBytes(16).toString("base64");
@@ -145,6 +170,12 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
   <label><span>Request Timeout (ms)</span><input id="timeout" type="number" min="1000" step="1000" value="${timeout}"></label>
   <button id="save-timeout" type="button">Timeout speichern</button>
 
+  <h2>Token-Limits</h2>
+  <label><span>Maximale Input-Tokens</span><input id="max-input-tokens" type="number" min="1" step="1" value="${maxInputTokens}"></label>
+  <button id="save-max-input-tokens" type="button">Input-Limit speichern</button>
+  <label><span>Maximale Output-Tokens</span><input id="max-output-tokens" type="number" min="1" step="1" value="${maxOutputTokens}"></label>
+  <button id="save-max-output-tokens" type="button">Output-Limit speichern</button>
+
   <h2>Logging</h2>
   <label><span><input id="logging-enabled" type="checkbox" ${loggingEnabled ? "checked" : ""}> Request-Logging aktivieren</span></label>
   <label><span>Logpfad</span><input id="logging-path" type="text" value="${loggingPath}" spellcheck="false"></label>
@@ -170,6 +201,8 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
     };
     document.getElementById("save-url").addEventListener("click", () => vscode.postMessage({ command: "saveBaseUrl", value: document.getElementById("base-url").value }));
     document.getElementById("save-timeout").addEventListener("click", () => vscode.postMessage({ command: "saveTimeout", value: document.getElementById("timeout").value }));
+    document.getElementById("save-max-input-tokens").addEventListener("click", () => vscode.postMessage({ command: "saveMaxInputTokens", value: document.getElementById("max-input-tokens").value }));
+    document.getElementById("save-max-output-tokens").addEventListener("click", () => vscode.postMessage({ command: "saveMaxOutputTokens", value: document.getElementById("max-output-tokens").value }));
     document.getElementById("logging-enabled").addEventListener("change", event => vscode.postMessage({ command: "saveLoggingEnabled", value: event.target.checked }));
     document.getElementById("save-logging-path").addEventListener("click", () => vscode.postMessage({ command: "saveLoggingPath", value: document.getElementById("logging-path").value }));
     document.getElementById("test-connection").addEventListener("click", () => { showStatus("Verbindung wird geprüft."); vscode.postMessage({ command: "testConnection" }); });

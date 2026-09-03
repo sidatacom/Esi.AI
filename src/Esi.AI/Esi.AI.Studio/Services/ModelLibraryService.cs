@@ -249,10 +249,21 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IAsyncDisposable
             .Select(library => library.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray() ?? [];
-        if (libraries.Length > 1)
+        var apps = request.Apps?
+            .Where(app => !string.IsNullOrWhiteSpace(app) && !app.Equals("all", StringComparison.OrdinalIgnoreCase))
+            .Select(app => app.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray() ?? [];
+        if (libraries.Length > 1 || apps.Length > 1)
         {
-            var results = await Task.WhenAll(libraries.Select(library =>
-                SearchHuggingFaceQueryAsync(request with { Libraries = [library] }, cancellationToken)));
+            IEnumerable<string?> libraryFilters = libraries.Length > 0 ? libraries.Select(library => (string?)library) : [null];
+            IEnumerable<string?> appFilters = apps.Length > 0 ? apps.Select(app => (string?)app) : [null];
+            var results = await Task.WhenAll(libraryFilters.SelectMany(library => appFilters.Select(app =>
+                SearchHuggingFaceQueryAsync(request with
+                {
+                    Libraries = library is null ? null : [library],
+                    Apps = app is null ? null : [app]
+                }, cancellationToken))));
             var merged = new List<HuggingFaceModelInfo>();
             var seenModelIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var resultLimit = Math.Clamp(options.SearchLimit, 1, 100);
@@ -272,7 +283,11 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IAsyncDisposable
         }
 
         var searchModels = await SearchHuggingFaceQueryAsync(
-            libraries.Length == 1 ? request with { Libraries = libraries } : request with { Libraries = null },
+            request with
+            {
+                Libraries = libraries.Length == 1 ? libraries : null,
+                Apps = apps.Length == 1 ? apps : null
+            },
             cancellationToken);
         return await ApplyMemoryFilterAsync(searchModels, request, cancellationToken);
     }
@@ -411,12 +426,13 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IAsyncDisposable
         AddQueryParts(queryParts, "filter", request.Libraries);
         AddQueryParts(queryParts, "pipeline_tag", request.Tasks);
         AddQueryParts(queryParts, "num_parameters", request.ParameterRanges);
-        AddQueryParts(queryParts, "language", request.Languages);
-        AddQueryParts(queryParts, "license", request.Licenses);
-        AddQueryParts(queryParts, "hardware", request.Hardware);
+        AddPrefixedFilterParts(queryParts, request.Languages, "language:");
+        AddQueryParts(queryParts, "filter", request.Licenses);
+        AddPrefixedFilterParts(queryParts, request.Hardware, "hardware:");
         if (request.BaseOnly)
-            AddQueryPart(queryParts, "other", "base");
-        AddQueryParts(queryParts, "other", request.Other);
+            AddQueryPart(queryParts, "filter", "base");
+        AddQueryParts(queryParts, "filter", request.Filters);
+        AddQueryParts(queryParts, "apps", request.Apps);
         AddQueryParts(queryParts, "inference_provider", request.InferenceAvailable ? ["all"] : request.InferenceProviders);
         if (!string.IsNullOrWhiteSpace(request.Sort) && !request.Sort.Equals("trending", StringComparison.OrdinalIgnoreCase))
             AddQueryPart(queryParts, "sort", request.Sort);
@@ -451,6 +467,15 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IAsyncDisposable
 
         foreach (var value in values)
             AddQueryPart(queryParts, name, value);
+    }
+
+    private static void AddPrefixedFilterParts(List<string> queryParts, IEnumerable<string>? values, string prefix)
+    {
+        if (values is null)
+            return;
+
+        foreach (var value in values)
+            AddQueryPart(queryParts, "filter", prefix + value);
     }
 
     public async Task<Guid> StartDownloadAsync(string modelId, string? fileName, string library = "gguf", CancellationToken cancellationToken = default)

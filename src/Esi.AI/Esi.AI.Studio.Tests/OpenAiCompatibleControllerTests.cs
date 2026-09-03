@@ -116,6 +116,47 @@ public sealed class OpenAiCompatibleControllerTests
     }
 
     [TestMethod]
+    public void ToOpenVinoOptions_WhenTemperatureIsZero_DisablesSampling()
+    {
+        var options = OpenAiCompatibleController.ToOpenVinoOptions(new ChatGenerationOptions(Temperature: 0));
+
+        Assert.IsFalse(options.DoSample);
+    }
+
+    [TestMethod]
+    public void ToOpenVinoOptions_WhenTemperatureIsPositive_EnablesSampling()
+    {
+        var options = OpenAiCompatibleController.ToOpenVinoOptions(new ChatGenerationOptions(Temperature: .7f));
+
+        Assert.IsTrue(options.DoSample);
+    }
+
+    [TestMethod]
+    public void ToOpenVinoOptions_WhenReasoningEffortIsProvided_PreservesIt()
+    {
+        var options = OpenAiCompatibleController.ToOpenVinoOptions(new ChatGenerationOptions(ReasoningEffort: "high"));
+
+        Assert.AreEqual("high", options.ReasoningEffort);
+    }
+
+    [TestMethod]
+    public async Task CreateChatCompletion_WhenReasoningEffortIsUnsupported_ReturnsBadRequest()
+    {
+        using var runtime = new ModelRuntime();
+        var controller = CreateController(runtime);
+        var request = new OpenAiChatRequest(
+            null,
+            new[] { new OpenAiChatMessage("user", "Hello") })
+        {
+            ReasoningEffort = "unsupported"
+        };
+
+        var result = await controller.CreateChatCompletion(request, CancellationToken.None);
+
+        Assert.IsInstanceOfType<BadRequestObjectResult>(result);
+    }
+
+    [TestMethod]
     public async Task CreateChatCompletion_WhenMessagesAreEmpty_ReturnsBadRequest()
     {
         using var runtime = new ModelRuntime();
@@ -164,7 +205,7 @@ public sealed class OpenAiCompatibleControllerTests
     }
 
     [TestMethod]
-    public async Task CreateChatCompletion_WhenLocalToolIsRequested_ReturnsUnsupportedRequest()
+    public async Task CreateChatCompletion_WhenLocalToolIsRequestedAndNoModelIsLoaded_ReturnsServiceUnavailable()
     {
         using var runtime = new ModelRuntime();
         var controller = CreateController(runtime);
@@ -177,9 +218,7 @@ public sealed class OpenAiCompatibleControllerTests
 
         var result = await controller.CreateChatCompletion(request, CancellationToken.None);
 
-        var error = ((BadRequestObjectResult)result).Value as OpenAiErrorResponse;
-        Assert.IsNotNull(error);
-        Assert.AreEqual("unsupported_request_error", error.Error.Type);
+        Assert.AreEqual(StatusCodes.Status503ServiceUnavailable, ((ObjectResult)result).StatusCode);
     }
 
     [TestMethod]

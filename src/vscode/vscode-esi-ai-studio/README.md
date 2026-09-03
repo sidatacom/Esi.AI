@@ -32,6 +32,8 @@ For an authenticated deployment, run **Esi AI Studio: Configure API Key** from t
 
 Request logging is enabled by default for compatibility with earlier diagnostic builds. Disable it with `esiAiStudio.loggingEnabled` or the **Provider** view. Configure `esiAiStudio.loggingPath` with an absolute path; an empty value uses `os.tmpdir()/esi-ai-studio-provider.jsonl`.
 
+Configure `esiAiStudio.reasoningEffort` with `none`, `low`, `medium`, `high`, `xhigh`, or `max`. A reasoning option supplied by VS Code for an individual request takes precedence over this setting.
+
 ## Development
 
 ```bash

@@ -71,6 +71,10 @@ interface EsiModel {
   capabilities: vscode.LanguageModelChatCapabilities;
 }
 
+interface ModelOptions {
+  [name: string]: unknown;
+}
+
 interface OpenAiMessage {
   role: "user" | "assistant" | "tool";
   content: string | OpenAiContentPart[] | null;
@@ -133,11 +137,18 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     if (!supportsTools && options.tools && options.tools.length > 0) {
       throw new Error("The selected Esi.AI Studio model does not support tool calling.");
     }
+    const toolOptimizationResponse = this.getToolOptimizationResponse(messages);
+    if (toolOptimizationResponse !== undefined) {
+      progress.report(new vscode.LanguageModelTextPart(toolOptimizationResponse));
+      return;
+    }
+    const maxTokens = this.isToolOptimizationRequest(messages) ? 512 : model.maxOutputTokens;
+    const reasoningEffort = getReasoningEffort(options.modelOptions) ?? getConfiguredReasoningEffort();
     const requestBody = {
       model: this.backendModelIds.get(model.id) ?? model.id,
       messages: messages.map((message) => this.toOpenAiMessage(message, supportsImages)),
-      max_tokens: model.maxOutputTokens,
-      temperature: 0.7,
+      max_tokens: maxTokens,
+      reasoning_effort: reasoningEffort,
       top_p: 0.9,
       tools: supportsTools ? options.tools?.map((tool) => ({
         type: "function",
@@ -522,7 +533,7 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
       family: "esi-ai-studio",
       version: "1",
       maxInputTokens: configuration.get<number>("maxInputTokens", 32768),
-      maxOutputTokens: configuration.get<number>("maxOutputTokens", 4096),
+      maxOutputTokens: configuration.get<number>("maxOutputTokens", 32768),
       capabilities: toLanguageModelCapabilities(model.capabilities),
     };
   }
@@ -597,6 +608,50 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
       .map((part) => part.value)
       .join("");
   }
+
+  private isToolOptimizationRequest(messages: readonly vscode.LanguageModelChatRequestMessage[]): boolean {
+    const prompt = messages.map((message) => this.messageText(message)).join("\n");
+    return prompt.includes("You will be given ") && prompt.includes("groups of tools.") && prompt.includes("For each group, provide a name and summary");
+  }
+
+  private getToolOptimizationResponse(messages: readonly vscode.LanguageModelChatRequestMessage[]): string | undefined {
+    const prompt = messages.map((message) => this.messageText(message)).join("\n");
+    if (!this.isToolOptimizationRequest(messages)) {
+      return undefined;
+    }
+
+    const groups = [...prompt.matchAll(/<group index="(\d+)">([\s\S]*?)<\/group>/g)];
+    const response = groups.map((group) => {
+      const groupIndex = Number(group[1]);
+      const toolNames = [...group[2].matchAll(/<tool name="([^"]+)">/g)].map((tool) => tool[1]);
+      const groupName = `tool_group_${groupIndex}`;
+      const summary = toolNames.length > 0
+        ? `Related tools for ${toolNames.join(", ")}.`
+        : "Related tools grouped by capability.";
+      return { groupIndex, groupName, summary };
+    });
+
+    return JSON.stringify(response);
+  }
+}
+
+function getReasoningEffort(modelOptions: Readonly<ModelOptions> | undefined): string | undefined {
+  const value = modelOptions?.reasoning_effort ?? modelOptions?.reasoningEffort;
+  return normalizeReasoningEffort(value);
+}
+
+function getConfiguredReasoningEffort(): string {
+  const configuration = vscode.workspace.getConfiguration("esiAiStudio");
+  return normalizeReasoningEffort(configuration.get<string>("reasoningEffort", "none")) ?? "none";
+}
+
+function normalizeReasoningEffort(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return ["none", "low", "medium", "high", "xhigh", "max"].includes(normalized) ? normalized : undefined;
 }
 
 function sameModel(left: EsiModel, right: EsiModel | undefined): boolean {

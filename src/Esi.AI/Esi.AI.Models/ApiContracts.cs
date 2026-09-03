@@ -112,7 +112,8 @@ public sealed record ChatGenerationOptions(
     float PresencePenalty = 0,
     int PenaltyCount = 64,
     int? Seed = null,
-    IReadOnlyList<string>? StopSequences = null);
+    IReadOnlyList<string>? StopSequences = null,
+    string? ReasoningEffort = null);
 
 public sealed record ChatResponse(string Content);
 
@@ -180,6 +181,10 @@ public sealed record OpenAiChatRequest(
     [JsonPropertyName("response_format")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? ResponseFormat { get; init; }
+
+    [JsonPropertyName("reasoning_effort")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ReasoningEffort { get; init; }
 
     [JsonExtensionData]
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
@@ -275,7 +280,20 @@ public sealed record OpenAiChatCompletionChunkChoice(
     OpenAiChatCompletionDelta Delta,
     [property: JsonPropertyName("finish_reason")] string? FinishReason);
 
-public sealed record OpenAiChatCompletionDelta(string? Role = null, string? Content = null);
+public sealed record OpenAiChatCompletionDelta(
+    string? Role = null,
+    string? Content = null,
+    [property: JsonPropertyName("tool_calls")] IReadOnlyList<OpenAiToolCallDelta>? ToolCalls = null);
+
+public sealed record OpenAiToolCallDelta(
+    int Index,
+    string? Id = null,
+    string? Type = null,
+    OpenAiToolCallFunctionDelta? Function = null);
+
+public sealed record OpenAiToolCallFunctionDelta(
+    string? Name = null,
+    string? Arguments = null);
 
 public sealed record OpenAiUsage(
     [property: JsonPropertyName("prompt_tokens")] int? PromptTokens = null,
@@ -340,7 +358,8 @@ public sealed record HuggingFaceSearchRequest(
     IReadOnlyList<string>? Languages = null,
     IReadOnlyList<string>? Licenses = null,
     IReadOnlyList<string>? Hardware = null,
-    IReadOnlyList<string>? Other = null,
+    IReadOnlyList<string>? Filters = null,
+    IReadOnlyList<string>? Apps = null,
     IReadOnlyList<string>? InferenceProviders = null,
     bool BaseOnly = false,
     bool InferenceAvailable = false,

@@ -200,4 +200,5 @@ public sealed record GenerationResult(
     TimeSpan Duration,
     double TokensPerSecond,
     int? PromptTokenCount = null,
-    string FinishReason = "stop");
+    string FinishReason = "stop",
+    IReadOnlyList<OpenAiToolCall>? ToolCalls = null);

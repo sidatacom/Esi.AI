@@ -52,10 +52,29 @@ public sealed class BackendCatalogIntegrationTests
             null!,
             Options.Create(new ModelLibraryOptions()));
 
-        await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest("Qwen", ["transformers"], Other: ["vllm"]));
+        await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest("Qwen", ["transformers"], Apps: ["vllm"]));
 
         StringAssert.Contains(handler.RequestUri!.Query, "filter=transformers");
-        StringAssert.Contains(handler.RequestUri.Query, "other=vllm");
+        StringAssert.Contains(handler.RequestUri.Query, "apps=vllm");
+    }
+
+    [TestMethod]
+    public async Task SearchHuggingFaceAsync_MergesMultipleAppsAsOr()
+    {
+        var handler = new RecordingHttpMessageHandler();
+        var library = new ModelLibraryService(
+            new HttpClient(handler) { BaseAddress = new Uri("https://huggingface.co/") },
+            null!,
+            null!,
+            Options.Create(new ModelLibraryOptions()));
+
+        await library.SearchHuggingFaceAsync(new HuggingFaceSearchRequest("Qwen", Apps: ["vllm", "sglang"]));
+
+        Assert.AreEqual(2, handler.RequestUris.Count);
+        StringAssert.Contains(handler.RequestUris[0].Query, "apps=vllm");
+        Assert.IsFalse(handler.RequestUris[0].Query.Contains("apps=sglang", StringComparison.Ordinal));
+        StringAssert.Contains(handler.RequestUris[1].Query, "apps=sglang");
+        Assert.IsFalse(handler.RequestUris[1].Query.Contains("apps=vllm", StringComparison.Ordinal));
     }
 
     [TestMethod]
@@ -76,7 +95,8 @@ public sealed class BackendCatalogIntegrationTests
             Languages: ["de"],
             Licenses: ["license:mit"],
             Hardware: ["cuda", "vulkan"],
-            Other: ["vllm", "sglang"],
+            Filters: ["endpoints_compatible"],
+            Apps: ["vllm", "sglang"],
             InferenceProviders: ["groq", "together"],
             BaseOnly: true,
             InferenceAvailable: false,
@@ -88,13 +108,14 @@ public sealed class BackendCatalogIntegrationTests
         StringAssert.Contains(queries, "pipeline_tag=text-generation");
         StringAssert.Contains(queries, "pipeline_tag=image-to-text");
         StringAssert.Contains(queries, "num_parameters=n%3C1B");
-        StringAssert.Contains(queries, "language=de");
-        StringAssert.Contains(queries, "license=license%3Amit");
-        StringAssert.Contains(queries, "hardware=cuda");
-        StringAssert.Contains(queries, "hardware=vulkan");
-        StringAssert.Contains(queries, "other=base");
-        StringAssert.Contains(queries, "other=vllm");
-        StringAssert.Contains(queries, "other=sglang");
+        StringAssert.Contains(queries, "filter=language%3Ade");
+        StringAssert.Contains(queries, "filter=license%3Amit");
+        StringAssert.Contains(queries, "filter=hardware%3Acuda");
+        StringAssert.Contains(queries, "filter=hardware%3Avulkan");
+        StringAssert.Contains(queries, "filter=base");
+        StringAssert.Contains(queries, "filter=endpoints_compatible");
+        StringAssert.Contains(queries, "apps=vllm");
+        StringAssert.Contains(queries, "apps=sglang");
         StringAssert.Contains(queries, "inference_provider=groq");
         StringAssert.Contains(queries, "inference_provider=together");
         StringAssert.Contains(queries, "sort=likes");

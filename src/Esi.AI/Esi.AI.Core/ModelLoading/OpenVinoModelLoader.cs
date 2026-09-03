@@ -1,7 +1,9 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Esi.AI.Models;
 using OpenVinoSharp;
 using OpenVinoSharp.GenAI;
 using OpenVinoSharp.Internal;
@@ -570,6 +572,7 @@ public sealed class OpenVinoModelLoadException : Exception
 
 public sealed class OpenVinoChatSession : IDisposable
 {
+    private static readonly JsonSerializerOptions ChatJsonOptions = new(JsonSerializerDefaults.Web);
     private readonly LLMPipeline? llmPipeline;
     private readonly VLMPipeline? vlmPipeline;
     private readonly SemaphoreSlim generationLock;
@@ -590,18 +593,32 @@ public sealed class OpenVinoChatSession : IDisposable
 
     public OpenVinoGenerationResult GenerateWithStats(string prompt, Action<string>? streamer = null, OpenVinoGenerationOptions? generationOptions = null)
     {
-        if (string.IsNullOrWhiteSpace(prompt))
-            throw new ArgumentException("A prompt is required.", nameof(prompt));
+        return GenerateWithStats(
+            [new OpenAiChatMessage("user", prompt)],
+            null,
+            streamer,
+            generationOptions);
+    }
+
+    public OpenVinoGenerationResult GenerateWithStats(
+        IReadOnlyList<OpenAiChatMessage> messages,
+        IReadOnlyList<OpenAiToolDefinition>? tools = null,
+        Action<string>? streamer = null,
+        OpenVinoGenerationOptions? generationOptions = null)
+    {
+        if (messages is null || messages.Count == 0)
+            throw new ArgumentException("At least one chat message is required.", nameof(messages));
 
         generationLock.Wait();
         try
         {
             using var generationConfig = GetGenerationConfig(generationOptions);
+            using var history = CreateChatHistory(messages, tools, generationOptions?.ReasoningEffort);
             if (llmPipeline is not null)
             {
                 using var results = streamer is null
-                    ? llmPipeline.Generate(prompt, generationConfig)
-                    : llmPipeline.Generate(prompt, generationConfig, text =>
+                    ? llmPipeline.GenerateWithHistory(history, generationConfig)
+                    : llmPipeline.GenerateWithHistory(history, generationConfig, text =>
                     {
                         streamer(text);
                         return StreamingStatus.Running;
@@ -611,8 +628,6 @@ public sealed class OpenVinoChatSession : IDisposable
 
             if (vlmPipeline is not null)
             {
-                using var history = new ChatHistory();
-                history.AddUserMessage(prompt);
                 if (streamer is null)
                 {
                     using var nonStreamingResults = vlmPipeline.GenerateWithHistory(history, null, generationConfig);
@@ -635,13 +650,188 @@ public sealed class OpenVinoChatSession : IDisposable
         }
     }
 
+    private static ChatHistory CreateChatHistory(
+        IReadOnlyList<OpenAiChatMessage> messages,
+        IReadOnlyList<OpenAiToolDefinition>? tools,
+        string? reasoningEffort)
+    {
+        var history = new ChatHistory();
+        foreach (var message in messages)
+            history.PushBackJson(SerializeChatMessageForHistory(message));
+
+        var templateContext = CreateChatTemplateContext(reasoningEffort);
+        if (templateContext is not null)
+        {
+            using var context = JsonContainer.FromJsonString(templateContext);
+            history.SetExtraContext(context);
+        }
+
+        if (tools is { Count: > 0 })
+        {
+            using var toolDefinitions = JsonContainer.FromJsonString(JsonSerializer.Serialize(tools, ChatJsonOptions));
+            history.SetTools(toolDefinitions);
+        }
+
+        return history;
+    }
+
+    internal static string? CreateChatTemplateContext(string? reasoningEffort)
+    {
+        if (string.IsNullOrWhiteSpace(reasoningEffort))
+            return null;
+
+        var normalizedEffort = reasoningEffort.Trim().ToLowerInvariant();
+        if (normalizedEffort == "none")
+            return "{\"enable_thinking\":false}";
+
+        var templateEffort = normalizedEffort switch
+        {
+            "low" or "medium" or "xhigh" => normalizedEffort,
+            "high" or "max" => "xhigh",
+            _ => throw new ArgumentException($"Unsupported reasoning effort '{reasoningEffort}'.", nameof(reasoningEffort))
+        };
+        return JsonSerializer.Serialize(new
+        {
+            enable_thinking = true,
+            reasoning_effort = templateEffort
+        }, ChatJsonOptions);
+    }
+
+    internal static string SerializeChatMessageForHistory(OpenAiChatMessage message)
+    {
+        var json = JsonSerializer.SerializeToNode(message, ChatJsonOptions)?.AsObject()
+            ?? throw new InvalidOperationException("The chat message could not be serialized.");
+
+        if (message.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase) &&
+            json["tool_calls"] is JsonArray toolCalls)
+        {
+            if (message.Content is null)
+                json["content"] = string.Empty;
+
+            foreach (var toolCall in toolCalls)
+            {
+                if (toolCall?["function"] is not JsonObject function ||
+                    function["arguments"] is not JsonValue arguments ||
+                    !arguments.TryGetValue<string>(out var argumentsText))
+                    continue;
+
+                try
+                {
+                    if (JsonNode.Parse(argumentsText) is JsonObject argumentsObject)
+                        function["arguments"] = argumentsObject;
+                }
+                catch (JsonException)
+                {
+                }
+            }
+        }
+
+        return json.ToJsonString(ChatJsonOptions);
+    }
+
     private static OpenVinoGenerationResult CreateGenerationResult(string text, PerformanceMetrics metrics)
     {
         using (metrics)
         {
-            return new OpenVinoGenerationResult(text, checked((int)metrics.NumGenerationTokens), metrics.Throughput.Mean, checked((int)metrics.NumInputTokens));
+            var parsed = ParseToolCalls(text);
+            return new OpenVinoGenerationResult(
+                parsed.Text,
+                checked((int)metrics.NumGenerationTokens),
+                metrics.Throughput.Mean,
+                checked((int)metrics.NumInputTokens),
+                parsed.ToolCalls,
+                parsed.ToolCalls.Count > 0 ? "tool_calls" : "stop");
         }
     }
+
+    internal static OpenVinoToolCallParseResult ParseToolCalls(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return new OpenVinoToolCallParseResult(string.Empty, []);
+
+        var toolCalls = new List<OpenAiToolCall>();
+        var visibleText = new System.Text.StringBuilder(text.Length);
+        var position = 0;
+        foreach (Match block in ToolCallBlockRegex.Matches(text))
+        {
+            visibleText.Append(text, position, block.Index - position);
+            var parsedCalls = ParseToolCallBlock(block.Groups["body"].Value, toolCalls.Count);
+            if (parsedCalls.Count == 0)
+                visibleText.Append(block.Value);
+            else
+                toolCalls.AddRange(parsedCalls);
+            position = block.Index + block.Length;
+        }
+
+        visibleText.Append(text, position, text.Length - position);
+        return new OpenVinoToolCallParseResult(visibleText.ToString().Trim(), toolCalls);
+    }
+
+    private static IReadOnlyList<OpenAiToolCall> ParseToolCallBlock(string body, int index)
+    {
+        var functionMatch = FunctionCallRegex.Match(body);
+        if (functionMatch.Success)
+        {
+            var arguments = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (Match parameter in ParameterRegex.Matches(functionMatch.Groups["body"].Value))
+            {
+                var value = parameter.Groups["value"].Value.Trim();
+                arguments[parameter.Groups["name"].Value] = ParseToolParameter(value);
+            }
+
+            return [new OpenAiToolCall(
+                $"call_{Guid.NewGuid():N}",
+                "function",
+                new OpenAiToolCallFunction(
+                    functionMatch.Groups["name"].Value,
+                    JsonSerializer.Serialize(arguments, ChatJsonOptions)))];
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(body.Trim());
+            var root = document.RootElement;
+            if (!root.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String ||
+                !root.TryGetProperty("arguments", out var arguments))
+                return [];
+
+            var argumentsText = arguments.ValueKind == JsonValueKind.String
+                ? arguments.GetString() ?? "{}"
+                : arguments.GetRawText();
+            return [new OpenAiToolCall(
+                $"call_{Guid.NewGuid():N}",
+                "function",
+                new OpenAiToolCallFunction(name.GetString()!, argumentsText))];
+        }
+        catch (JsonException)
+        {
+            return [];
+        }
+    }
+
+    private static JsonElement ParseToolParameter(string value)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(value);
+            return document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            using var document = JsonDocument.Parse(JsonSerializer.Serialize(value, ChatJsonOptions));
+            return document.RootElement.Clone();
+        }
+    }
+
+    private static readonly Regex ToolCallBlockRegex = new(
+        @"<tool_call>(?<body>.*?)</tool_call>",
+        RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase);
+    private static readonly Regex FunctionCallRegex = new(
+        @"<function=(?<name>[^>\s]+)>(?<body>.*?)</function>",
+        RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase);
+    private static readonly Regex ParameterRegex = new(
+        @"<parameter=(?<name>[^>\s]+)>(?<value>.*?)</parameter>",
+        RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase);
 
     private GenerationConfig GetGenerationConfig(OpenVinoGenerationOptions? options)
     {
@@ -674,7 +864,15 @@ public sealed class OpenVinoChatSession : IDisposable
     }
 }
 
-public sealed record OpenVinoGenerationResult(string Text, int TokenCount, double TokensPerSecond, int PromptTokenCount = 0);
+public sealed record OpenVinoGenerationResult(
+    string Text,
+    int TokenCount,
+    double TokensPerSecond,
+    int PromptTokenCount = 0,
+    IReadOnlyList<OpenAiToolCall>? ToolCalls = null,
+    string FinishReason = "stop");
+
+internal sealed record OpenVinoToolCallParseResult(string Text, IReadOnlyList<OpenAiToolCall> ToolCalls);
 
 public sealed record OpenVinoGenerationOptions(
     int MaxNewTokens = 128,
@@ -686,7 +884,8 @@ public sealed record OpenVinoGenerationOptions(
     float FrequencyPenalty = 0,
     float PresencePenalty = 0,
     int? Seed = null,
-    IReadOnlyList<string>? StopSequences = null);
+    IReadOnlyList<string>? StopSequences = null,
+    string? ReasoningEffort = null);
 
 public sealed record OpenVinoNpuOptions(
     int MaxPromptLength = 1024,

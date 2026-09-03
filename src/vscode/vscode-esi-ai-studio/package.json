@@ -2,7 +2,7 @@
   "name": "vscode-esi-ai-studio",
   "displayName": "Esi.AI Studio Models",
   "description": "Use models loaded by Esi.AI Studio as VS Code language models.",
-  "version": "0.1.17",
+  "version": "0.1.22",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
@@ -104,9 +104,22 @@
         },
         "esiAiStudio.maxOutputTokens": {
           "type": "number",
-          "default": 4096,
+          "default": 32768,
           "minimum": 1,
           "description": "Output token limit advertised to VS Code for Esi.AI Studio models."
+        },
+        "esiAiStudio.reasoningEffort": {
+          "type": "string",
+          "enum": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "default": "none",
+          "description": "Thinking effort used by Esi.AI Studio models when VS Code does not provide a per-request reasoning option."
         }
       }
     }

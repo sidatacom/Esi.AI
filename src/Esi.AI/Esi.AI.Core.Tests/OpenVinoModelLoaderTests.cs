@@ -1,4 +1,6 @@
+using System.Text.Json;
 using Esi.AI.Core.ModelLoading;
+using Esi.AI.Models;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using OpenVinoSharp.GenAI;
 
@@ -141,6 +143,71 @@ public sealed class OpenVinoModelLoaderTests
         loader.UnloadAsync().GetAwaiter().GetResult();
 
         Assert.IsFalse(loader.IsLoaded);
+    }
+
+    [TestMethod]
+    public void ParseToolCalls_WhenQwenXmlCallIsReturned_ProducesOpenAiToolCall()
+    {
+        var parsed = OpenVinoChatSession.ParseToolCalls(
+            "<tool_call>\n<function=lookup>\n<parameter=query>\nweather in Berlin\n</parameter>\n</function>\n</tool_call>");
+
+        Assert.AreEqual(string.Empty, parsed.Text);
+        var toolCall = parsed.ToolCalls.Single();
+        Assert.AreEqual("lookup", toolCall.Function.Name);
+        StringAssert.Contains(toolCall.Function.Arguments, "\"query\":\"weather in Berlin\"");
+    }
+
+    [TestMethod]
+    public void ParseToolCalls_WhenJsonCallIsReturned_PreservesArguments()
+    {
+        var parsed = OpenVinoChatSession.ParseToolCalls(
+            "Before\n<tool_call>{\"name\":\"lookup\",\"arguments\":{\"query\":\"weather\"}}</tool_call>");
+
+        Assert.AreEqual("Before", parsed.Text);
+        var toolCall = parsed.ToolCalls.Single();
+        Assert.AreEqual("lookup", toolCall.Function.Name);
+        Assert.AreEqual("{\"query\":\"weather\"}", toolCall.Function.Arguments);
+    }
+
+    [TestMethod]
+    public void SerializeChatMessageForHistory_NormalizesAssistantToolArgumentsToObject()
+    {
+        var message = new OpenAiChatMessage(
+            "assistant",
+            ToolCalls:
+            [
+                new OpenAiToolCall(
+                    "call_1",
+                    "function",
+                    new OpenAiToolCallFunction("lookup", "{\"query\":\"weather\"}"))
+            ]);
+
+        using var document = JsonDocument.Parse(OpenVinoChatSession.SerializeChatMessageForHistory(message));
+        Assert.AreEqual(string.Empty, document.RootElement.GetProperty("content").GetString());
+        var arguments = document.RootElement
+            .GetProperty("tool_calls")[0]
+            .GetProperty("function")
+            .GetProperty("arguments");
+
+        Assert.AreEqual(JsonValueKind.Object, arguments.ValueKind);
+        Assert.AreEqual("weather", arguments.GetProperty("query").GetString());
+    }
+
+    [TestMethod]
+    public void CreateChatTemplateContext_WhenReasoningIsDisabled_DisablesThinking()
+    {
+        using var document = JsonDocument.Parse(OpenVinoChatSession.CreateChatTemplateContext("none")!);
+
+        Assert.IsFalse(document.RootElement.GetProperty("enable_thinking").GetBoolean());
+    }
+
+    [TestMethod]
+    public void CreateChatTemplateContext_WhenCloudEffortIsHigh_UsesSupportedNativeEffort()
+    {
+        using var document = JsonDocument.Parse(OpenVinoChatSession.CreateChatTemplateContext("high")!);
+
+        Assert.IsTrue(document.RootElement.GetProperty("enable_thinking").GetBoolean());
+        Assert.AreEqual("xhigh", document.RootElement.GetProperty("reasoning_effort").GetString());
     }
 
     [TestMethod]

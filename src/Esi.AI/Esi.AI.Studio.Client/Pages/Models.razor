@@ -8,7 +8,7 @@
 
 <div class="models-shell">
     <header class="models-header">
-        <div><p class="eyebrow">MODEL LIBRARY</p><p class="lede">Lokale GGUF-Dateien verwalten oder Modelle von Hugging Face laden.</p></div>
+        <div><p class="eyebrow">MODEL LIBRARY</p><p class="lede">Lokale Modelle verwalten oder Modell-Dateien von Hugging Face laden.</p></div>
         <button class="primary-button" type="button" @onclick="ScanLocalAsync" disabled="@isBusy">Bibliothek aktualisieren</button>
     </header>
 
@@ -98,7 +98,7 @@
                     @FilterGroupView("Tasks", mainTaskOptions, searchTask, value => SelectFilter(FilterKind.Task, value))
                     @FilterGroupView("Parameters", parameterOptions, searchParameterRange, value => SelectFilter(FilterKind.ParameterRange, value))
                     @FilterGroupView("Libraries", mainLibraryOptions, searchLibrary, value => SelectFilter(FilterKind.Library, value))
-                    @FilterGroupView("Apps", appOptions, searchOther, value => SelectFilter(FilterKind.Other, value))
+                    @AppFilterGroupView("Apps", appOptions, searchApps, value => SelectFilter(FilterKind.App, value))
                 </div>
                 <div class="main-toggles"><label><input type="checkbox" @bind="baseOnly" /> Base only</label><label><input type="checkbox" @bind="inferenceAvailable" /> Inference Available</label><label class="sort-control">Sort <InputSelect @bind-Value="searchSort" @bind-Value:after="SearchAsync"><option value="trending">Trending</option><option value="downloads">Downloads</option><option value="likes">Likes</option><option value="lastModified">Recently updated</option></InputSelect></label></div>
             }
@@ -125,11 +125,11 @@
             else
             {
                 <div class="filter-columns">
-                    @FilterGroupView("Model Tree", modelTreeOptions, searchOther, value => SelectFilter(FilterKind.Other, value))
-                    @FilterGroupView("Apps", appOptions, searchOther, value => SelectFilter(FilterKind.Other, value))
+                    @FilterGroupView("Model Tree", modelTreeOptions, searchFilters, value => SelectFilter(FilterKind.Filter, value))
+                    @AppFilterGroupView("Apps", appOptions, searchApps, value => SelectFilter(FilterKind.App, value))
                     @FilterGroupView("Inference Providers", inferenceProviderOptions, searchInferenceProvider, value => SelectFilter(FilterKind.InferenceProvider, value))
-                    @FilterGroupView("One-click Deployment", deploymentOptions, searchOther, value => SelectFilter(FilterKind.Other, value))
-                    @FilterGroupView("Misc", miscOptions, searchOther, value => SelectFilter(FilterKind.Other, value))
+                    @FilterGroupView("One-click Deployment", deploymentOptions, searchFilters, value => SelectFilter(FilterKind.Filter, value))
+                    @FilterGroupView("Misc", miscOptions, searchFilters, value => SelectFilter(FilterKind.Filter, value))
                 </div>
             }
         </section>
@@ -138,7 +138,7 @@
             <div class="model-list">
                 @foreach (var model in searchResults)
                 {
-                    <article class="model-row"><div class="model-details"><strong>@model.Id</strong><span>@model.Downloads Downloads · @model.Likes Likes · @(model.Author ?? "unbekannter Autor")</span><span>Kompatibel: @FormatBackends(model.CompatibleBackends)</span>@if (downloadOptions.TryGetValue(model.Id, out var options)) { <div class="download-options"><span class="download-options-label">Version auswählen</span>@foreach (var option in options) { <button class="filter-option" type="button" @onclick="() => DownloadAsync(model.Id, option.FileName)" disabled="@isBusy">@option.Label</button> }</div> }</div><div class="model-actions">@if (searchLibrary is "gguf" or "openvino") { <button class="secondary-button" type="button" @onclick="() => ChooseDownloadAsync(model.Id)" disabled="@isBusy">@(searchLibrary == "openvino" ? "OpenVINO laden" : "Versionen anzeigen")</button> }<a class="secondary-button" href="https://huggingface.co/@model.Id" target="_blank" rel="noopener noreferrer">Auf Hugging Face öffnen</a></div></article>
+                    <article class="model-row"><div class="model-details"><strong>@model.Id</strong><span>@model.Downloads Downloads · @model.Likes Likes · @(model.Author ?? "unbekannter Autor")</span><span>Kompatibel: @FormatBackends(model.CompatibleBackends)</span>@if (model.Tags is { Count: > 0 } tags) { <details class="model-tags"><summary>Tags anzeigen (@tags.Count)</summary><div class="model-tag-list">@foreach (var tag in tags) { <span class="model-tag">@tag</span> }</div></details> }@if (downloadOptions.TryGetValue(model.Id, out var options)) { <div class="download-options"><span class="download-options-label">Version auswählen</span>@foreach (var option in options.Options) { <button class="filter-option" type="button" @onclick="() => DownloadAsync(model.Id, option.FileName, options.Library)" disabled="@isBusy">@option.Label</button> }</div> }</div><div class="model-actions">@foreach (var target in GetDownloadTargets(model)) { <button class="secondary-button" type="button" @onclick="() => ChooseDownloadAsync(model.Id, target.Library)" disabled="@isBusy">@target.Label</button> }<a class="secondary-button" href="https://huggingface.co/@model.Id" target="_blank" rel="noopener noreferrer">Auf Hugging Face öffnen</a></div></article>
                 }
             </div>
         }
@@ -175,7 +175,7 @@
     .library-section { margin-top: 1.25rem; }
     .section-heading { align-items: end; border-bottom: 1px solid #e1dbd1; padding-bottom: .9rem; }
     .section-heading h2 { margin: 0; }.count-label, .download-status { color: #756f65; font-size: .85rem; }.directories { font-size: .85rem; }
-    .model-list { display: grid; gap: .65rem; margin-top: 1rem; }.model-row { align-items: center; padding: .9rem 0; border-bottom: 1px solid #e1dbd1; }.model-row:last-child { border-bottom: 0; }.model-row.selected { border-left: 3px solid #236b70; padding-left: .75rem; }.model-details strong { overflow-wrap: anywhere; }.model-huggingface { align-items: end; display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .35rem; }.model-huggingface label { color: #756f65; font-size: .8rem; font-weight: 700; }.model-huggingface .form-control { flex: 1 1 16rem; min-width: 12rem; }.model-backends, .model-capabilities { align-items: center; display: flex; flex-wrap: wrap; gap: .75rem; margin-top: .35rem; }.model-backends span, .model-capabilities span { color: #756f65; font-size: .8rem; font-weight: 700; }.model-backends label, .model-capabilities label { align-items: center; color: #4e4941; display: inline-flex; font-size: .8rem; gap: .3rem; }.model-backends input, .model-capabilities input { accent-color: #236b70; }.download-options { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .5rem; }
+    .model-list { display: grid; gap: .65rem; margin-top: 1rem; }.model-row { align-items: center; padding: .9rem 0; border-bottom: 1px solid #e1dbd1; }.model-row:last-child { border-bottom: 0; }.model-row.selected { border-left: 3px solid #236b70; padding-left: .75rem; }.model-details strong { overflow-wrap: anywhere; }.model-huggingface { align-items: end; display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .35rem; }.model-huggingface label { color: #756f65; font-size: .8rem; font-weight: 700; }.model-huggingface .form-control { flex: 1 1 16rem; min-width: 12rem; }.model-backends, .model-capabilities { align-items: center; display: flex; flex-wrap: wrap; gap: .75rem; margin-top: .35rem; }.model-backends span, .model-capabilities span { color: #756f65; font-size: .8rem; font-weight: 700; }.model-backends label, .model-capabilities label { align-items: center; color: #4e4941; display: inline-flex; font-size: .8rem; gap: .3rem; }.model-backends input, .model-capabilities input { accent-color: #236b70; }.model-tags { margin-top: .35rem; }.model-tags summary { color: #236b70; cursor: pointer; font-size: .85rem; font-weight: 700; }.model-tag-list { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .45rem; }.model-tag { background: #fff; border: 1px solid #d9d4ca; border-radius: .35rem; color: #4e4941; font-size: .8rem; overflow-wrap: anywhere; padding: .2rem .45rem; }.download-options { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .5rem; }
     .search-row { margin-top: 1rem; }.search-row .form-control { flex: 1; }.remote-section { background: #f2eee7; }.downloads-section { background: #eef4f0; }.download-row { display: grid; gap: .4rem; padding: .8rem 0; border-bottom: 1px solid #d5dfd8; }.download-footer { align-items: center; }.download-footer .download-status { flex: 1; }progress { width: 100%; height: .7rem; accent-color: #236b70; }.empty-state, .model-message { color: #756f65; }.error-message { color: #7e311f; margin: 0; }.download-options-label { color: #756f65; display: block; font-size: .85rem; font-weight: 700; margin-bottom: .35rem; }
     .hardware-fit-filter { align-items: end; border-top: 1px solid #e1dbd1; display: flex; flex-wrap: wrap; gap: 1.25rem; padding: .75rem 0 1rem; }.hardware-fit-filter .filter-group { flex: 1 1 22rem; }.hardware-fit-filter h3 { margin-bottom: .55rem; }.memory-filter-option { align-items: center; background: #fff; border: 1px solid #e2ddd5; border-radius: .5rem; color: #302d28; cursor: pointer; display: inline-flex; font-size: .85rem; padding: .42rem .6rem; }.memory-filter-option.selected { border-color: #236b70; box-shadow: 0 0 0 1px #236b70; color: #236b70; }.context-filter { align-items: center; display: flex; gap: .45rem; }.context-filter label { color: #756f65; font-size: .85rem; font-weight: 700; }.context-filter .form-select { width: 8rem; }.context-filter span { color: #756f65; font-size: .85rem; }
     .download-files { border-top: 1px solid #d5dfd8; margin-top: .25rem; padding-top: .4rem; }.download-files summary { color: #236b70; cursor: pointer; font-size: .85rem; }.download-file { display: grid; gap: .2rem; margin-top: .55rem; }.download-file span { overflow-wrap: anywhere; }.download-file span:nth-child(2) { color: #756f65; font-size: .8rem; }
@@ -192,7 +192,7 @@
     private readonly List<LocalModel> localModels = [];
     private readonly List<HuggingFaceModel> searchResults = [];
     private readonly Dictionary<Guid, DownloadStatus> downloads = [];
-    private readonly Dictionary<string, IReadOnlyList<ModelDownloadOption>> downloadOptions = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DownloadOptions> downloadOptions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> huggingFaceIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> modelDirectories = [];
     private static readonly ConfigurationBackend[] supportedBackends = Enum.GetValues<ConfigurationBackend>();
@@ -202,7 +202,8 @@
     private string searchLanguage = string.Empty;
     private string searchLicense = string.Empty;
     private string searchHardware = string.Empty;
-    private string searchOther = string.Empty;
+    private string searchFilters = string.Empty;
+    private readonly HashSet<string> searchApps = new(StringComparer.Ordinal);
     private string searchInferenceProvider = string.Empty;
     private string searchParameterRange = string.Empty;
     private string searchSort = "trending";
@@ -231,9 +232,21 @@
 
     protected override async Task OnInitializedAsync() { DownloadEvents.ModelDownload_Create += HandleModelDownloadChangedAsync; DownloadEvents.ModelDownload_Update += HandleModelDownloadChangedAsync; DownloadEvents.ModelDownload_Delete += HandleModelDownloadChangedAsync; await LoadStatusAsync(); await ScanLocalAsync(); modelDirectories.AddRange(await DataService.ModelDirectory_ReadAsync()); }
     private async Task ScanLocalAsync() { try { var models = await DataService.LocalModel_ReadAsync(); localModels.Clear(); localModels.AddRange(models); huggingFaceIds.Clear(); foreach (var model in models) if (!string.IsNullOrWhiteSpace(model.HuggingFaceModelId)) huggingFaceIds[model.Path] = model.HuggingFaceModelId; } catch (Exception) { message = "Die lokalen Modelle konnten nicht gelesen werden."; } }
-    private async Task SearchAsync() { isSearching = true; hasSearched = true; message = null; try { searchResults.Clear(); var contextLength = (uint)Math.Clamp(fitContextLength, 1_024, 1_048_576); searchResults.AddRange(await DataService.SearchModelsAsync(new HuggingFaceSearchRequest(searchQuery.Trim(), Libraries: [searchLibrary], Tasks: FilterValues(searchTask), ParameterRanges: FilterValues(searchParameterRange), Languages: FilterValues(searchLanguage), Licenses: FilterValues(searchLicense), Hardware: FilterValues(searchHardware), Other: FilterValues(searchOther), InferenceProviders: FilterValues(searchInferenceProvider), BaseOnly: baseOnly, InferenceAvailable: inferenceAvailable, Sort: searchSort, VramBudgetGiB: fitVramBudgetGiB, ContextLength: fitVramBudgetGiB is > 0 ? contextLength : null))); } catch (Exception) { message = "Die Hugging-Face-Suche ist fehlgeschlagen."; } finally { isSearching = false; } }
-    private async Task ChooseDownloadAsync(string modelId) { if (searchLibrary == "openvino") { await DownloadAsync(modelId, null); return; } try { isBusy = true; message = null; var options = await DataService.ModelDownload_ReadOptionsAsync(modelId, searchLibrary); if (options.Count == 1) await DownloadAsync(modelId, options[0].FileName); else downloadOptions[modelId] = options; } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
-    private async Task DownloadAsync(string modelId, string? fileName) { isBusy = true; message = null; try { await DataService.ModelDownload_CreateAsync(new ModelDownloadRequest(modelId, fileName, searchLibrary)); downloadOptions.Remove(modelId); } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
+    private async Task SearchAsync() { isSearching = true; hasSearched = true; message = null; try { searchResults.Clear(); var contextLength = (uint)Math.Clamp(fitContextLength, 1_024, 1_048_576); searchResults.AddRange(await DataService.SearchModelsAsync(new HuggingFaceSearchRequest(searchQuery.Trim(), Libraries: [searchLibrary], Tasks: FilterValues(searchTask), ParameterRanges: FilterValues(searchParameterRange), Languages: FilterValues(searchLanguage), Licenses: FilterValues(searchLicense), Hardware: FilterValues(searchHardware), Filters: FilterValues(searchFilters), Apps: searchApps.ToArray(), InferenceProviders: FilterValues(searchInferenceProvider), BaseOnly: baseOnly, InferenceAvailable: inferenceAvailable, Sort: searchSort, VramBudgetGiB: fitVramBudgetGiB, ContextLength: fitVramBudgetGiB is > 0 ? contextLength : null))); } catch (Exception) { message = "Die Hugging-Face-Suche ist fehlgeschlagen."; } finally { isSearching = false; } }
+    private async Task ChooseDownloadAsync(string modelId, string library) { if (library != "gguf") { await DownloadAsync(modelId, null, library); return; } try { isBusy = true; message = null; var options = await DataService.ModelDownload_ReadOptionsAsync(modelId, library); if (options.Count == 1) await DownloadAsync(modelId, options[0].FileName, library); else downloadOptions[modelId] = new DownloadOptions(library, options); } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
+    private async Task DownloadAsync(string modelId, string? fileName, string library) { isBusy = true; message = null; try { await DataService.ModelDownload_CreateAsync(new ModelDownloadRequest(modelId, fileName, library)); downloadOptions.Remove(modelId); } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
+    private static IReadOnlyList<DownloadTarget> GetDownloadTargets(HuggingFaceModel model)
+    {
+        var backends = model.CompatibleBackends ?? [];
+        var targets = new List<DownloadTarget>();
+        if (backends.Contains(ConfigurationBackend.Llama) || backends.Contains(ConfigurationBackend.DotLlm))
+            targets.Add(new("GGUF herunterladen", "gguf"));
+        if (backends.Contains(ConfigurationBackend.OpenVino))
+            targets.Add(new("OpenVINO herunterladen", "openvino"));
+        if (backends.Contains(ConfigurationBackend.Vllm) || backends.Contains(ConfigurationBackend.Sglang))
+            targets.Add(new("Transformers herunterladen", "transformers"));
+        return targets;
+    }
     private async Task SyncHuggingFaceAsync(LocalModel model) => await SyncModelBackendAsync(model);
     private async Task SetModelBackendAsync(LocalModel model, ConfigurationBackend backend) { var compatibleBackends = (model.CompatibleBackends ?? []).ToHashSet(); if (!compatibleBackends.Add(backend)) compatibleBackends.Remove(backend); var values = compatibleBackends.OrderBy(value => value).ToArray(); try { var models = await DataService.LocalModel_UpdateAsync(new ModelCompatibilityUpdate(model.Path, values, GetHuggingFaceId(model), GetCapabilities(model))); ReplaceLocalModels(models); message = "Backend-Kompatibilität gespeichert."; } catch (Exception exception) { message = exception.Message; } }
     private async Task SyncModelBackendAsync(LocalModel model) { var huggingFaceId = GetHuggingFaceId(model).Trim(); if (string.IsNullOrWhiteSpace(huggingFaceId)) { message = "Bitte zuerst eine Hugging-Face-ID angeben."; return; } try { isBusy = true; var models = await DataService.LocalModel_UpdateAsync(model.Path, huggingFaceId); ReplaceLocalModels(models); message = "Backend-Kompatibilität mit Hugging Face synchronisiert."; } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
@@ -263,8 +276,8 @@
     private void OpenConfiguration() => NavigationManager.NavigateTo("backends"); private void OpenChat() => NavigationManager.NavigateTo("chats");
     private static string FormatSize(long bytes) => bytes switch { > 1024 * 1024 * 1024 => $"{bytes / 1024d / 1024d / 1024d:F2} GiB", > 1024 * 1024 => $"{bytes / 1024d / 1024d:F1} MiB", _ => $"{bytes / 1024d:F0} KiB" };
     private async Task HandleSearchKeyDown(KeyboardEventArgs args) { if (args.Key == "Enter") await SearchAsync(); }
-    private bool HasActiveFilters => fitVramBudgetGiB is > 0 || baseOnly || inferenceAvailable || FilterValues(searchLibrary).Count > 0 || FilterValues(searchTask).Count > 0 || FilterValues(searchParameterRange).Count > 0 || FilterValues(searchLanguage).Count > 0 || FilterValues(searchLicense).Count > 0 || FilterValues(searchHardware).Count > 0 || FilterValues(searchOther).Count > 0 || FilterValues(searchInferenceProvider).Count > 0;
-    private void ClearFilters() { searchLibrary = string.Empty; searchTask = string.Empty; searchParameterRange = string.Empty; searchLanguage = string.Empty; searchLicense = string.Empty; searchHardware = string.Empty; searchOther = string.Empty; searchInferenceProvider = string.Empty; fitVramBudgetGiB = null; fitContextLength = 131_072; baseOnly = false; inferenceAvailable = false; }
+    private bool HasActiveFilters => fitVramBudgetGiB is > 0 || baseOnly || inferenceAvailable || FilterValues(searchLibrary).Count > 0 || FilterValues(searchTask).Count > 0 || FilterValues(searchParameterRange).Count > 0 || FilterValues(searchLanguage).Count > 0 || FilterValues(searchLicense).Count > 0 || FilterValues(searchHardware).Count > 0 || FilterValues(searchFilters).Count > 0 || searchApps.Count > 0 || FilterValues(searchInferenceProvider).Count > 0;
+    private void ClearFilters() { searchLibrary = string.Empty; searchTask = string.Empty; searchParameterRange = string.Empty; searchLanguage = string.Empty; searchLicense = string.Empty; searchHardware = string.Empty; searchFilters = string.Empty; searchApps.Clear(); searchInferenceProvider = string.Empty; fitVramBudgetGiB = null; fitContextLength = 131_072; baseOnly = false; inferenceAvailable = false; }
     private void SelectHardwareMemory(int? vramBudgetGiB) => fitVramBudgetGiB = vramBudgetGiB;
     private IReadOnlyList<HardwareMemoryOption> GetHardwareMemoryOptions()
     {
@@ -278,15 +291,18 @@
     private string GetHardwareMemoryOptionClass(HardwareMemoryOption option) => option.VramBudgetGiB == fitVramBudgetGiB ? "memory-filter-option selected" : "memory-filter-option";
     private static int FormatMemoryGiB(double memoryMiB) => (int)Math.Round(memoryMiB / 1024d, MidpointRounding.AwayFromZero);
     private static bool IsExcludedHardware(string deviceName) => deviceName.Contains("UHD Graphics 630", StringComparison.OrdinalIgnoreCase);
-    private void SelectFilter(FilterKind kind, string value) { switch (kind) { case FilterKind.Library: searchLibrary = ToggleFilterValue(searchLibrary, value); break; case FilterKind.Task: searchTask = ToggleFilterValue(searchTask, value); break; case FilterKind.ParameterRange: searchParameterRange = ToggleFilterValue(searchParameterRange, value); break; case FilterKind.Language: searchLanguage = ToggleFilterValue(searchLanguage, value); break; case FilterKind.License: searchLicense = ToggleFilterValue(searchLicense, value); break; case FilterKind.Hardware: searchHardware = ToggleFilterValue(searchHardware, value); break; case FilterKind.Other: searchOther = ToggleFilterValue(searchOther, value); break; case FilterKind.InferenceProvider: searchInferenceProvider = ToggleFilterValue(searchInferenceProvider, value); break; } }
+    private void SelectFilter(FilterKind kind, string value) { switch (kind) { case FilterKind.Library: searchLibrary = ToggleFilterValue(searchLibrary, value); break; case FilterKind.Task: searchTask = ToggleFilterValue(searchTask, value); break; case FilterKind.ParameterRange: searchParameterRange = ToggleFilterValue(searchParameterRange, value); break; case FilterKind.Language: searchLanguage = ToggleFilterValue(searchLanguage, value); break; case FilterKind.License: searchLicense = ToggleFilterValue(searchLicense, value); break; case FilterKind.Hardware: searchHardware = ToggleFilterValue(searchHardware, value); break; case FilterKind.Filter: searchFilters = ToggleFilterValue(searchFilters, value); break; case FilterKind.App: ToggleFilterValue(searchApps, value); break; case FilterKind.InferenceProvider: searchInferenceProvider = ToggleFilterValue(searchInferenceProvider, value); break; } }
+    private static void ToggleFilterValue(ISet<string> selectedValues, string value) { if (!selectedValues.Add(value)) selectedValues.Remove(value); }
     private static string ToggleFilterValue(string selectedValue, string value) => string.Equals(selectedValue, value, StringComparison.Ordinal) ? string.Empty : value;
     private static IReadOnlyList<string> FilterValues(string value) => string.IsNullOrWhiteSpace(value) ? [] : [value];
     private static string FilterOptionClass(FilterOption option, string selectedValue) => option.Value == selectedValue ? "filter-option selected" : "filter-option";
     public ValueTask DisposeAsync() { DownloadEvents.ModelDownload_Create -= HandleModelDownloadChangedAsync; DownloadEvents.ModelDownload_Update -= HandleModelDownloadChangedAsync; DownloadEvents.ModelDownload_Delete -= HandleModelDownloadChangedAsync; return ValueTask.CompletedTask; }
     private enum ModelTab { Library, HuggingFace }
     private enum FilterGroup { Main, Tasks, Libraries, Languages, Licenses, Hardware, Other }
-    private enum FilterKind { Library, Task, ParameterRange, Language, License, Hardware, Other, InferenceProvider }
+    private enum FilterKind { Library, Task, ParameterRange, Language, License, Hardware, Filter, App, InferenceProvider }
     private sealed record FilterOption(string Label, string Value);
+    private sealed record DownloadOptions(string Library, IReadOnlyList<ModelDownloadOption> Options);
+    private sealed record DownloadTarget(string Label, string Library);
     private sealed record HardwareMemoryOption(string Label, int? VramBudgetGiB);
 
     private readonly FilterOption[] mainTaskOptions = [new("Text Generation", "text-generation"), new("Any-to-Any", "any-to-any"), new("Image-Text-to-Text", "image-text-to-text"), new("Image-to-Text", "image-to-text"), new("Image-to-Image", "image-to-image"), new("Text-to-Image", "text-to-image"), new("Text-to-Video", "text-to-video"), new("Text-to-Speech", "text-to-speech")];
@@ -305,8 +321,14 @@
 
     [Parameter] public string Title { get; set; } = string.Empty;
 
+    private RenderFragment AppFilterGroupView(string title, IReadOnlyList<FilterOption> options, IReadOnlySet<string> selectedValues, Action<string> onSelected) => builder =>
+    {
+        builder.OpenElement(0, "div"); builder.AddAttribute(1, "class", "filter-group"); builder.OpenElement(2, "h3"); builder.AddContent(3, title); builder.CloseElement(); builder.OpenElement(4, "div"); builder.AddAttribute(5, "class", "filter-options"); var sequence = 6; foreach (var option in options) { var optionValue = option.Value; builder.OpenElement(sequence++, "button"); builder.AddAttribute(sequence++, "class", FilterOptionClass(option, selectedValues)); builder.AddAttribute(sequence++, "type", "button"); builder.AddAttribute(sequence++, "onclick", EventCallback.Factory.Create(this, () => onSelected(optionValue))); builder.AddContent(sequence++, option.Label); builder.CloseElement(); } builder.CloseElement(); builder.CloseElement();
+    };
+
     private RenderFragment FilterGroupView(string title, IReadOnlyList<FilterOption> options, string selectedValue, Action<string> onSelected) => builder =>
     {
         builder.OpenElement(0, "div"); builder.AddAttribute(1, "class", "filter-group"); builder.OpenElement(2, "h3"); builder.AddContent(3, title); builder.CloseElement(); builder.OpenElement(4, "div"); builder.AddAttribute(5, "class", "filter-options"); var sequence = 6; foreach (var option in options) { builder.OpenElement(sequence++, "button"); builder.AddAttribute(sequence++, "class", FilterOptionClass(option, selectedValue)); builder.AddAttribute(sequence++, "type", "button"); builder.AddAttribute(sequence++, "onclick", EventCallback.Factory.Create(this, () => onSelected(option.Value))); builder.AddContent(sequence++, option.Label); builder.CloseElement(); } builder.CloseElement(); builder.CloseElement();
     };
+    private static string FilterOptionClass(FilterOption option, IReadOnlySet<string> selectedValues) => selectedValues.Contains(option.Value) ? "filter-option selected" : "filter-option";
 }

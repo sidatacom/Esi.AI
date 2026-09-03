@@ -1102,6 +1102,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     {
         await InvokeAsync(() =>
         {
+            loadedModelStatusVersion++;
             loadStatus = status;
             if (status.Backend is "vLLM" or "SGLang" && !string.IsNullOrWhiteSpace(status.LoadLog))
                 backendLoadLogs[status.Backend == "SGLang" ? ConfigurationBackend.Sglang : ConfigurationBackend.Vllm] = status.LoadLog;
@@ -1237,8 +1238,6 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             isOpenVinoModelLoaded = result.Succeeded;
             openVinoStatus = result.Message;
             loadStatus = await DataService.LoadedModel_ReadAsync();
-            if (result.Succeeded)
-                loadStatus = await DataService.LoadedModel_ReadAsync();
             statusMessage = result.Succeeded ? null : "The model could not be loaded.";
         }
         catch (Exception exception)
@@ -1888,7 +1887,6 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             statusMessage = $"Initialization failed: {exception.Message}";
         }
         isInitializing = false;
-                loadedModelStatusVersion++;
         await InvokeAsync(StateHasChanged);
     }
 

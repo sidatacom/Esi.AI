@@ -78,12 +78,22 @@ public sealed class OpenAiCompatibleController(
                     messages,
                     model,
                     options,
+                    request.Messages,
+                    request.Tools,
                     request.StreamOptions?.IncludeUsage == true,
                     cancellationToken).ConfigureAwait(false);
                 return new EmptyResult();
             }
 
-            var result = await GenerateAsync(status.Backend!, status.ModelPath, messages, null, options, cancellationToken).ConfigureAwait(false);
+            var result = await GenerateAsync(
+                status.Backend!,
+                status.ModelPath,
+                messages,
+                null,
+                options,
+                cancellationToken,
+                request.Messages,
+                request.Tools).ConfigureAwait(false);
             return Ok(CreateCompletion(result, model, result.FinishReason));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -141,6 +151,8 @@ public sealed class OpenAiCompatibleController(
         IReadOnlyList<ChatMessage> messages,
         string model,
         ChatGenerationOptions options,
+        IReadOnlyList<OpenAiChatMessage>? openAiMessages,
+        IReadOnlyList<OpenAiToolDefinition>? tools,
         bool includeUsage,
         CancellationToken cancellationToken)
     {
@@ -151,12 +163,23 @@ public sealed class OpenAiCompatibleController(
         var completionId = $"chatcmpl-{Guid.NewGuid():N}";
         await WriteSseAsync(CreateChunk(completionId, model, new OpenAiChatCompletionDelta("assistant"), null), cancellationToken).ConfigureAwait(false);
 
+        var structuredOpenVinoOutput = string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase) && tools is { Count: > 0 };
         var deltas = Channel.CreateUnbounded<string>();
-        var generationTask = GenerateAsync(backend, modelPath, messages, delta =>
-        {
-            deltas.Writer.TryWrite(delta);
-            return Task.CompletedTask;
-        }, options, cancellationToken);
+        var generationTask = GenerateAsync(
+            backend,
+            modelPath,
+            messages,
+            structuredOpenVinoOutput
+                ? null
+                : delta =>
+                {
+                    deltas.Writer.TryWrite(delta);
+                    return Task.CompletedTask;
+                },
+            options,
+            cancellationToken,
+            openAiMessages,
+            tools);
         _ = CompleteChannelAsync(generationTask, deltas.Writer);
 
         try
@@ -174,20 +197,33 @@ public sealed class OpenAiCompatibleController(
         }
 
         var generationResult = await generationTask.ConfigureAwait(false);
+        var finalDelta = structuredOpenVinoOutput
+            ? new OpenAiChatCompletionDelta(
+                Content: string.IsNullOrEmpty(generationResult.Text) ? null : generationResult.Text,
+                ToolCalls: ToToolCallDeltas(generationResult.ToolCalls))
+            : new OpenAiChatCompletionDelta();
         await WriteSseAsync(CreateChunk(
             completionId,
             model,
-            new OpenAiChatCompletionDelta(),
+            finalDelta,
             generationResult.FinishReason,
             includeUsage ? CreateUsage(generationResult) : null), cancellationToken).ConfigureAwait(false);
         await Response.WriteAsync("data: [DONE]\n\n", cancellationToken).ConfigureAwait(false);
         await Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private Task<GenerationResult> GenerateAsync(string backend, string? modelPath, IReadOnlyList<ChatMessage> messages, Func<string, Task>? onDelta, ChatGenerationOptions options, CancellationToken cancellationToken) =>
+    private Task<GenerationResult> GenerateAsync(
+        string backend,
+        string? modelPath,
+        IReadOnlyList<ChatMessage> messages,
+        Func<string, Task>? onDelta,
+        ChatGenerationOptions options,
+        CancellationToken cancellationToken,
+        IReadOnlyList<OpenAiChatMessage>? openAiMessages = null,
+        IReadOnlyList<OpenAiToolDefinition>? tools = null) =>
         backend switch
         {
-            "OpenVINO" => StartOpenVinoGeneration(messages, onDelta, options, cancellationToken),
+            "OpenVINO" => StartOpenVinoGeneration(openAiMessages ?? messages.Select(message => new OpenAiChatMessage(message.Role, message.Content)).ToArray(), tools, onDelta, options, cancellationToken),
             "vLLM" or "SGLang" => GeneratePythonAsync(messages, onDelta, options, cancellationToken),
             "dotLLM" => GenerateDotLlmAsync(messages, onDelta, options, cancellationToken),
             "Vulkan" or "VULKAN" or "CPU" => GenerateLlamaAsync(modelPath, messages, onDelta, options, cancellationToken),
@@ -195,7 +231,8 @@ public sealed class OpenAiCompatibleController(
         };
 
     private Task<GenerationResult> StartOpenVinoGeneration(
-        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<OpenAiChatMessage> messages,
+        IReadOnlyList<OpenAiToolDefinition>? tools,
         Func<string, Task>? onDelta,
         ChatGenerationOptions options,
         CancellationToken cancellationToken)
@@ -211,8 +248,8 @@ public sealed class OpenAiCompatibleController(
                     cancellationToken.ThrowIfCancellationRequested();
                     onDelta(delta).GetAwaiter().GetResult();
                 };
-            var result = session.GenerateWithStats(CreateOpenVinoPrompt(messages), streamer, ToOpenVinoOptions(options));
-            return new GenerationResult(result.Text, result.TokenCount, TimeSpan.Zero, result.TokensPerSecond, result.PromptTokenCount);
+            var result = session.GenerateWithStats(messages, tools, streamer, ToOpenVinoOptions(options));
+            return new GenerationResult(result.Text, result.TokenCount, TimeSpan.Zero, result.TokensPerSecond, result.PromptTokenCount, result.FinishReason, result.ToolCalls);
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
@@ -278,11 +315,9 @@ public sealed class OpenAiCompatibleController(
             return CreateError("At least one chat message is required.", "invalid_request_error");
         if (request.Messages.Any(message => message is null || string.IsNullOrWhiteSpace(message.Role)))
             return CreateError("Every chat message requires a non-empty role.", "invalid_request_error");
-        if (!allowToolCalls && request.Messages.Any(message => !IsTextContent(message.Content)))
+        if (!allowToolCalls && request.Messages.Any(message => !IsTextContent(message.Content) && !IsToolMessage(message)))
             return CreateError("Only string message content is supported by local backends.", "invalid_request_error");
-        if (!allowToolCalls && (request.Tools is { Count: > 0 } || request.ToolChoice is not null || request.Messages.Any(message => message.ToolCalls is { Count: > 0 })))
-            return CreateError("Tool calling is not supported by the selected local backend.", "unsupported_request_error");
-        if (!allowToolCalls && (request.ResponseFormat is not null || request.Messages.Any(message => string.IsNullOrWhiteSpace(GetTextContent(message.Content)))))
+        if (!allowToolCalls && (request.ResponseFormat is not null || request.Messages.Any(message => string.IsNullOrWhiteSpace(GetTextContent(message.Content)) && !IsToolMessage(message))))
             return CreateError("Every chat message requires a non-empty role and content.", "invalid_request_error");
         if (request.MaxTokens is <= 0 || request.MaxCompletionTokens is <= 0)
             return CreateError("max_tokens must be greater than zero.", "invalid_request_error");
@@ -292,6 +327,8 @@ public sealed class OpenAiCompatibleController(
             return CreateError("frequency_penalty and presence_penalty are not supported by local backends.", "unsupported_request_error");
         if (request.TopK is <= 0 || request.MinP is < 0 or > 1 || request.RepetitionPenalty is <= 0)
             return CreateError("top_k must be greater than zero, min_p must be between 0 and 1, and repetition_penalty must be greater than zero.", "invalid_request_error");
+        if (request.ReasoningEffort is not null && !IsSupportedReasoningEffort(request.ReasoningEffort))
+            return CreateError("reasoning_effort must be one of none, low, medium, high, xhigh, or max.", "invalid_request_error");
         return null;
     }
 
@@ -303,32 +340,48 @@ public sealed class OpenAiCompatibleController(
         MinP: request.MinP ?? .1f,
         RepetitionPenalty: request.RepetitionPenalty ?? 1f,
         Seed: request.Seed,
-        StopSequences: request.Stop);
+        StopSequences: request.Stop,
+        ReasoningEffort: request.ReasoningEffort);
 
-    private static OpenVinoGenerationOptions ToOpenVinoOptions(ChatGenerationOptions options) => new(
+    internal static OpenVinoGenerationOptions ToOpenVinoOptions(ChatGenerationOptions options) => new(
         MaxNewTokens: options.MaxTokens,
         Temperature: options.Temperature,
         TopP: options.TopP,
+        DoSample: options.Temperature > 0,
         RepetitionPenalty: options.RepetitionPenalty,
         FrequencyPenalty: options.FrequencyPenalty,
         PresencePenalty: options.PresencePenalty,
         Seed: options.Seed,
-        StopSequences: options.StopSequences);
+        StopSequences: options.StopSequences,
+        ReasoningEffort: options.ReasoningEffort);
+
+    private static bool IsSupportedReasoningEffort(string value) => value.Trim().ToLowerInvariant() switch
+    {
+        "none" or "low" or "medium" or "high" or "xhigh" or "max" => true,
+        _ => false
+    };
+
+    private static OpenAiToolCallDelta[] ToToolCallDeltas(IReadOnlyList<OpenAiToolCall>? toolCalls) =>
+        toolCalls is null
+            ? []
+            : toolCalls.Select((toolCall, index) => new OpenAiToolCallDelta(
+                index,
+                toolCall.Id,
+                toolCall.Type,
+                new OpenAiToolCallFunctionDelta(toolCall.Function.Name, toolCall.Function.Arguments))).ToArray();
+
+    private static bool IsToolMessage(OpenAiChatMessage message) =>
+        string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase) || message.ToolCalls is { Count: > 0 };
 
     private static string GetModelId(ModelLoadStatus status) =>
         string.IsNullOrWhiteSpace(status.ModelPath) ? "local-model" : Path.GetFileNameWithoutExtension(status.ModelPath);
 
-    private static string CreateOpenVinoPrompt(IReadOnlyList<ChatMessage> messages)
-    {
-        if (messages.Count == 1)
-            return messages[0].Content;
-
-        return string.Join("\n", messages.Select(message => $"{message.Role}: {message.Content}")) + "\nassistant:";
-    }
-
     private static OpenAiChatCompletionResponse CreateCompletion(GenerationResult result, string model, string finishReason) =>
         new($"chatcmpl-{Guid.NewGuid():N}", "chat.completion", DateTimeOffset.UtcNow.ToUnixTimeSeconds(), model,
-            new[] { new OpenAiChatCompletionChoice(0, new OpenAiChatMessage("assistant", result.Text), finishReason) },
+            new[] { new OpenAiChatCompletionChoice(
+                0,
+                new OpenAiChatMessage("assistant", string.IsNullOrEmpty(result.Text) ? null : result.Text, result.ToolCalls),
+                finishReason) },
             CreateUsage(result));
 
     private static OpenAiUsage CreateUsage(GenerationResult result)
