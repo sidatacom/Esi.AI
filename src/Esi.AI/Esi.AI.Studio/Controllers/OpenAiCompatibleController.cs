@@ -121,6 +121,11 @@ public sealed class OpenAiCompatibleController(
 
             return new EmptyResult();
         }
+        catch (Exception exception) when (Response.HasStarted)
+        {
+            await WriteSseErrorAsync(exception.Message, cancellationToken).ConfigureAwait(false);
+            return new EmptyResult();
+        }
     }
 
     private async Task<IActionResult> ForwardToOmniRouteAsync(OpenAiChatRequest request, CancellationToken cancellationToken)

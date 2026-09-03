@@ -7,6 +7,8 @@ const apiKeySecret = "esiAiStudio.apiKey";
 const defaultTraceFilePath = join(tmpdir(), "esi-ai-studio-provider.jsonl");
 const loggingEnabledStateKey = "loggingEnabled";
 const loggingPathStateKey = "loggingPath";
+const defaultMaxInputTokens = 32768;
+const defaultMaxOutputTokens = 32768;
 
 interface OpenAiModel {
   id?: unknown;
@@ -20,6 +22,9 @@ interface OpenAiModelsResponse {
 }
 
 interface OpenAiStreamChunk {
+  error?: {
+    message?: unknown;
+  };
   usage?: OpenAiUsage;
   choices?: Array<{
     delta?: {
@@ -225,6 +230,9 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
       }
 
       const chunk = JSON.parse(data) as OpenAiStreamChunk;
+      if (typeof chunk.error?.message === "string" && chunk.error.message.length > 0) {
+        throw new Error(`Esi.AI Studio request failed: ${chunk.error.message}`);
+      }
       usage = chunk.usage ?? usage;
       const content = chunk.choices?.[0]?.delta?.content;
       if (typeof content === "string" && content.length > 0) {
@@ -532,8 +540,8 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
       detail: "Esi.AI Studio",
       family: "esi-ai-studio",
       version: "1",
-      maxInputTokens: configuration.get<number>("maxInputTokens", 32768),
-      maxOutputTokens: configuration.get<number>("maxOutputTokens", 32768),
+      maxInputTokens: configuration.get<number>("maxInputTokens", defaultMaxInputTokens),
+      maxOutputTokens: configuration.get<number>("maxOutputTokens", defaultMaxOutputTokens),
       capabilities: toLanguageModelCapabilities(model.capabilities),
     };
   }
