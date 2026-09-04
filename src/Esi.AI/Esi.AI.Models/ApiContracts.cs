@@ -47,6 +47,16 @@ public sealed record ModelConfiguration(
     DateTime UpdatedAtUtc,
     ConfigurationBackend Backend = ConfigurationBackend.Llama);
 
+/// <summary>Describes the internal models and persisted configurations available to the application API.</summary>
+public sealed record ApplicationModelCatalog(
+    IReadOnlyList<Model> Models,
+    IReadOnlyList<ModelConfiguration> Configurations);
+
+/// <summary>Selects an internal model and its persisted backend configuration for loading.</summary>
+public sealed record ApplicationModelLoadRequest(
+    Guid ModelId,
+    Guid ConfigurationId);
+
 /// <summary>Describes the prerequisite checks for one inference backend.</summary>
 public sealed record BackendPrerequisiteDiagnostics(
     ConfigurationBackend Backend,
@@ -83,13 +93,66 @@ public sealed record BackendPrerequisiteSolveResult(
     string Message,
     string Output);
 
+/// <summary>Identifies the lifecycle state of a downloadable native backend runtime.</summary>
+public enum BackendRuntimeState
+{
+    Installing,
+    Installed,
+    Failed
+}
+
+/// <summary>Describes one verified native runtime package in the backend gallery.</summary>
+/// <param name="LocalPath">Optional local development directory containing the native runtime files.</param>
+public sealed record BackendRuntimePackage(
+    string Id,
+    ConfigurationBackend Backend,
+    string Route,
+    string RuntimeIdentifier,
+    string Version,
+    string ArchiveUrl,
+    string Sha256,
+    IReadOnlyList<string> RequiredFiles,
+    string DriverRequirement,
+    bool RequiresRestart = true,
+    string? LocalPath = null);
+
+/// <summary>Configures the backend gallery and its native runtime packages.</summary>
+public sealed class BackendRuntimeOptions
+{
+    public string? CatalogUrl { get; set; }
+    public List<BackendRuntimePackage> Packages { get; set; } = [];
+    public string? InstallationDirectory { get; set; }
+    /// <summary>Allows explicitly configured local runtime directories for development.</summary>
+    public bool AllowLocalPackages { get; set; }
+}
+
+/// <summary>Describes the current installation state of one backend runtime package.</summary>
+public sealed record BackendRuntimeStatus(
+    string PackageId,
+    ConfigurationBackend Backend,
+    string Route,
+    string RuntimeIdentifier,
+    string Version,
+    BackendRuntimeState State,
+    string Message,
+    bool IsInstalled,
+    bool RequiresRestart,
+    DateTimeOffset UpdatedAtUtc);
+
+/// <summary>Selects a backend runtime package for installation.</summary>
+public sealed record BackendRuntimeInstallRequest(string PackageId);
+
+/// <summary>Contains the packages published by a backend gallery.</summary>
+public sealed record BackendRuntimeCatalog(IReadOnlyList<BackendRuntimePackage> Packages);
+
 public sealed record LoadModelRequest(
     string ModelPath,
     string Backend,
     int GpuLayerCount,
     uint ContextSize,
     IReadOnlyDictionary<string, float> VulkanDeviceWeights,
-    LlamaAdvancedSettings? AdvancedSettings)
+    LlamaAdvancedSettings? AdvancedSettings,
+    string? MmprojPath = null)
 {
     public LlamaAdvancedSettings Advanced { get; } = AdvancedSettings ?? new();
 }
@@ -98,7 +161,17 @@ public sealed record ChatRequest(IReadOnlyList<ChatMessageRequest> Messages, str
 
 public sealed record ChatMessageRequest(string Role, string Content);
 
-public sealed record ChatMessage(string Role, string Content);
+public sealed record ChatMessage(
+    string Role,
+    string Content,
+    IReadOnlyList<ChatImage>? Images = null,
+    IReadOnlyList<ChatMessageContentPart>? ContentParts = null);
+
+/// <summary>Contains decoded image data attached to a chat message.</summary>
+public sealed record ChatImage(string MediaType, byte[] Data);
+
+/// <summary>Describes one text or image part in a normalized chat message.</summary>
+public sealed record ChatMessageContentPart(string? Text = null, int? ImageIndex = null);
 
 /// <summary>Contains sampling and stopping options shared by every local inference backend.</summary>
 public sealed record ChatGenerationOptions(
@@ -307,7 +380,12 @@ public sealed record OpenAiError(string Message, string Type);
 
 public sealed record CreateChatRequest(string? Title = null);
 
-public sealed record ChatExchangeRequest(string Content, string? ModelPath = null, string? Backend = null);
+public sealed record ChatExchangeRequest(
+    string Content,
+    string? ModelPath = null,
+    string? Backend = null,
+    IReadOnlyList<ChatImage>? Images = null,
+    IReadOnlyList<ChatMessageContentPart>? ContentParts = null);
 
 public sealed record ChatSummary(Guid Id, string Title, DateTime UpdatedAtUtc, int MessageCount);
 
@@ -452,6 +530,11 @@ public sealed record DotLlmLoadRequest(
     string ModelPath,
     string Device = "cpu",
     int? Threads = null);
+
+/// <summary>Identifies one loaded model and its backend for an application API unload operation.</summary>
+public sealed record ApplicationModelUnloadRequest(
+    string ModelPath,
+    [property: JsonConverter(typeof(JsonStringEnumConverter))] ConfigurationBackend Backend);
 
 public sealed record OpenVinoNpuSettings(
     int MaxPromptLength = 1024,

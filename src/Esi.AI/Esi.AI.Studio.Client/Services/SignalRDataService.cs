@@ -1,13 +1,15 @@
 using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.AspNetCore.Components;
 using Esi.AI.Models;
+using Esi.AI.Studio.Contracts;
 using System.Runtime.CompilerServices;
 
 namespace Esi.AI.Studio.Client.Services;
 
-public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IAsyncDisposable
+public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents, IAsyncDisposable
 {
     private readonly HubConnection connection;
+    private readonly IClientStateStore stateStore;
 
     public event Func<ModelDownloadUpdate, Task>? ModelDownload_Create;
     public event Func<ModelDownloadUpdate, Task>? ModelDownload_Update;
@@ -16,9 +18,13 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     public event Func<ModelLoadStatus, Task>? LoadedModel_Update;
     public event Func<ModelLoadStatus, Task>? LoadedModel_Delete;
     public event Func<BackendRequirementState, Task>? BackendRequirementStateUpdated;
+    public event Func<BackendRuntimeStatus, Task>? BackendRuntime_Create;
+    public event Func<BackendRuntimeStatus, Task>? BackendRuntime_Update;
+    public event Func<BackendRuntimeStatus, Task>? BackendRuntime_Delete;
 
-    public SignalRDataService(NavigationManager navigationManager)
+    public SignalRDataService(NavigationManager navigationManager, IClientStateStore stateStore)
     {
+        this.stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
         connection = new HubConnectionBuilder()
             .WithUrl(navigationManager.ToAbsoluteUri("/hubs/data"))
             .WithAutomaticReconnect()
@@ -27,45 +33,73 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
             .Build();
         connection.On<ModelDownloadUpdate>("ModelDownload_Create", async update =>
         {
+            stateStore.ApplyDownload(update);
             var handler = ModelDownload_Create;
             if (handler is not null)
                 await handler(update);
         });
         connection.On<ModelDownloadUpdate>("ModelDownload_Update", async update =>
         {
+            stateStore.ApplyDownload(update);
             var handler = ModelDownload_Update;
             if (handler is not null)
                 await handler(update);
         });
         connection.On<ModelDownloadUpdate>("ModelDownload_Delete", async update =>
         {
+            stateStore.RemoveDownload(update);
             var handler = ModelDownload_Delete;
             if (handler is not null)
                 await handler(update);
         });
             connection.On<ModelLoadStatus>("LoadedModel_Create", async status =>
             {
+                stateStore.ApplyLoadedModels(status);
                 var handler = LoadedModel_Create;
                 if (handler is not null)
                     await handler(status);
             });
             connection.On<ModelLoadStatus>("LoadedModel_Update", async status =>
             {
+                stateStore.ApplyLoadedModels(status);
                 var handler = LoadedModel_Update;
                 if (handler is not null)
                     await handler(status);
             });
             connection.On<ModelLoadStatus>("LoadedModel_Delete", async status =>
             {
+                stateStore.ApplyLoadedModels(status);
                 var handler = LoadedModel_Delete;
                 if (handler is not null)
                     await handler(status);
             });
         connection.On<BackendRequirementState>("BackendRequirementStateUpdated", async state =>
         {
+            stateStore.ApplyBackendRequirements(state);
             var handler = BackendRequirementStateUpdated;
             if (handler is not null)
                 await handler(state);
+        });
+        connection.On<BackendRuntimeStatus>("BackendRuntime_Create", async status =>
+        {
+            stateStore.ApplyBackendRuntime(status);
+            var handler = BackendRuntime_Create;
+            if (handler is not null)
+                await handler(status);
+        });
+        connection.On<BackendRuntimeStatus>("BackendRuntime_Update", async status =>
+        {
+            stateStore.ApplyBackendRuntime(status);
+            var handler = BackendRuntime_Update;
+            if (handler is not null)
+                await handler(status);
+        });
+        connection.On<BackendRuntimeStatus>("BackendRuntime_Delete", async status =>
+        {
+            stateStore.RemoveBackendRuntime(status);
+            var handler = BackendRuntime_Delete;
+            if (handler is not null)
+                await handler(status);
         });
     }
 
@@ -213,6 +247,30 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         return await connection.InvokeAsync<BackendPrerequisiteSolveResult>("PrepareBackend", backend, pythonExecutable, devices, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<BackendRuntimeStatus>> BackendRuntime_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<BackendRuntimeStatus>>("BackendRuntime_Read", cancellationToken);
+    }
+
+    public async Task<BackendRuntimeStatus> BackendRuntime_CreateAsync(BackendRuntimeInstallRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<BackendRuntimeStatus>("BackendRuntime_Create", request, cancellationToken);
+    }
+
+    public async Task<BackendRuntimeStatus> BackendRuntime_UpdateAsync(string packageId, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<BackendRuntimeStatus>("BackendRuntime_Update", packageId, cancellationToken);
+    }
+
+    public async Task BackendRuntime_DeleteAsync(string packageId, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("BackendRuntime_Delete", packageId, cancellationToken);
+    }
+
     public async Task<OpenVinoLoadResultDto> LoadModelAsync(OpenVinoLoadRequest request, CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
@@ -283,6 +341,12 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     {
         await EnsureConnectedAsync(cancellationToken);
         await connection.InvokeAsync("ModelDownload_Delete", id, cancellationToken);
+    }
+
+    public async Task ModelDownload_DeleteCompletedAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("ModelDownload_DeleteCompleted", cancellationToken);
     }
 
     public async Task<DownloadStatus?> ModelDownload_ReadAsync(Guid id, CancellationToken cancellationToken = default)

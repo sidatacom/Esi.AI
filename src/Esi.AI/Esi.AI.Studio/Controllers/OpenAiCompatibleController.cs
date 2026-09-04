@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text;
 using System.Threading.Channels;
 using Esi.AI.Core.Chat;
 using Esi.AI.Core.ModelLoading;
@@ -39,18 +40,121 @@ public sealed class OpenAiCompatibleController(
             .ToArray();
         bool IsLoaded(string modelPath) => loadedModels.Any(loadedModel =>
             string.Equals(modelPath, loadedModel.ModelPath, StringComparison.OrdinalIgnoreCase));
+        ModelCapabilities GetCapabilities(string modelPath, ModelCapabilities? storedCapabilities)
+        {
+            var capabilities = storedCapabilities ?? new ModelCapabilities();
+            var loadedModel = loadedModels.FirstOrDefault(loaded =>
+                string.Equals(modelPath, loaded.ModelPath, StringComparison.OrdinalIgnoreCase));
+            return loadedModel is not null &&
+                modelRuntime.SupportsImageInput(loadedModel.Runtime, loadedModel.ModelPath)
+                ? capabilities with { ImageInput = true }
+                : capabilities;
+        }
         var apiModels = dataService is null
             ? (await localModelCatalog.ScanLocalModelsAsync(cancellationToken).ConfigureAwait(false))
-                .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, Loaded: IsLoaded(model.Path)))
+                .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, GetCapabilities(model.Path, null), IsLoaded(model.Path)))
                 .ToList()
             : (await dataService.LocalModel_ReadAsync(cancellationToken).ConfigureAwait(false))
-                .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, model.Capabilities ?? new ModelCapabilities(), IsLoaded(model.Path)))
+                .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, GetCapabilities(model.Path, model.Capabilities), IsLoaded(model.Path)))
                 .ToList();
         foreach (var loadedModel in loadedModels.Where(loadedModel => apiModels.All(model => !string.Equals(model.Id, loadedModel.ModelPath, StringComparison.OrdinalIgnoreCase))))
-            apiModels.Add(new OpenAiModel(loadedModel.ModelPath, "model", created, "esi-ai", Path.GetFileName(loadedModel.ModelPath), Loaded: true));
+            apiModels.Add(new OpenAiModel(
+                loadedModel.ModelPath,
+                "model",
+                created,
+                "esi-ai",
+                Path.GetFileName(loadedModel.ModelPath),
+                new ModelCapabilities(ImageInput: modelRuntime.SupportsImageInput(loadedModel.Runtime, loadedModel.ModelPath)),
+                Loaded: true));
 
         return Ok(new OpenAiModelListResponse("list", apiModels));
     }
+
+    /// <summary>Returns the currently loaded and loading application models.</summary>
+    [HttpGet("application/models")]
+    public IActionResult GetApplicationModels() => Ok(modelRuntime.LoadedModel_Read());
+
+    /// <summary>Returns internal model IDs and their persisted backend configurations.</summary>
+    [HttpGet("application/models/catalog")]
+    public async Task<IActionResult> GetApplicationModelCatalog(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return Ok(await RequireDataService().ApplicationModelCatalog_ReadAsync(cancellationToken).ConfigureAwait(false));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new EmptyResult();
+        }
+    }
+
+    /// <summary>Loads an internal model using one of its persisted configurations.</summary>
+    [HttpPost("application/models/load")]
+    public Task<IActionResult> LoadConfiguredModel(
+        ApplicationModelLoadRequest? request,
+        CancellationToken cancellationToken) =>
+        ExecuteApplicationModelOperationAsync(
+            request,
+            modelRequest => RequireDataService().LoadConfiguredModelAsync(modelRequest, cancellationToken),
+            cancellationToken,
+            requestValidator: modelRequest => modelRequest.ModelId == Guid.Empty
+                ? CreateError("ModelId is required.", "invalid_request_error")
+                : modelRequest.ConfigurationId == Guid.Empty
+                    ? CreateError("ConfigurationId is required.", "invalid_request_error")
+                    : null);
+
+    /// <summary>Loads a Llama model through the application API.</summary>
+    [HttpPost("application/models/load/llama")]
+    public Task<IActionResult> LoadLlamaModel(
+        LoadModelRequest? request,
+        CancellationToken cancellationToken) =>
+        ExecuteApplicationModelOperationAsync(
+            request,
+            modelRequest => RequireDataService().LoadModelAsync(modelRequest, cancellationToken),
+            cancellationToken);
+
+    /// <summary>Loads an OpenVINO model through the application API.</summary>
+    [HttpPost("application/models/load/openvino")]
+    public Task<IActionResult> LoadOpenVinoModel(
+        OpenVinoLoadRequest? request,
+        CancellationToken cancellationToken) =>
+        ExecuteApplicationModelOperationAsync(
+            request,
+            modelRequest => RequireDataService().LoadModelAsync(modelRequest, cancellationToken),
+            cancellationToken);
+
+    /// <summary>Loads a vLLM or SGLang model through the application API.</summary>
+    [HttpPost("application/models/load/python")]
+    public Task<IActionResult> LoadPythonModel(
+        PythonInferenceLoadRequest? request,
+        CancellationToken cancellationToken) =>
+        ExecuteApplicationModelOperationAsync(
+            request,
+            modelRequest => RequireDataService().LoadPythonModelAsync(modelRequest, cancellationToken),
+            cancellationToken);
+
+    /// <summary>Loads a dotLLM model through the application API.</summary>
+    [HttpPost("application/models/load/dotllm")]
+    public Task<IActionResult> LoadDotLlmModel(
+        DotLlmLoadRequest? request,
+        CancellationToken cancellationToken) =>
+        ExecuteApplicationModelOperationAsync(
+            request,
+            modelRequest => RequireDataService().LoadDotLlmModelAsync(modelRequest, cancellationToken),
+            cancellationToken);
+
+    /// <summary>Unloads one model selected by path and backend through the application API.</summary>
+    [HttpPost("application/models/unload")]
+    public Task<IActionResult> UnloadApplicationModel(
+        ApplicationModelUnloadRequest? request,
+        CancellationToken cancellationToken) =>
+        ExecuteApplicationModelOperationAsync(
+            request,
+            modelRequest => RequireDataService().UnloadModelAsync(modelRequest.ModelPath, modelRequest.Backend, cancellationToken),
+            cancellationToken,
+            requestValidator: modelRequest => string.IsNullOrWhiteSpace(modelRequest.ModelPath)
+                ? CreateError("ModelPath is required.", "invalid_request_error")
+                : null);
 
     [HttpPost("chat/completions")]
     public async Task<IActionResult> CreateChatCompletion(
@@ -67,7 +171,14 @@ public sealed class OpenAiCompatibleController(
                 return await ForwardToOmniRouteAsync(request!, cancellationToken).ConfigureAwait(false);
 
             var status = GetLoadedModelStatus(request!.Model);
-            var messages = request!.Messages!.Select(message => new ChatMessage(message.Role, GetTextContent(message.Content))).ToArray();
+            var messages = request.Messages!.Select(ParseMessage).ToArray();
+            var imageCapabilityError = ValidateImageCapability(status, messages);
+            if (imageCapabilityError is not null)
+                return BadRequest(imageCapabilityError);
+            var hasEmptyMessage = messages.Select((message, index) => (message, index))
+                .Any(item => string.IsNullOrWhiteSpace(item.message.Content) && item.message.Images is not { Count: > 0 } && !IsToolMessage(request.Messages![item.index]));
+            if (request.ResponseFormat is not null || hasEmptyMessage)
+                return BadRequest(CreateError("Every chat message requires non-empty text or image content.", "invalid_request_error"));
             var model = string.IsNullOrWhiteSpace(request.Model) ? GetModelId(status) : request.Model;
             var options = ToGenerationOptions(request);
 
@@ -247,15 +358,16 @@ public sealed class OpenAiCompatibleController(
         IReadOnlyList<OpenAiToolDefinition>? tools = null) =>
         backend switch
         {
-            "OpenVINO" => StartOpenVinoGeneration(openAiMessages ?? messages.Select(message => new OpenAiChatMessage(message.Role, message.Content)).ToArray(), tools, onDelta, options, cancellationToken),
+            "OpenVINO" => StartOpenVinoGeneration(messages, openAiMessages ?? messages.Select(message => new OpenAiChatMessage(message.Role, message.Content)).ToArray(), tools, onDelta, options, cancellationToken),
             "vLLM" or "SGLang" => GeneratePythonAsync(messages, onDelta, options, cancellationToken),
             "dotLLM" => GenerateDotLlmAsync(messages, onDelta, options, cancellationToken),
-            "Vulkan" or "VULKAN" or "CPU" => GenerateLlamaAsync(modelPath, messages, onDelta, options, cancellationToken),
+            "Vulkan" or "VULKAN" or "CUDA" or "SYCL" or "CPU" => GenerateLlamaAsync(modelPath, messages, onDelta, options, cancellationToken),
             _ => throw new ArgumentException($"Unsupported model backend '{backend}'.", nameof(backend))
         };
 
     private Task<GenerationResult> StartOpenVinoGeneration(
-        IReadOnlyList<OpenAiChatMessage> messages,
+        IReadOnlyList<ChatMessage> chatMessages,
+        IReadOnlyList<OpenAiChatMessage> openAiMessages,
         IReadOnlyList<OpenAiToolDefinition>? tools,
         Func<string, Task>? onDelta,
         ChatGenerationOptions options,
@@ -264,16 +376,30 @@ public sealed class OpenAiCompatibleController(
         return Task.Factory.StartNew(() =>
         {
             cancellationToken.ThrowIfCancellationRequested();
-            using var session = modelRuntime.CreateOpenVinoChatSession();
-            Action<string>? streamer = onDelta is null
-                ? null
-                : delta =>
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    onDelta(delta).GetAwaiter().GetResult();
-                };
-            var result = session.GenerateWithStats(messages, tools, streamer, ToOpenVinoOptions(options));
-            return new GenerationResult(result.Text, result.TokenCount, TimeSpan.Zero, result.TokensPerSecond, result.PromptTokenCount, result.FinishReason, result.ToolCalls);
+            var imageTensors = OpenVinoImageTensorFactory.Create(chatMessages);
+            try
+            {
+                using var session = modelRuntime.CreateOpenVinoChatSession();
+                Action<string>? streamer = onDelta is null
+                    ? null
+                    : delta =>
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        onDelta(delta).GetAwaiter().GetResult();
+                    };
+                var result = session.GenerateWithStats(
+                    openAiMessages,
+                    tools,
+                    streamer,
+                    ToOpenVinoOptions(options),
+                    imageTensors.Length == 0 ? null : imageTensors);
+                return new GenerationResult(result.Text, result.TokenCount, TimeSpan.Zero, result.TokensPerSecond, result.PromptTokenCount, result.FinishReason, result.ToolCalls);
+            }
+            finally
+            {
+                foreach (var imageTensor in imageTensors)
+                    imageTensor.Dispose();
+            }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 
@@ -339,10 +465,6 @@ public sealed class OpenAiCompatibleController(
             return CreateError("At least one chat message is required.", "invalid_request_error");
         if (request.Messages.Any(message => message is null || string.IsNullOrWhiteSpace(message.Role)))
             return CreateError("Every chat message requires a non-empty role.", "invalid_request_error");
-        if (!allowToolCalls && request.Messages.Any(message => !IsTextContent(message.Content) && !IsToolMessage(message)))
-            return CreateError("Only string message content is supported by local backends.", "invalid_request_error");
-        if (!allowToolCalls && (request.ResponseFormat is not null || request.Messages.Any(message => string.IsNullOrWhiteSpace(GetTextContent(message.Content)) && !IsToolMessage(message))))
-            return CreateError("Every chat message requires a non-empty role and content.", "invalid_request_error");
         if (request.MaxTokens is <= 0 || request.MaxCompletionTokens is <= 0)
             return CreateError("max_tokens must be greater than zero.", "invalid_request_error");
         if (request.Temperature is < 0 or > 2 || request.TopP is <= 0 or > 1)
@@ -416,16 +538,100 @@ public sealed class OpenAiCompatibleController(
         return new OpenAiUsage(result.PromptTokenCount, result.TokenCount, totalTokens, result.TokensPerSecond);
     }
 
-    private static string GetTextContent(object? content) => content switch
+    internal static ChatMessage ParseMessage(OpenAiChatMessage message)
     {
-        null => string.Empty,
-        string text => text,
-        JsonElement element when element.ValueKind == JsonValueKind.String => element.GetString() ?? string.Empty,
-        _ => throw new ArgumentException("Only string message content is supported by local backends.", nameof(content))
-    };
+        if (message.Content is null)
+            return new ChatMessage(message.Role, string.Empty);
+        if (message.Content is string text)
+            return new ChatMessage(message.Role, text);
+        if (message.Content is JsonElement { ValueKind: JsonValueKind.String } textElement)
+            return new ChatMessage(message.Role, textElement.GetString() ?? string.Empty);
+        if (message.Content is not JsonElement { ValueKind: JsonValueKind.Array } parts)
+            throw new ArgumentException("Message content must be a string or an array of text and image parts.", nameof(message));
 
-    private static bool IsTextContent(object? content) => content is null or string ||
-        content is JsonElement element && element.ValueKind == JsonValueKind.String;
+        var textBuilder = new StringBuilder();
+        var images = new List<ChatImage>();
+        var contentParts = new List<ChatMessageContentPart>();
+        foreach (var part in parts.EnumerateArray())
+        {
+            if (part.ValueKind != JsonValueKind.Object || !part.TryGetProperty("type", out var typeProperty) ||
+                typeProperty.ValueKind != JsonValueKind.String)
+                throw new ArgumentException("Every message content part requires a type.", nameof(message));
+
+            switch (typeProperty.GetString())
+            {
+                case "text":
+                    if (!part.TryGetProperty("text", out var textProperty) || textProperty.ValueKind != JsonValueKind.String)
+                        throw new ArgumentException("Text content parts require a text value.", nameof(message));
+                    var textPart = textProperty.GetString() ?? string.Empty;
+                    textBuilder.Append(textPart);
+                    contentParts.Add(new ChatMessageContentPart(textPart));
+                    break;
+                case "image_url":
+                    var imageIndex = images.Count;
+                    images.Add(ParseImagePart(part));
+                    contentParts.Add(new ChatMessageContentPart(ImageIndex: imageIndex));
+                    break;
+                default:
+                    throw new ArgumentException("Only text and image_url content parts are supported by local backends.", nameof(message));
+            }
+        }
+
+        return new ChatMessage(
+            message.Role,
+            textBuilder.ToString(),
+            images.Count == 0 ? null : images,
+            contentParts);
+    }
+
+    private static ChatImage ParseImagePart(JsonElement part)
+    {
+        if (!part.TryGetProperty("image_url", out var imageUrl) || imageUrl.ValueKind != JsonValueKind.Object ||
+            !imageUrl.TryGetProperty("url", out var urlProperty) || urlProperty.ValueKind != JsonValueKind.String)
+            throw new ArgumentException("Image content parts require an image_url.url value.", nameof(part));
+
+        var url = urlProperty.GetString();
+        if (string.IsNullOrWhiteSpace(url) || !url.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("Only local data image URLs are supported; remote image URLs are not fetched.", nameof(part));
+
+        var comma = url.IndexOf(',');
+        if (comma < 0)
+            throw new ArgumentException("The image data URL is invalid.", nameof(part));
+        var metadata = url["data:".Length..comma].Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var mediaType = metadata.FirstOrDefault() ?? string.Empty;
+        if (!mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
+            !metadata.Skip(1).Any(value => value.Equals("base64", StringComparison.OrdinalIgnoreCase)))
+            throw new ArgumentException("Images must use a base64 data URL with an image media type.", nameof(part));
+
+        byte[] data;
+        try
+        {
+            data = Convert.FromBase64String(url[(comma + 1)..]);
+        }
+        catch (FormatException exception)
+        {
+            throw new ArgumentException("The image data URL contains invalid base64 data.", nameof(part), exception);
+        }
+
+        const int maximumImageBytes = 20 * 1024 * 1024;
+        if (data.Length == 0 || data.Length > maximumImageBytes)
+            throw new ArgumentException("Image data must be between 1 byte and 20 MiB.", nameof(part));
+
+        return new ChatImage(mediaType, data);
+    }
+
+    private OpenAiErrorResponse? ValidateImageCapability(ModelLoadStatus status, IReadOnlyList<ChatMessage> messages)
+    {
+        if (!messages.Any(message => message.Images is { Count: > 0 }))
+            return null;
+
+        if (status.Backend is not ("OpenVINO" or "Vulkan" or "VULKAN" or "CUDA" or "SYCL" or "CPU"))
+            return CreateError($"Image input is not supported by the '{status.Backend}' backend.", "unsupported_request_error");
+        if (!modelRuntime.SupportsImageInput(status.Backend, status.ModelPath))
+            return CreateError("The loaded model does not support image input.", "unsupported_request_error");
+
+        return null;
+    }
 
     private static OpenAiChatCompletionChunk CreateChunk(
         string id,
@@ -435,6 +641,55 @@ public sealed class OpenAiCompatibleController(
         OpenAiUsage? usage = null) =>
         new(id, "chat.completion.chunk", DateTimeOffset.UtcNow.ToUnixTimeSeconds(), model,
             new[] { new OpenAiChatCompletionChunkChoice(0, delta, finishReason) }, usage);
+
+        private async Task<IActionResult> ExecuteApplicationModelOperationAsync<TRequest, TResponse>(
+            TRequest? request,
+            Func<TRequest, Task<TResponse>> operation,
+            CancellationToken cancellationToken,
+            Func<TRequest, OpenAiErrorResponse?>? requestValidator = null)
+            where TRequest : class
+        {
+            if (HttpContext.Connection.RemoteIpAddress is { } remoteAddress && !System.Net.IPAddress.IsLoopback(remoteAddress))
+                return StatusCode(StatusCodes.Status403Forbidden, CreateError("Application model operations are only available from the local machine.", "forbidden"));
+            if (request is null)
+                return BadRequest(CreateError("A request body is required.", "invalid_request_error"));
+
+            var validationError = requestValidator?.Invoke(request);
+            if (validationError is not null)
+                return BadRequest(validationError);
+
+            try
+            {
+                return Ok(await operation(request).ConfigureAwait(false));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return new EmptyResult();
+            }
+            catch (ArgumentException exception)
+            {
+                return BadRequest(CreateError(exception.Message, "invalid_request_error"));
+            }
+            catch (FileNotFoundException exception)
+            {
+                return BadRequest(CreateError(exception.Message, "invalid_request_error"));
+            }
+            catch (KeyNotFoundException exception)
+            {
+                return NotFound(CreateError(exception.Message, "not_found_error"));
+            }
+            catch (DirectoryNotFoundException exception)
+            {
+                return BadRequest(CreateError(exception.Message, "invalid_request_error"));
+            }
+            catch (InvalidOperationException exception)
+            {
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, CreateError(exception.Message, "server_error"));
+            }
+        }
+
+        private DataService RequireDataService() =>
+            dataService ?? throw new InvalidOperationException("Application model operations are unavailable.");
 
     private static OpenAiErrorResponse CreateError(string message, string type) => new(new OpenAiError(message, type));
 

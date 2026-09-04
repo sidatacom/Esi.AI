@@ -1,26 +1,10 @@
 using Esi.AI.Models;
 
-namespace Esi.AI.Studio.Client.Services;
+namespace Esi.AI.Studio.Contracts;
 
-public interface IModelDownloadEvents
-{
-    event Func<ModelDownloadUpdate, Task>? ModelDownload_Create;
-    event Func<ModelDownloadUpdate, Task>? ModelDownload_Update;
-    event Func<ModelDownloadUpdate, Task>? ModelDownload_Delete;
-}
-
-public interface IModelRuntimeEvents
-{
-    event Func<ModelLoadStatus, Task>? LoadedModel_Create;
-    event Func<ModelLoadStatus, Task>? LoadedModel_Update;
-    event Func<ModelLoadStatus, Task>? LoadedModel_Delete;
-}
-
-public interface IBackendRequirementEvents
-{
-    event Func<BackendRequirementState, Task>? BackendRequirementStateUpdated;
-}
-
+/// <summary>
+/// Application contract used by the Studio workbench and server orchestration.
+/// </summary>
 public interface IDataService
 {
     Task<PersistedChat> Chat_CreateAsync(CreateChatRequest request, CancellationToken cancellationToken = default);
@@ -66,6 +50,7 @@ public interface IDataService
     Task<IReadOnlyList<DownloadStatus>> ModelDownload_ReadAsync(CancellationToken cancellationToken = default);
     Task ModelDownload_UpdateAsync(Guid id, bool paused, CancellationToken cancellationToken = default);
     Task ModelDownload_DeleteAsync(Guid id, CancellationToken cancellationToken = default);
+    Task ModelDownload_DeleteCompletedAsync(CancellationToken cancellationToken = default);
     Task<ModelStatus> SelectModelAsync(SelectModelRequest request, CancellationToken cancellationToken = default);
     Task<ModelLoadStatus> LoadedModel_ReadAsync(CancellationToken cancellationToken = default);
 
@@ -84,7 +69,10 @@ public interface IDataService
     Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null);
     Task<BackendRequirementState> GetBackendRequirementStateAsync(CancellationToken cancellationToken = default);
     Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null);
+    Task<IReadOnlyList<BackendRuntimeStatus>> BackendRuntime_ReadAsync(CancellationToken cancellationToken = default);
+    Task<BackendRuntimeStatus> BackendRuntime_CreateAsync(BackendRuntimeInstallRequest request, CancellationToken cancellationToken = default);
+    Task<BackendRuntimeStatus> BackendRuntime_UpdateAsync(string packageId, CancellationToken cancellationToken = default);
+    Task BackendRuntime_DeleteAsync(string packageId, CancellationToken cancellationToken = default);
     Task<OpenVinoLoadResultDto> LoadModelAsync(OpenVinoLoadRequest request, CancellationToken cancellationToken = default);
     Task<OpenVinoModelStatusDto> GetOpenVinoModelStatusAsync(CancellationToken cancellationToken = default);
 }
-

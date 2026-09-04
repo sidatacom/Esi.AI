@@ -9,12 +9,11 @@
 <div class="models-shell">
     <header class="models-header">
         <div><p class="eyebrow">MODEL LIBRARY</p><p class="lede">Lokale Modelle verwalten oder Modell-Dateien von Hugging Face laden.</p></div>
-        <button class="primary-button" type="button" @onclick="ScanLocalAsync" disabled="@isBusy">Bibliothek aktualisieren</button>
     </header>
 
     @if (activeTab == ModelTab.HuggingFace && downloads.Count > 0)
     {
-        <section class="library-section downloads-section" aria-live="polite"><div class="section-heading"><div><p class="eyebrow">TRANSFERS</p><h2>Downloads</h2></div></div>
+        <section class="library-section downloads-section" aria-live="polite"><div class="section-heading"><div><p class="eyebrow">TRANSFERS</p><h2>Downloads</h2></div><button class="secondary-button" type="button" @onclick="DeleteCompletedDownloadsAsync" disabled="@(isBusy || !HasCompletedDownloads)">Abgeschlossene löschen</button></div>
             @foreach (var download in downloads.Values.OrderByDescending(item => item.Id))
             {
                     <div class="download-row"><div class="download-heading"><strong>@download.FileName</strong><span>@download.ModelId</span></div>@if (!string.IsNullOrWhiteSpace(download.Error)) { <p class="error-message">@download.Error</p> } else { <progress max="100" value="@download.Percent"></progress><div class="download-footer"><span class="download-status">@(download.Completed ? "Download abgeschlossen" : download.Paused ? $"Pausiert · {FormatSize(download.BytesDownloaded)}" : download.Queued ? "Warteschlange" : $"{download.Percent:F0}% · {FormatSize(download.BytesDownloaded)}")</span>@if (!download.Completed) { <button class="secondary-button" type="button" @onclick="() => (download.Paused ? ResumeDownloadAsync(download.Id) : PauseDownloadAsync(download.Id))">@(download.Paused ? "Fortsetzen" : "Pausieren")</button> }</div>@if (download.Files is { Count: > 1 } files) { <details class="download-files"><summary>@files.Count Dateien</summary>@foreach (var file in files) { <div class="download-file"><span>@file.FileName</span><span>@(file.Completed ? "fertig" : $"{file.Percent:F0}% · {FormatSize(file.BytesDownloaded)}")</span><progress max="100" value="@file.Percent"></progress></div> } }</details> } }</div>
@@ -230,8 +229,15 @@
     private LocalModel? pendingDeleteModel;
     private bool deleteModelFiles;
 
-    protected override async Task OnInitializedAsync() { DownloadEvents.ModelDownload_Create += HandleModelDownloadChangedAsync; DownloadEvents.ModelDownload_Update += HandleModelDownloadChangedAsync; DownloadEvents.ModelDownload_Delete += HandleModelDownloadChangedAsync; await LoadStatusAsync(); await ScanLocalAsync(); modelDirectories.AddRange(await DataService.ModelDirectory_ReadAsync()); }
-    private async Task ScanLocalAsync() { try { var models = await DataService.LocalModel_ReadAsync(); localModels.Clear(); localModels.AddRange(models); huggingFaceIds.Clear(); foreach (var model in models) if (!string.IsNullOrWhiteSpace(model.HuggingFaceModelId)) huggingFaceIds[model.Path] = model.HuggingFaceModelId; } catch (Exception) { message = "Die lokalen Modelle konnten nicht gelesen werden."; } }
+    protected override async Task OnInitializedAsync()
+    {
+        DownloadEvents.ModelDownload_Create += HandleModelDownloadChangedAsync;
+        DownloadEvents.ModelDownload_Update += HandleModelDownloadChangedAsync;
+        DownloadEvents.ModelDownload_Delete += HandleModelDownloadChangedAsync;
+        await LoadStatusAsync();
+        try { ReplaceLocalModels(await DataService.LocalModel_ReadAsync()); } catch (Exception) { message = "Die lokalen Modelle konnten nicht gelesen werden."; }
+        modelDirectories.AddRange(await DataService.ModelDirectory_ReadAsync());
+    }
     private async Task SearchAsync() { isSearching = true; hasSearched = true; message = null; try { searchResults.Clear(); var contextLength = (uint)Math.Clamp(fitContextLength, 1_024, 1_048_576); searchResults.AddRange(await DataService.SearchModelsAsync(new HuggingFaceSearchRequest(searchQuery.Trim(), Libraries: [searchLibrary], Tasks: FilterValues(searchTask), ParameterRanges: FilterValues(searchParameterRange), Languages: FilterValues(searchLanguage), Licenses: FilterValues(searchLicense), Hardware: FilterValues(searchHardware), Filters: FilterValues(searchFilters), Apps: searchApps.ToArray(), InferenceProviders: FilterValues(searchInferenceProvider), BaseOnly: baseOnly, InferenceAvailable: inferenceAvailable, Sort: searchSort, VramBudgetGiB: fitVramBudgetGiB, ContextLength: fitVramBudgetGiB is > 0 ? contextLength : null))); } catch (Exception) { message = "Die Hugging-Face-Suche ist fehlgeschlagen."; } finally { isSearching = false; } }
     private async Task ChooseDownloadAsync(string modelId, string library) { if (library != "gguf") { await DownloadAsync(modelId, null, library); return; } try { isBusy = true; message = null; var options = await DataService.ModelDownload_ReadOptionsAsync(modelId, library); if (options.Count == 1) await DownloadAsync(modelId, options[0].FileName, library); else downloadOptions[modelId] = new DownloadOptions(library, options); } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
     private async Task DownloadAsync(string modelId, string? fileName, string library) { isBusy = true; message = null; try { await DataService.ModelDownload_CreateAsync(new ModelDownloadRequest(modelId, fileName, library)); downloadOptions.Remove(modelId); } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
@@ -240,7 +246,7 @@
         var backends = model.CompatibleBackends ?? [];
         var targets = new List<DownloadTarget>();
         if (backends.Contains(ConfigurationBackend.Llama) || backends.Contains(ConfigurationBackend.DotLlm))
-            targets.Add(new("GGUF herunterladen", "gguf"));
+            targets.Add(new("Versionen anzeigen", "gguf"));
         if (backends.Contains(ConfigurationBackend.OpenVino))
             targets.Add(new("OpenVINO herunterladen", "openvino"));
         if (backends.Contains(ConfigurationBackend.Vllm) || backends.Contains(ConfigurationBackend.Sglang))
@@ -252,6 +258,7 @@
     private async Task SyncModelBackendAsync(LocalModel model) { var huggingFaceId = GetHuggingFaceId(model).Trim(); if (string.IsNullOrWhiteSpace(huggingFaceId)) { message = "Bitte zuerst eine Hugging-Face-ID angeben."; return; } try { isBusy = true; var models = await DataService.LocalModel_UpdateAsync(model.Path, huggingFaceId); ReplaceLocalModels(models); message = "Backend-Kompatibilität mit Hugging Face synchronisiert."; } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
     private async Task PauseDownloadAsync(Guid id) { try { await DataService.ModelDownload_UpdateAsync(id, paused: true); } catch (Exception exception) { message = exception.Message; } }
     private async Task ResumeDownloadAsync(Guid id) { try { await DataService.ModelDownload_UpdateAsync(id, paused: false); } catch (Exception exception) { message = exception.Message; } }
+    private async Task DeleteCompletedDownloadsAsync() { if (!HasCompletedDownloads) return; isBusy = true; message = null; try { await DataService.ModelDownload_DeleteCompletedAsync(); } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
     private async Task HandleModelDownloadChangedAsync(ModelDownloadUpdate update) { await InvokeAsync(() => { if (update.Cancelled) downloads.Remove(update.Download.Id); else downloads[update.Download.Id] = update.Download; if (update.LocalModels is not null) { localModels.Clear(); localModels.AddRange(update.LocalModels); } StateHasChanged(); }); }
     private async Task UpdateBackendAsync(LocalModel model, ConfigurationBackend backend, bool enabled) { isBusy = true; message = null; try { var backends = (model.CompatibleBackends ?? []).Where(item => item != backend).ToList(); if (enabled) backends.Add(backend); var models = await DataService.LocalModel_UpdateAsync(new ModelCompatibilityUpdate(model.Path, backends, model.HuggingFaceModelId, GetCapabilities(model))); localModels.Clear(); localModels.AddRange(models); } catch (Exception) { message = "Die Backend-Zuordnung konnte nicht gespeichert werden."; } finally { isBusy = false; } }
     private async Task UpdateCapabilitiesAsync(LocalModel model, bool? ToolCalling = null, bool? ImageInput = null, bool? AgentMode = null, bool? Thinking = null) { isBusy = true; message = null; try { var current = GetCapabilities(model); var updated = new ModelCapabilities(ToolCalling ?? current.ToolCalling, ImageInput ?? current.ImageInput, AgentMode ?? current.AgentMode, Thinking ?? current.Thinking); var models = await DataService.LocalModel_UpdateAsync(new ModelCompatibilityUpdate(model.Path, null, model.HuggingFaceModelId, updated)); localModels.Clear(); localModels.AddRange(models); } catch (Exception) { message = "Die Provider-Funktionen konnten nicht gespeichert werden."; } finally { isBusy = false; } }
@@ -273,6 +280,7 @@
     private static string GetBackendLabel(ConfigurationBackend backend) => backend switch { ConfigurationBackend.Llama => "LLama", ConfigurationBackend.OpenVino => "OpenVINO", ConfigurationBackend.Vllm => "vLLM", ConfigurationBackend.Sglang => "SGLang", ConfigurationBackend.DotLlm => "dotLLM", _ => backend.ToString() };
     private static string FormatBackends(IReadOnlyList<ConfigurationBackend>? backends) => backends is { Count: > 0 } values ? string.Join(", ", values.Select(GetBackendLabel)) : "nicht zugeordnet";
     private static bool IsChecked(ChangeEventArgs args) => args.Value is bool value && value;
+    private bool HasCompletedDownloads => downloads.Values.Any(download => download.Completed);
     private void OpenConfiguration() => NavigationManager.NavigateTo("backends"); private void OpenChat() => NavigationManager.NavigateTo("chats");
     private static string FormatSize(long bytes) => bytes switch { > 1024 * 1024 * 1024 => $"{bytes / 1024d / 1024d / 1024d:F2} GiB", > 1024 * 1024 => $"{bytes / 1024d / 1024d:F1} MiB", _ => $"{bytes / 1024d:F0} KiB" };
     private async Task HandleSearchKeyDown(KeyboardEventArgs args) { if (args.Key == "Enter") await SearchAsync(); }

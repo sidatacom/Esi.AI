@@ -2,7 +2,6 @@ using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
 using Esi.AI.Studio.Data;
 using Esi.AI.Studio.Hubs;
-using Esi.AI.Studio.Client.Services;
 using Esi.AI.Studio.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.SignalR;
@@ -855,6 +854,9 @@ public sealed class BackendCatalogIntegrationTests
                 Options.Create(new ModelLibraryOptions { Directories = [directory] }));
             var dataService = new DataService(
                 dbContextFactory,
+                modelLibrary,
+                modelLibrary,
+                modelLibrary,
                 modelLibrary,
                 new OpenVinoDiagnosticsService(),
                 new OpenVinoDriverInstaller(),

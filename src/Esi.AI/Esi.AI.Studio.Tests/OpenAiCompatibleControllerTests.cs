@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
@@ -27,6 +28,56 @@ public sealed class OpenAiCompatibleControllerTests
 
         StringAssert.Contains(json, "\"object\":\"list\"");
         StringAssert.Contains(json, "\"object\":\"list\"");
+    }
+
+    [TestMethod]
+    public void GetApplicationModels_WhenNoModelLoaded_ReturnsModelLoadStatus()
+    {
+        using var runtime = new ModelRuntime();
+        var controller = CreateController(runtime);
+
+        var result = controller.GetApplicationModels();
+
+        var response = ((OkObjectResult)result).Value as ModelLoadStatus;
+        Assert.IsNotNull(response);
+        Assert.IsFalse(response.IsModelLoaded);
+        Assert.IsEmpty(response.LoadedModels);
+    }
+
+    [TestMethod]
+    public async Task LoadLlamaModel_WhenRequestBodyIsMissing_ReturnsBadRequest()
+    {
+        using var runtime = new ModelRuntime();
+        var controller = CreateController(runtime);
+
+        var result = await controller.LoadLlamaModel(null, CancellationToken.None);
+
+        Assert.IsInstanceOfType<BadRequestObjectResult>(result);
+    }
+
+    [TestMethod]
+    public async Task LoadConfiguredModel_WhenRequestBodyIsMissing_ReturnsBadRequest()
+    {
+        using var runtime = new ModelRuntime();
+        var controller = CreateController(runtime);
+
+        var result = await controller.LoadConfiguredModel(null, CancellationToken.None);
+
+        Assert.IsInstanceOfType<BadRequestObjectResult>(result);
+    }
+
+    [TestMethod]
+    public async Task UnloadApplicationModel_WhenCallerIsRemote_ReturnsForbidden()
+    {
+        using var runtime = new ModelRuntime();
+        var controller = CreateController(runtime);
+        controller.HttpContext.Connection.RemoteIpAddress = System.Net.IPAddress.Parse("192.0.2.1");
+
+        var result = await controller.UnloadApplicationModel(
+            new ApplicationModelUnloadRequest("/models/model.gguf", ConfigurationBackend.Llama),
+            CancellationToken.None);
+
+        Assert.AreEqual(StatusCodes.Status403Forbidden, ((ObjectResult)result).StatusCode);
     }
 
     [TestMethod]
@@ -72,6 +123,9 @@ public sealed class OpenAiCompatibleControllerTests
             Options.Create(new ModelLibraryOptions { Directories = [directory] }));
         var dataService = new DataService(
             dbContextFactory,
+            modelLibrary,
+            modelLibrary,
+            modelLibrary,
             modelLibrary,
             new OpenVinoDiagnosticsService(),
             new OpenVinoDriverInstaller(),
@@ -222,7 +276,7 @@ public sealed class OpenAiCompatibleControllerTests
     }
 
     [TestMethod]
-    public async Task CreateChatCompletion_WhenLocalContentIsMultimodal_ReturnsUnsupportedContentError()
+    public async Task CreateChatCompletion_WhenLocalContentIsMultimodalAndNoModelIsLoaded_ReturnsServiceUnavailable()
     {
         using var runtime = new ModelRuntime();
         var controller = CreateController(runtime);
@@ -233,9 +287,129 @@ public sealed class OpenAiCompatibleControllerTests
 
         var result = await controller.CreateChatCompletion(request, CancellationToken.None);
 
-        var error = ((BadRequestObjectResult)result).Value as OpenAiErrorResponse;
-        Assert.IsNotNull(error);
-        Assert.AreEqual("invalid_request_error", error.Error.Type);
+        Assert.AreEqual(StatusCodes.Status503ServiceUnavailable, ((ObjectResult)result).StatusCode);
+    }
+
+    [TestMethod]
+    public void ParseMessage_WhenLocalImageDataUrlIsProvided_ReturnsDecodedImage()
+    {
+        var imageData = new byte[] { 0x89, 0x50, 0x4E, 0x47 };
+        var dataUrl = $"data:image/png;base64,{Convert.ToBase64String(imageData)}";
+        using var document = JsonDocument.Parse($"[{{\"type\":\"text\",\"text\":\"Describe\"}},{{\"type\":\"image_url\",\"image_url\":{{\"url\":\"{dataUrl}\"}}}}]");
+
+        var message = OpenAiCompatibleController.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone()));
+
+        Assert.AreEqual("Describe", message.Content);
+        Assert.IsNotNull(message.Images);
+        Assert.AreEqual("image/png", message.Images[0].MediaType);
+        CollectionAssert.AreEqual(imageData, message.Images[0].Data);
+    }
+
+    [TestMethod]
+    public void MultimodalChat_WhenPictureFileIsProvided_CreatesOpenVinoImageTensor()
+    {
+        OpenVinoModelLoader.InitializeRuntime();
+        var imageData = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "test-chat-with-picture.png"));
+        var dataUrl = $"data:image/png;base64,{Convert.ToBase64String(imageData)}";
+        using var document = JsonDocument.Parse($"[{{\"type\":\"text\",\"text\":\"Describe the image\"}},{{\"type\":\"image_url\",\"image_url\":{{\"url\":\"{dataUrl}\"}}}}]");
+
+        var message = OpenAiCompatibleController.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone()));
+        var tensors = OpenVinoImageTensorFactory.Create([message]);
+
+        try
+        {
+            Assert.AreEqual("Describe the image", message.Content);
+            Assert.IsNotNull(message.Images);
+            Assert.AreEqual(1, message.Images.Count);
+            Assert.AreEqual(1, tensors.Length);
+            using var shape = tensors[0].Shape;
+            CollectionAssert.AreEqual(new long[] { 1, 240, 495, 3 }, shape.get_dims());
+            Assert.AreEqual(240 * 495 * 3, tensors[0].GetData<byte>(240 * 495 * 3).Length);
+        }
+        finally
+        {
+            foreach (var tensor in tensors)
+                tensor.Dispose();
+        }
+    }
+
+    [TestMethod]
+    [TestCategory("OpenVINO.Integration")]
+    public async Task OpenAiCompatibleApi_WhenPictureIsProvided_DescribesVisibleTools()
+    {
+        var apiUrl = Environment.GetEnvironmentVariable("ESI_STUDIO_API_URL") ?? "http://127.0.0.1:7010";
+        using var client = new HttpClient
+        {
+            BaseAddress = new Uri(apiUrl.TrimEnd('/') + "/"),
+            Timeout = TimeSpan.FromMinutes(5)
+        };
+
+        using var modelsResponse = await client.GetAsync("v1/models");
+        var modelsJson = await modelsResponse.Content.ReadAsStringAsync();
+        Assert.IsTrue(modelsResponse.IsSuccessStatusCode, modelsJson);
+        using var modelsDocument = JsonDocument.Parse(modelsJson);
+        var model = modelsDocument.RootElement
+            .GetProperty("data")
+            .EnumerateArray()
+            .FirstOrDefault(item =>
+                item.GetProperty("loaded").GetBoolean() &&
+                item.GetProperty("capabilities").GetProperty("imageInput").GetBoolean());
+        Assert.IsTrue(model.ValueKind is not JsonValueKind.Undefined, "No loaded image-capable model was reported by the Studio WebAPI.");
+
+        var imageData = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "test-chat-with-picture.png"));
+        var dataUrl = $"data:image/png;base64,{Convert.ToBase64String(imageData)}";
+        var request = new
+        {
+            model = model.GetProperty("id").GetString(),
+            messages = new[]
+            {
+                new
+                {
+                    role = "user",
+                    content = new object[]
+                    {
+                        new { type = "text", text = "Lies die vier sichtbaren Logo-Beschriftungen im Bild von links nach rechts und nenne ihre Namen exakt." },
+                        new { type = "image_url", image_url = new { url = dataUrl } }
+                    }
+                }
+            },
+            stream = false,
+            max_tokens = 512,
+            temperature = 0
+        };
+
+        using var requestContent = new StringContent(JsonSerializer.Serialize(request), Encoding.UTF8, "application/json");
+        using var response = await client.PostAsync("v1/chat/completions", requestContent);
+        var responseJson = await response.Content.ReadAsStringAsync();
+        Assert.IsTrue(response.IsSuccessStatusCode, responseJson);
+        using var responseDocument = JsonDocument.Parse(responseJson);
+        var answer = responseDocument.RootElement
+            .GetProperty("choices")[0]
+            .GetProperty("message")
+            .GetProperty("content")
+            .GetString();
+
+        Assert.IsFalse(string.IsNullOrWhiteSpace(answer), responseJson);
+        Assert.IsFalse(answer.Contains("UNKNOWN_EXCEPTION", StringComparison.OrdinalIgnoreCase), responseJson);
+    }
+
+    [TestMethod]
+    public void ParseMessage_WhenContentIsJsonStringElement_ReturnsText()
+    {
+        using var document = JsonDocument.Parse("\"Describe this image\"");
+
+        var message = OpenAiCompatibleController.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone()));
+
+        Assert.AreEqual("Describe this image", message.Content);
+        Assert.IsNull(message.Images);
+    }
+
+    [TestMethod]
+    public void ParseMessage_WhenRemoteImageUrlIsProvided_ThrowsArgumentException()
+    {
+        using var document = JsonDocument.Parse("[{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://example.com/image.png\"}}]");
+
+        Assert.Throws<ArgumentException>(() => OpenAiCompatibleController.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone())));
     }
 
     private static OpenAiCompatibleController CreateController(
@@ -284,4 +458,5 @@ public sealed class OpenAiCompatibleControllerTests
         public Task<ApplicationDbContext> CreateDbContextAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(new ApplicationDbContext(options));
     }
+
 }

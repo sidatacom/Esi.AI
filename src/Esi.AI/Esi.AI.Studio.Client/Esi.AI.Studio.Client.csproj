@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Esi.AI.Studio.Contracts\Esi.AI.Studio.Contracts.csproj" />
     <ProjectReference Include="..\Esi.AI.Models\Esi.AI.Models.csproj" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.11" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Authentication" Version="10.0.11" />

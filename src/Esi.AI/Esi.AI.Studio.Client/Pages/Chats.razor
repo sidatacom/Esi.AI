@@ -53,7 +53,22 @@
                     }
                     @if (isSending) { <article class="chat-message assistant pending"><span class="message-role">Assistant</span><p>@(string.IsNullOrWhiteSpace(pendingAssistantContent) ? "Denke nach ..." : pendingAssistantContent)</p></article> }
                 </div>
-                <div class="chat-composer"><label for="chat-input">Nachricht</label><textarea id="chat-input" class="form-control" @bind="composer.Content" @bind:event="oninput" rows="4" disabled="@isSending"></textarea><div class="composer-footer"><span>@(statusMessage ?? "")</span><button class="send-button" type="button" @onclick="SendAsync" disabled="@(isSending || string.IsNullOrWhiteSpace(composer.Content) || string.IsNullOrWhiteSpace(selectedModelPath))">@(isSending ? "Antwort wird erstellt ..." : "Senden")</button></div></div>
+                <div class="chat-composer">
+                    <label for="chat-input">Nachricht</label>
+                    <textarea id="chat-input" class="form-control" @bind="composer.Content" @bind:event="oninput" rows="4" disabled="@isSending"></textarea>
+                    <div class="composer-media">
+                        <label class="media-picker" for="chat-image-input">Bild hinzufügen<InputFile id="chat-image-input" OnChange="SelectImageAsync" accept="image/*" disabled="@isSending" /></label>
+                        @if (selectedImage is not null)
+                        {
+                            <div class="selected-image">
+                                <img src="@imagePreviewUrl" alt="Ausgewähltes Bild" />
+                                <span>@selectedImageName</span>
+                                <button type="button" title="Bild entfernen" aria-label="Bild entfernen" @onclick="RemoveImage" disabled="@isSending">×</button>
+                            </div>
+                        }
+                    </div>
+                    <div class="composer-footer"><span>@(statusMessage ?? "")</span><button class="send-button" type="button" @onclick="SendAsync" disabled="@(isSending || (string.IsNullOrWhiteSpace(composer.Content) && selectedImage is null) || string.IsNullOrWhiteSpace(selectedModelPath))">@(isSending ? "Antwort wird erstellt ..." : "Senden")</button></div>
+                </div>
             </section>
         }
     </main>
@@ -65,6 +80,7 @@
     .chat-list { display: grid; gap: .35rem; margin-top: 1.25rem; }.chat-list-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .25rem; align-items: stretch; text-align: left; border: 0; border-left: 3px solid transparent; background: transparent; padding: .2rem .35rem .2rem .75rem; color: #302d28; }.chat-list-item span { color: #756f65; font-size: .78rem; }.chat-list-item.active { border-left-color: #236b70; background: #e2eeee; }.chat-select-button { display: grid; gap: .25rem; min-width: 0; text-align: left; border: 0; background: transparent; padding: .55rem 0; cursor: pointer; color: inherit; }.chat-delete-button { align-self: center; border: 0; background: transparent; color: #8b3f2f; width: 2rem; height: 2rem; font-size: 1.2rem; cursor: pointer; }.chat-delete-button:disabled { opacity: .45; cursor: not-allowed; }.chat-main { min-width: 0; }.chat-header { margin-bottom: 1.5rem; }.chat-panel { border: 1px solid #d9d4ca; background: #fbfaf6; }.message-list { min-height: 30rem; padding: 1.5rem; display: grid; align-content: start; gap: 1rem; }.chat-empty, .chat-empty-page { min-height: 26rem; display: grid; place-content: center; text-align: center; color: #756f65; gap: .7rem; }.chat-message { max-width: 76%; padding: .9rem 1rem; border-left: 3px solid #b65b38; background: #f0ece4; }.chat-message.user { justify-self: end; border-left: 0; border-right: 3px solid #236b70; background: #e2eeee; }.message-header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }.message-meta { display: flex; flex-wrap: wrap; gap: .35rem .8rem; color: #236b70; font-size: .72rem; font-weight: 700; }.generation-stats { color: #756f65; font-size: .72rem; white-space: nowrap; }.chat-message p { white-space: pre-wrap; margin: .35rem 0 0; }.message-role, .eyebrow { font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #665f54; }.pending { opacity: .65; }.chat-composer { border-top: 1px solid #d9d4ca; padding: 1rem 1.5rem 1.5rem; }.chat-composer label { display: block; font-weight: 700; margin-bottom: .4rem; }.composer-footer { margin-top: .75rem; color: #756f65; font-size: .85rem; }.send-button { border: 0; background: #236b70; color: white; padding: .7rem 1rem; font-weight: 700; cursor: pointer; }.send-button:disabled { opacity: .55; cursor: not-allowed; }
     @@media (max-width: 720px) { .chat-layout { grid-template-columns: 1fr; gap: 1rem; padding: 1.25rem .75rem 3rem; }.chat-sidebar { border-right: 0; border-bottom: 1px solid #d9d4ca; padding: 0 0 1rem; }.chat-list { display: flex; overflow-x: auto; }.chat-list-item { min-width: 12rem; }.chat-header, .composer-footer { align-items: stretch; flex-direction: column; }.chat-message { max-width: 94%; }.send-button { width: 100%; } }
     .thinking-block { margin-top: .65rem; border-top: 1px solid #d9d4ca; color: #756f65; }.thinking-block summary { padding: .45rem 0; cursor: pointer; font-size: .78rem; font-weight: 700; }.thinking-block p { margin-top: 0; color: #665f54; font-size: .9rem; }
+    .composer-media { display: flex; align-items: center; flex-wrap: wrap; gap: .7rem; }.media-picker { display: inline-flex; align-items: center; gap: .5rem; color: #236b70; font-size: .82rem; font-weight: 700; cursor: pointer; }.media-picker input { max-width: 15rem; }.selected-image { display: inline-flex; align-items: center; gap: .5rem; color: #665f54; font-size: .78rem; }.selected-image img { width: 3rem; height: 3rem; object-fit: cover; border: 1px solid #d9d4ca; }.selected-image button { border: 0; background: transparent; color: #8b3f2f; font-size: 1.2rem; cursor: pointer; }
 </style>
 
 @code {
@@ -80,6 +96,10 @@
     private ConfigurationBackend? selectedBackend;
     private string? selectedRuntime;
     private string? selectedModelKey;
+    private ChatImage? selectedImage;
+    private string? selectedImageName;
+    private string? imagePreviewUrl;
+    private const long MaxImageBytes = 4 * 1024 * 1024;
 
     protected override async Task OnInitializedAsync() { await LoadLoadedModelsAsync(); await LoadChatsAsync(); if (chatSummaries.Count > 0) await SelectChatAsync(chatSummaries[0].Id); else await NewChatAsync(); }
     private async Task LoadLoadedModelsAsync()
@@ -138,21 +158,66 @@
     private async Task NewChatAsync() { currentChat = await DataService.Chat_CreateAsync(new CreateChatRequest()); SetSelectedModel(loadedModels.FirstOrDefault()); await LoadChatsAsync(); statusMessage = null; }
     private async Task SelectChatAsync(Guid id) { currentChat = await DataService.Chat_ReadAsync(id); composer.Content = string.Empty; statusMessage = null; }
     private async Task DeleteChatAsync(Guid id) { if (isSending) return; try { await DataService.Chat_DeleteAsync(id); chatSummaries.RemoveAll(chat => chat.Id == id); if (currentChat?.Id == id) { currentChat = null; composer.Content = string.Empty; if (chatSummaries.Count > 0) await SelectChatAsync(chatSummaries[0].Id); } statusMessage = "Chat gelöscht."; } catch (Exception exception) { statusMessage = exception.Message; } }
+    private async Task SelectImageAsync(InputFileChangeEventArgs args)
+    {
+        var file = args.File;
+        if (!file.ContentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase))
+        {
+            statusMessage = "Bitte eine Bilddatei auswählen.";
+            return;
+        }
+
+        if (file.Size > MaxImageBytes)
+        {
+            statusMessage = "Das Bild darf höchstens 4 MB groß sein.";
+            return;
+        }
+
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxImageBytes);
+            using var memory = new MemoryStream();
+            await stream.CopyToAsync(memory);
+            var data = memory.ToArray();
+            selectedImage = new ChatImage(file.ContentType, data);
+            selectedImageName = file.Name;
+            imagePreviewUrl = $"data:{file.ContentType};base64,{Convert.ToBase64String(data)}";
+            statusMessage = null;
+        }
+        catch (Exception exception)
+        {
+            selectedImage = null;
+            selectedImageName = null;
+            imagePreviewUrl = null;
+            statusMessage = $"Das Bild konnte nicht gelesen werden: {exception.Message}";
+        }
+    }
+    private void RemoveImage()
+    {
+        selectedImage = null;
+        selectedImageName = null;
+        imagePreviewUrl = null;
+    }
     private async Task SendAsync()
     {
-        if (currentChat is null || string.IsNullOrWhiteSpace(composer.Content) || string.IsNullOrWhiteSpace(selectedModelPath) || selectedBackend is null || isSending)
+        if (currentChat is null || (string.IsNullOrWhiteSpace(composer.Content) && selectedImage is null) || string.IsNullOrWhiteSpace(selectedModelPath) || selectedBackend is null || isSending)
             return;
 
         isSending = true;
         statusMessage = null;
         pendingAssistantContent = string.Empty;
-        var content = composer.Content.Trim();
+        var content = string.IsNullOrWhiteSpace(composer.Content) ? "Beschreibe das Bild." : composer.Content.Trim();
+        var image = selectedImage;
+        var contentParts = image is null
+            ? null
+            : new[] { new ChatMessageContentPart(content), new ChatMessageContentPart(ImageIndex: 0) };
         composer.Content = string.Empty;
+        RemoveImage();
         try
         {
             var chatId = currentChat.Id;
             var backend = selectedBackend == ConfigurationBackend.OpenVino ? "OpenVINO" : selectedRuntime;
-            await foreach (var update in DataService.Chat_UpdateStreamAsync(chatId, new ChatExchangeRequest(content, selectedModelPath, backend)))
+            await foreach (var update in DataService.Chat_UpdateStreamAsync(chatId, new ChatExchangeRequest(content, selectedModelPath, backend, image is null ? null : [image], contentParts)))
             {
                 if (update.IsCompleted && update.Chat is not null)
                 {
@@ -173,6 +238,9 @@
         {
             statusMessage = exception.Message;
             composer.Content = content;
+            selectedImage = image;
+            selectedImageName = image is null ? null : "Ausgewähltes Bild";
+            imagePreviewUrl = image is null ? null : $"data:{image.MediaType};base64,{Convert.ToBase64String(image.Data)}";
             pendingAssistantContent = string.Empty;
         }
         finally

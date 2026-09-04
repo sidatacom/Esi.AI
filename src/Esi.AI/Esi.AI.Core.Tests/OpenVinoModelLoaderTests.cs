@@ -1,7 +1,9 @@
+using System.Buffers.Binary;
 using System.Text.Json;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using OpenVinoSharp;
 using OpenVinoSharp.GenAI;
 
 namespace Esi.AI.Core.Tests;
@@ -136,6 +138,30 @@ public sealed class OpenVinoModelLoaderTests
     }
 
     [TestMethod]
+    public void OpenVinoImageTensorFactory_WhenBmpImageIsProvided_ReturnsRgbNhwcTensor()
+    {
+        OpenVinoModelLoader.InitializeRuntime();
+        var messages = new[]
+        {
+            new ChatMessage("user", "Describe", [new ChatImage("image/bmp", CreateTwoPixelBmp())])
+        };
+        var tensors = OpenVinoImageTensorFactory.Create(messages);
+
+        try
+        {
+            Assert.AreEqual(1, tensors.Length);
+            using var shape = tensors[0].Shape;
+            CollectionAssert.AreEqual(new long[] { 1, 1, 2, 3 }, shape.get_dims());
+            CollectionAssert.AreEqual(new byte[] { 255, 0, 0, 0, 255, 0 }, tensors[0].GetData<byte>(6));
+        }
+        finally
+        {
+            foreach (var tensor in tensors)
+                tensor.Dispose();
+        }
+    }
+
+    [TestMethod]
     public void UnloadOnNewLoader_IsHarmless()
     {
         using var loader = new OpenVinoModelLoader();
@@ -191,6 +217,19 @@ public sealed class OpenVinoModelLoaderTests
 
         Assert.AreEqual(JsonValueKind.Object, arguments.ValueKind);
         Assert.AreEqual("weather", arguments.GetProperty("query").GetString());
+    }
+
+    [TestMethod]
+    public void SerializeChatMessageForHistory_WhenMultimodalContentIsProvided_PreservesContentParts()
+    {
+        using var content = JsonDocument.Parse("[{\"type\":\"text\",\"text\":\"Describe\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AA==\"}}]");
+        var message = new OpenAiChatMessage("user", content.RootElement.Clone());
+
+        using var document = JsonDocument.Parse(OpenVinoChatSession.SerializeChatMessageForHistory(message));
+        var parts = document.RootElement.GetProperty("content");
+
+        Assert.AreEqual(JsonValueKind.Array, parts.ValueKind);
+        Assert.AreEqual("image_url", parts[1].GetProperty("type").GetString());
     }
 
     [TestMethod]
@@ -315,5 +354,22 @@ public sealed class OpenVinoModelLoaderTests
         var filePath = Path.Combine(Path.GetTempPath(), $"esi-ai-test-{Guid.NewGuid():N}.gguf");
         File.WriteAllBytes(filePath, Array.Empty<byte>());
         return filePath;
+    }
+
+    private static byte[] CreateTwoPixelBmp()
+    {
+        var bytes = new byte[62];
+        bytes[0] = (byte)'B';
+        bytes[1] = (byte)'M';
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(2), bytes.Length);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(10), 54);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(14), 40);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(18), 2);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(22), 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(26), 1);
+        BinaryPrimitives.WriteUInt16LittleEndian(bytes.AsSpan(28), 24);
+        BinaryPrimitives.WriteInt32LittleEndian(bytes.AsSpan(34), 8);
+        new byte[] { 0, 0, 255, 0, 255, 0, 0, 0 }.AsSpan().CopyTo(bytes.AsSpan(54));
+        return bytes;
     }
 }

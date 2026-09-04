@@ -11,7 +11,7 @@ using Esi.AI.Studio.Components.Account;
 using Esi.AI.Studio.Data;
 using Esi.AI.Studio.Hubs;
 using Esi.AI.Studio.Services;
-using Esi.AI.Studio.Client.Services;
+using Esi.AI.Studio.Contracts;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Core.Chat;
 using Esi.AI.Models;
@@ -32,6 +32,7 @@ builder.Services.AddControllers();
 builder.Services.AddSignalR(options =>
 {
     options.MaximumParallelInvocationsPerClient = 8;
+    options.MaximumReceiveMessageSize = 8 * 1024 * 1024;
     options.EnableDetailedErrors = builder.Environment.IsDevelopment();
 });
 builder.Services.AddEndpointsApiExplorer();
@@ -102,11 +103,24 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
 builder.Services.AddSingleton<OpenVinoDiagnosticsService>();
 builder.Services.AddSingleton<OpenVinoDriverInstaller>();
+builder.Services.AddSingleton<IBackendDiagnosticsService, BackendDiagnosticsService>();
+builder.Services.Configure<BackendRuntimeOptions>(builder.Configuration.GetSection("BackendRuntime"));
+builder.Services.AddHttpClient("BackendRuntime", client =>
+{
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("Esi.AI.Studio/1.0");
+    client.Timeout = TimeSpan.FromMinutes(30);
+});
+builder.Services.AddSingleton<BackendRuntimeInstaller>(services =>
+    new BackendRuntimeInstaller(
+        services.GetRequiredService<IHttpClientFactory>().CreateClient("BackendRuntime"),
+        services.GetRequiredService<IOptions<BackendRuntimeOptions>>()));
 builder.Services.AddSingleton<BackendPrerequisiteProvisioner>();
 builder.Services.AddSingleton<BackendRequirementMonitor>();
 builder.Services.AddHostedService(services => services.GetRequiredService<BackendRequirementMonitor>());
+builder.Services.AddSingleton<IBackendRequirementState>(services => services.GetRequiredService<BackendRequirementMonitor>());
 builder.Services.AddHostedService<StudioWatchdogLease>();
 builder.Services.AddSingleton<IModelRuntimeStatusPublisher, SignalRModelRuntimeStatusPublisher>();
+builder.Services.AddSingleton<IBackendRuntimeStatusPublisher, SignalRBackendRuntimeStatusPublisher>();
 builder.Services.AddSingleton<ModelRuntime>();
 builder.Services.AddHostedService(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddScoped<IModelDownloadEvents, ServerModelDownloadEvents>();
@@ -131,13 +145,20 @@ builder.Services.AddHttpClient<IOmniRouteClient, OmniRouteClient>((services, cli
     client.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.TimeoutSeconds));
 });
 builder.Services.Configure<ModelLibraryOptions>(builder.Configuration.GetSection("ModelLibrary"));
+builder.Services.AddSingleton<ILocalModelScanner, LocalModelScanner>();
 builder.Services.AddSingleton<ModelLibraryService>(services =>
     new ModelLibraryService(
         services.GetRequiredService<IHttpClientFactory>().CreateClient("HuggingFace"),
         services.GetRequiredService<IHubContext<DataHub>>(),
         services.GetRequiredService<IDbContextFactory<ApplicationDbContext>>(),
-        services.GetRequiredService<IOptions<ModelLibraryOptions>>()));
+        services.GetRequiredService<IOptions<ModelLibraryOptions>>(),
+        services.GetRequiredService<ILocalModelScanner>()));
 builder.Services.AddSingleton<ILocalModelCatalog>(services => services.GetRequiredService<ModelLibraryService>());
+builder.Services.AddSingleton<IModelDirectoryCatalog>(services => services.GetRequiredService<ModelLibraryService>());
+builder.Services.AddSingleton<IHuggingFaceCatalog>(services => services.GetRequiredService<ModelLibraryService>());
+builder.Services.AddSingleton<IModelDownloadManager>(services => services.GetRequiredService<ModelLibraryService>());
+builder.Services.AddScoped<IInferenceScheduler, InferenceScheduler>();
+builder.Services.AddScoped<IInferenceService, InferenceService>();
 builder.Services.AddScoped<DataService>();
     builder.Services.AddScoped<IDataService>(services => services.GetRequiredService<DataService>());
 

@@ -360,33 +360,36 @@
         }
         else if (activeBackend == BackendTab.Llama)
         {
-            <p class="panel-note">Enable Vulkan devices from any installed vendor driver and assign their relative tensor split weight.</p>
-            @if (loadStatus?.VulkanDevices.Count > 0)
+            <p class="panel-note">Select CUDA for the NVIDIA GPU, SYCL for Intel Arc, or Vulkan for multi-vendor tensor splitting.</p>
+            @if (form.Backend is "Vulkan" or "VULKAN")
             {
-                @foreach (var device in loadStatus.VulkanDevices.Where(device => !IsExcludedDevice(device.Description ?? device.Name)))
+                @if (loadStatus?.VulkanDevices.Count > 0)
                 {
-                    <div class="gpu-row">
-                        <div class="gpu-identity">
-                            <input class="form-check-input" type="checkbox" id="device-@device.Name"
-                                   checked="@GetDeviceSetting(device.Name).Enabled"
-                                   @onchange="async eventArgs => await SetDeviceEnabledAsync(device.Name, eventArgs.Value is true)" />
-                            <label class="gpu-name" for="device-@device.Name">
-                                <strong>@(device.Description ?? device.Name)</strong>
-                                <span>@device.Name · @GetVulkanDriverLabel(device)</span>
-                            </label>
+                    @foreach (var device in loadStatus.VulkanDevices.Where(device => !IsExcludedDevice(device.Description ?? device.Name)))
+                    {
+                        <div class="gpu-row">
+                            <div class="gpu-identity">
+                                <input class="form-check-input" type="checkbox" id="device-@device.Name"
+                                       checked="@GetDeviceSetting(device.Name).Enabled"
+                                       @onchange="async eventArgs => await SetDeviceEnabledAsync(device.Name, eventArgs.Value is true)" />
+                                <label class="gpu-name" for="device-@device.Name">
+                                    <strong>@(device.Description ?? device.Name)</strong>
+                                    <span>@device.Name · @GetVulkanDriverLabel(device)</span>
+                                </label>
+                            </div>
+                            <div class="weight-field">
+                                <label for="@($"weight-{device.Name}")">Weight</label>
+                                <input id="@($"weight-{device.Name}")" class="form-control" type="number" min="0" step="0.1"
+                                       value="@GetDeviceSetting(device.Name).Weight.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)"
+                                       @onchange="async eventArgs => await SetDeviceWeightAsync(device.Name, eventArgs.Value?.ToString())" />
+                            </div>
                         </div>
-                        <div class="weight-field">
-                            <label for="@($"weight-{device.Name}")">Weight</label>
-                            <input id="@($"weight-{device.Name}")" class="form-control" type="number" min="0" step="0.1"
-                                   value="@GetDeviceSetting(device.Name).Weight.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)"
-                                   @onchange="async eventArgs => await SetDeviceWeightAsync(device.Name, eventArgs.Value?.ToString())" />
-                        </div>
-                    </div>
+                    }
                 }
-            }
-            else
-            {
-                <p class="text-muted">No Vulkan devices found.</p>
+                else
+                {
+                    <p class="text-muted">No Vulkan devices found.</p>
+                }
             }
         }
         else if (activeBackend is BackendTab.Vllm or BackendTab.Sglang)
@@ -454,8 +457,8 @@
                                     <small>@check.Detail</small>
                                     @if (!check.IsAvailable && !check.IsOptional && check.CanSolve)
                                     {
-                                        <button class="validation-solve-button" type="button" @onclick="PrepareBackendPrerequisitesAsync" disabled="@isPreparingPrerequisites">
-                                            @(isPreparingPrerequisites ? "Preparing..." : "Prepare")
+                                        <button class="validation-solve-button" type="button" @onclick="() => PrepareBackendPrerequisitesAsync(check.Id)" disabled="@isPreparingPrerequisites">
+                                            @(isPreparingPrerequisites ? (CurrentPrerequisiteBackend == ConfigurationBackend.Llama ? "Installing..." : "Preparing...") : CurrentPrerequisiteBackend == ConfigurationBackend.Llama ? "Install" : "Prepare")
                                         </button>
                                     }
                                 </span>
@@ -575,11 +578,17 @@
                 <label class="form-label" for="model-path">GGUF model path</label>
                 <InputText id="model-path" class="form-control" @bind-Value="form.ModelPath" @bind-Value:after="SaveSettingsAsync" />
             </div>
+            <div class="field-group">
+                <label class="form-label" for="mmproj-path">Vision projector path (optional)</label>
+                <InputText id="mmproj-path" class="form-control" @bind-Value="form.MmprojPath" @bind-Value:after="SaveSettingsAsync" placeholder="Auto-detected beside the model when empty" />
+            </div>
             <div class="field-row">
                 <div class="field-group">
                     <label class="form-label" for="backend">Backend</label>
-                    <InputSelect id="backend" class="form-select" @bind-Value="form.Backend" @bind-Value:after="SaveSettingsAsync">
+                    <InputSelect id="backend" class="form-select" @bind-Value="form.Backend" @bind-Value:after="HandleLlamaBackendChangedAsync">
                         <option value="Vulkan">Vulkan</option>
+                        <option value="CUDA">CUDA 12</option>
+                        <option value="SYCL">SYCL 16</option>
                         <option value="CPU">CPU</option>
                     </InputSelect>
                 </div>
@@ -940,7 +949,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
     private string ActiveBackendLabel => activeBackend switch
     {
-        BackendTab.Llama => "LLama / Vulkan",
+        BackendTab.Llama => $"LLama / {form.Backend}",
         BackendTab.OpenVino => $"OpenVINO / {openVinoForm.Device}",
         BackendTab.Vllm => "vLLM / Python",
         BackendTab.Sglang => "SGLang / Python",
@@ -1036,16 +1045,26 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         var route = GetMatrixDeviceRoute(matrixDialogVendor);
         matrixDialogDiagnostics = await DataService.GetBackendPrerequisitesAsync(
             GetConfigurationBackend(backend), pythonForm.PythonExecutable,
-            devices: IsPythonBackendTab(backend) && route is not null ? [route] : null);
+            devices: (IsPythonBackendTab(backend) || backend == BackendTab.Llama) && route is not null
+                ? [backend == BackendTab.Llama && matrixDialogVendor == "Intel / XPU" ? "sycl:0" : route]
+                : null);
         matrixRequirementActions[(backend, matrixDialogVendor)] = !matrixDialogDiagnostics.IsReady;
     }
 
     private bool ShouldShowMatrixRequirementsButton(string backend, string vendor, string status)
     {
         var backendTab = ParseMatrixBackend(backend);
-        return backendTab.HasValue && IsMatrixSupportAvailable(status) &&
+        return backendTab.HasValue && IsMatrixRouteForVendor(backend, vendor) && IsMatrixSupportAvailable(status) &&
             matrixRequirementActions.TryGetValue((backendTab.Value, vendor), out var actionRequired) && actionRequired;
     }
+
+    private static bool IsMatrixRouteForVendor(string backend, string vendor) => (backend, vendor) switch
+    {
+        ("LLama / CUDA 12", "NVIDIA / CUDA") => true,
+        ("LLama / SYCL 16", "Intel / XPU") => true,
+        ("LLama / Vulkan", "AMD / ROCm") => true,
+        _ => false
+    };
 
     private static bool IsMatrixSupportAvailable(string status) =>
         !status.StartsWith("Not ", StringComparison.OrdinalIgnoreCase) &&
@@ -1054,9 +1073,6 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private async Task RefreshMatrixRequirementActionsAsync()
     {
         matrixRequirementActions.Clear();
-        matrixRequirementActions[(BackendTab.Llama, "NVIDIA / CUDA")] = false;
-        matrixRequirementActions[(BackendTab.Llama, "Intel / XPU")] = false;
-        matrixRequirementActions[(BackendTab.Llama, "AMD / ROCm")] = false;
         matrixRequirementActions[(BackendTab.DotLlm, "NVIDIA / CUDA")] = false;
         matrixRequirementActions[(BackendTab.DotLlm, "Intel / XPU")] = false;
         matrixRequirementActions[(BackendTab.DotLlm, "AMD / ROCm")] = false;
@@ -1065,6 +1081,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         {
             var backend = entry.Backend switch
             {
+                ConfigurationBackend.Llama => BackendTab.Llama,
                 ConfigurationBackend.Vllm => BackendTab.Vllm,
                 ConfigurationBackend.Sglang => BackendTab.Sglang,
                 ConfigurationBackend.OpenVino => BackendTab.OpenVino,
@@ -1082,9 +1099,12 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         backendRequirementState = state;
         _ = RefreshMatrixRequirementActionsAsync();
 
+        var currentDevices = activeBackend == BackendTab.Llama
+            ? GetLlamaPrerequisiteDevices(form.Backend)
+            : pythonForm.SelectedDevices;
         var currentEntry = state.Entries.FirstOrDefault(entry =>
             entry.Backend == CurrentPrerequisiteBackend &&
-            (entry.Devices.Count == 0 || entry.Devices.SequenceEqual(pythonForm.SelectedDevices, StringComparer.OrdinalIgnoreCase)));
+            entry.Devices.SequenceEqual(currentDevices, StringComparer.OrdinalIgnoreCase));
         if (currentEntry is not null)
             backendPrerequisites = currentEntry.Diagnostics;
     }
@@ -1112,7 +1132,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
     private static BackendTab? ParseMatrixBackend(string backend) => backend switch
     {
-        "LLama / Vulkan" => BackendTab.Llama,
+        _ when backend.StartsWith("LLama /", StringComparison.OrdinalIgnoreCase) => BackendTab.Llama,
         "OpenVINO" => BackendTab.OpenVino,
         "vLLM" => BackendTab.Vllm,
         "SGLang" => BackendTab.Sglang,
@@ -1124,10 +1144,10 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         Enum.GetValues<BackendTab>()
             .Select(backend =>
             {
-                var row = BackendGpuSupportMatrix.Single(row => row.Backend.StartsWith(backend == BackendTab.Llama ? "LLama" : GetBackendLabel(backend), StringComparison.OrdinalIgnoreCase));
+                var row = GetMatrixRow(backend, vendor);
                 var supportStatus = GetMatrixSupportStatus(row, vendor);
                 var isSupported = !supportStatus.StartsWith("Not ", StringComparison.OrdinalIgnoreCase);
-                var canSolve = isSupported && (IsPythonBackendTab(backend) && GetMatrixDeviceRoute(vendor) is not null || backend == BackendTab.OpenVino && vendor == "Intel / XPU");
+                var canSolve = isSupported && (backend == BackendTab.Llama && CanSolveMatrixBackend(vendor) || IsPythonBackendTab(backend) && GetMatrixDeviceRoute(vendor) is not null || backend == BackendTab.OpenVino && vendor == "Intel / XPU");
                 var canOpen = isSupported && (canSolve || backend == BackendTab.Llama || backend == BackendTab.DotLlm);
                 var detail = canSolve
                     ? $"Use the {vendor} driver route and solve the isolated {GetBackendLabel(backend)} environment."
@@ -1137,6 +1157,19 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 return new BackendRequirementTile(backend, GetBackendLabel(backend), supportStatus, detail, canSolve, canOpen, isSupported);
             })
             .ToArray();
+
+    private static BackendGpuSupportRow GetMatrixRow(BackendTab backend, string vendor)
+    {
+        var rowName = backend == BackendTab.Llama
+            ? vendor switch
+            {
+                "NVIDIA / CUDA" => "LLama / CUDA 12",
+                "Intel / XPU" => "LLama / SYCL 16",
+                _ => "LLama / Vulkan"
+            }
+            : GetBackendLabel(backend);
+        return BackendGpuSupportMatrix.Single(row => row.Backend.Equals(rowName, StringComparison.OrdinalIgnoreCase));
+    }
 
     private async Task SolveMatrixBackendAsync(BackendTab backend)
     {
@@ -1148,6 +1181,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         try
         {
             var route = GetMatrixDeviceRoute(matrixDialogVendor);
+            if (backend == BackendTab.Llama)
+                form.Backend = GetLlamaBackendForVendor(matrixDialogVendor);
             if (IsPythonBackendTab(backend) && route is not null)
             {
                 pythonForm.Devices.Clear();
@@ -1164,6 +1199,14 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                     await PrepareBackendPrerequisitesAsync();
                 await RefreshMatrixDialogDiagnosticsAsync();
                 matrixDialogStatus = $"{GetBackendLabel(backend)} requirements checked for {matrixDialogVendor}.";
+            }
+            else if (backend == BackendTab.Llama)
+            {
+                await RefreshBackendPrerequisitesAsync();
+                if (!IsBackendPrerequisitesReady)
+                    await PrepareBackendPrerequisitesAsync();
+                await RefreshMatrixDialogDiagnosticsAsync();
+                matrixDialogStatus = $"LLama requirements checked for {matrixDialogVendor}.";
             }
             else if (backend == BackendTab.OpenVino && matrixDialogVendor == "Intel / XPU")
             {
@@ -1203,6 +1246,20 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         "Intel / XPU" => "xpu:1",
         _ => null
     };
+
+    private static string GetLlamaBackendForVendor(string vendor) => vendor switch
+    {
+        "NVIDIA / CUDA" => "CUDA",
+        "Intel / XPU" => "SYCL",
+        _ => "Vulkan"
+    };
+
+    private bool CanSolveMatrixBackend(string vendor) =>
+        (vendor is "NVIDIA / CUDA" or "Intel / XPU" or "AMD / ROCm") &&
+        backendRequirementState?.Entries
+            .Where(entry => entry.Backend == ConfigurationBackend.Llama && entry.Vendor.Equals(vendor, StringComparison.OrdinalIgnoreCase))
+            .SelectMany(entry => entry.Diagnostics.Checks)
+            .Any(check => !check.IsAvailable && check.CanSolve) == true;
 
     private async Task LoadOpenVinoModelAsync()
     {
@@ -1347,7 +1404,10 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         isCheckingPrerequisites = true;
         try
         {
-            backendPrerequisites = await DataService.GetBackendPrerequisitesAsync(CurrentPrerequisiteBackend, pythonForm.PythonExecutable, devices: pythonForm.SelectedDevices);
+            backendPrerequisites = await DataService.GetBackendPrerequisitesAsync(
+                CurrentPrerequisiteBackend,
+                pythonForm.PythonExecutable,
+                devices: activeBackend == BackendTab.Llama ? GetLlamaPrerequisiteDevices(form.Backend) : pythonForm.SelectedDevices);
         }
         catch (Exception exception)
         {
@@ -1360,13 +1420,33 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         }
     }
 
-    private async Task PrepareBackendPrerequisitesAsync()
+    private async Task HandleLlamaBackendChangedAsync()
+    {
+        await SaveSettingsAsync();
+        await RefreshBackendPrerequisitesAsync();
+    }
+
+    private static IReadOnlyList<string> GetLlamaPrerequisiteDevices(string? backendOrCheckId) => backendOrCheckId?.ToUpperInvariant() switch
+    {
+        "CUDA" or "CUDA12-RUNTIME" => ["cuda:0"],
+        "SYCL" or "SYCL-RUNTIME" => ["sycl:0"],
+        "VULKAN" or "VULKAN-RUNTIME" => ["vulkan:0"],
+        _ => ["cpu:0"]
+    };
+
+    private async Task PrepareBackendPrerequisitesAsync(string? checkId = null)
     {
         isPreparingPrerequisites = true;
         prerequisiteOutput = $"Preparing {backendPrerequisites?.BackendName ?? GetBackendLabel(activeBackend)}...";
         try
         {
-            var result = await DataService.PrepareBackendAsync(CurrentPrerequisiteBackend, pythonForm.PythonExecutable, devices: pythonForm.SelectedDevices);
+            var devices = activeBackend == BackendTab.Llama
+                ? GetLlamaPrerequisiteDevices(checkId ?? form.Backend)
+                : pythonForm.SelectedDevices;
+            var result = await DataService.PrepareBackendAsync(
+                CurrentPrerequisiteBackend,
+                pythonForm.PythonExecutable,
+                devices: devices);
             prerequisiteOutput = $"Result: {(result.Succeeded ? "SUCCESS" : "FAILED")}{Environment.NewLine}{result.Message}{Environment.NewLine}{result.Output}";
             await RefreshBackendPrerequisitesAsync();
             await RefreshMatrixRequirementActionsAsync();
@@ -1576,6 +1656,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private static readonly BackendGpuSupportRow[] BackendGpuSupportMatrix =
     [
         new("LLama / Vulkan", "Supported", "Supported", "Supported", "Yes", "Yes", "Vendor Vulkan driver per device"),
+        new("LLama / CUDA 12", "Supported", "Not supported", "Not supported", "Yes", "No", "NVIDIA CUDA 12 runtime and driver"),
+        new("LLama / SYCL 16", "Not supported", "Supported", "Not supported", "Yes", "No", "Intel oneAPI SYCL and Level Zero runtime"),
         new("OpenVINO", "Not supported", "GPU/NPU", "Not supported", "Yes (MULTI)", "No", "Intel OpenVINO plugin and device driver"),
         new("vLLM", "CUDA", "XPU option", "Not in current environment", "Yes (TP)", "No", "CUDA or Intel XPU stack per worker"),
         new("SGLang", "CUDA", "XPU", "ROCm where installed", "Yes (TP)", "No", "One homogeneous vendor driver stack"),
@@ -1911,7 +1993,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 form.GpuLayerCount,
                 form.ContextSize,
                 GetVulkanWeightsForLoad(),
-                advanced.ToSettings());
+                advanced.ToSettings(),
+                form.MmprojPath);
             await SaveSettingsAsync();
             var loadTask = DataService.LoadModelAsync(request);
             loadStatus = await loadTask;
@@ -2059,7 +2142,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 form.GpuLayerCount,
                 form.ContextSize,
                 form.VulkanDevices.ToDictionary(pair => pair.Key, pair => pair.Value.Weight),
-                advanced.ToSettings())),
+                advanced.ToSettings(),
+                form.MmprojPath)),
             selectedProfileId));
         await PersistCurrentProfileSettingsAsync();
     }
@@ -2567,7 +2651,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             form.GpuLayerCount,
             form.ContextSize,
             form.VulkanDevices.ToDictionary(pair => pair.Key, pair => pair.Value.Weight),
-            advanced.ToSettings()))
+            advanced.ToSettings(),
+            form.MmprojPath))
         : activeBackend == BackendTab.OpenVino
             ? openVinoForm.ToSettings().ConfigurationJson
             : activeBackend == BackendTab.DotLlm
@@ -2577,6 +2662,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private void ApplySettings(LoadModelRequest settings)
     {
         form.ModelPath = settings.ModelPath;
+        form.MmprojPath = settings.MmprojPath;
         form.Backend = settings.Backend;
         form.GpuLayerCount = settings.GpuLayerCount;
         form.ContextSize = settings.ContextSize;
@@ -2589,6 +2675,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private void ResetModelConfiguration()
     {
         form.Backend = "Vulkan";
+        form.MmprojPath = null;
         form.GpuLayerCount = 20;
         form.ContextSize = 131072;
         advanced.Load(new LlamaAdvancedSettings());
@@ -2742,6 +2829,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private sealed class ModelForm
     {
         public string ModelPath { get; set; } = string.Empty;
+
+        public string? MmprojPath { get; set; }
 
         public string Backend { get; set; } = "Vulkan";
 

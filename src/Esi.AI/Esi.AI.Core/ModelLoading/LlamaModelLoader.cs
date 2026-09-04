@@ -12,6 +12,7 @@ namespace Esi.AI.Core.ModelLoading;
 
 public sealed class LlamaModelLoader : IDisposable
 {
+    private readonly string applicationDirectory;
     private readonly SemaphoreSlim loadLock = new(1, 1);
     private readonly Dictionary<string, LoadedModel> loadedModels = new(StringComparer.OrdinalIgnoreCase);
     private LLamaWeights? weights;
@@ -19,6 +20,14 @@ public sealed class LlamaModelLoader : IDisposable
     private readonly ConcurrentQueue<string> loadLog = new();
     private readonly ConcurrentDictionary<LlamaChatSession, byte> chatSessions = new();
     private CancellationTokenSource? activeLoadCancellation;
+    private string? configuredBackend;
+
+    /// <summary>Creates a LLama model loader using the application's native runtime directory.</summary>
+    /// <param name="applicationDirectory">Optional application directory containing the runtimes folder.</param>
+    public LlamaModelLoader(string? applicationDirectory = null)
+    {
+        this.applicationDirectory = applicationDirectory ?? AppContext.BaseDirectory;
+    }
 
     public bool IsLoaded => weights is not null;
 
@@ -27,6 +36,22 @@ public sealed class LlamaModelLoader : IDisposable
     public float Progress { get; private set; }
 
     public ModelLoadStatus? Status { get; private set; }
+
+    public bool SupportsImageInput(string? modelPath)
+    {
+        loadLock.Wait();
+        try
+        {
+            var normalizedModelPath = string.IsNullOrWhiteSpace(modelPath)
+                ? LoadedModelPath
+                : Path.GetFullPath(modelPath);
+            return normalizedModelPath is not null && loadedModels.TryGetValue(normalizedModelPath, out var model) && model.MtmdWeights?.SupportsVision == true;
+        }
+        finally
+        {
+            loadLock.Release();
+        }
+    }
 
     public ModelLoadStatus GetStatus()
     {
@@ -55,7 +80,7 @@ public sealed class LlamaModelLoader : IDisposable
             };
             var context = loadedModel.Weights.CreateContext(parameters);
             LlamaChatSession? session = null;
-            session = new LlamaChatSession(context, systemPrompt, () => chatSessions.TryRemove(session!, out _));
+            session = new LlamaChatSession(context, systemPrompt, loadedModel.MtmdWeights, () => chatSessions.TryRemove(session!, out _));
             chatSessions.TryAdd(session, 0);
             return session;
         }
@@ -92,6 +117,7 @@ public sealed class LlamaModelLoader : IDisposable
             throw new ArgumentOutOfRangeException(nameof(contextSize), "The context size must be one of the supported values.");
         }
 
+        new BackendPrerequisiteProvisioner().EnsureLlamaReady(backend, applicationDirectory);
         ConfigureBackend(backend);
         while (loadLog.TryDequeue(out _))
         {
@@ -159,6 +185,7 @@ public sealed class LlamaModelLoader : IDisposable
                     parameters.GpuLayerCount = 0;
                 }
             }
+            var mmprojPath = ResolveMmprojPath(parameters.ModelPath, advanced.MmprojPath);
             LLamaWeights loadedWeights;
             try
             {
@@ -173,10 +200,26 @@ public sealed class LlamaModelLoader : IDisposable
                 throw;
             }
 
-            if (loadedModels.Remove(parameters.ModelPath, out var previousModel))
-                previousModel.Weights.Dispose();
+            MtmdWeights? loadedMmproj = null;
+            try
+            {
+                if (mmprojPath is not null)
+                {
+                    var mtmdParameters = MtmdContextParams.Default();
+                    mtmdParameters.UseGpu = IsGpuBackend(backend) && parameters.GpuLayerCount > 0;
+                    loadedMmproj = await MtmdWeights.LoadFromFileAsync(mmprojPath, loadedWeights, mtmdParameters, loadCancellationToken);
+                }
+            }
+            catch
+            {
+                loadedWeights.Dispose();
+                throw;
+            }
 
-            var loadedModel = new LoadedModel(loadedWeights, CreateStatus(parameters.ModelPath, backend, parameters.GpuLayerCount, parameters.ContextSize ?? contextSize, loadedWeights.SizeInBytes, deviceWeights, true));
+            if (loadedModels.Remove(parameters.ModelPath, out var previousModel))
+                previousModel.Dispose();
+
+            var loadedModel = new LoadedModel(loadedWeights, loadedMmproj, CreateStatus(parameters.ModelPath, backend, parameters.GpuLayerCount, parameters.ContextSize ?? contextSize, loadedWeights.SizeInBytes, deviceWeights, true));
             loadedModels[parameters.ModelPath] = loadedModel;
             weights = loadedWeights;
             LoadedModelPath = parameters.ModelPath;
@@ -198,7 +241,7 @@ public sealed class LlamaModelLoader : IDisposable
         {
             DisposeChatSessions();
             foreach (var model in loadedModels.Values)
-                model.Weights.Dispose();
+                model.Dispose();
             loadedModels.Clear();
             weights = null;
             weights = null;
@@ -223,7 +266,7 @@ public sealed class LlamaModelLoader : IDisposable
             if (!loadedModels.Remove(Path.GetFullPath(modelPath), out var model))
                 return;
 
-            model.Weights.Dispose();
+            model.Dispose();
             var current = loadedModels.Values.LastOrDefault();
             weights = current?.Weights;
             LoadedModelPath = current?.Status.ModelPath;
@@ -409,25 +452,40 @@ public sealed class LlamaModelLoader : IDisposable
 
     private void ConfigureBackend(string backend)
     {
+        var normalizedBackend = backend.Trim().ToUpperInvariant();
         if (backendConfigured)
         {
+            if (!string.Equals(configuredBackend, normalizedBackend, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException($"LLamaSharp native backend is process-wide and is already configured as '{configuredBackend}'. Restart the process before selecting '{normalizedBackend}'.");
             return;
         }
 
-        switch (backend.Trim().ToUpperInvariant())
+        switch (normalizedBackend)
         {
             case "VULKAN":
-                NativeLibraryConfig.All.WithCuda(false).WithVulkan().WithLogCallback(HandleNativeLog);
+                NativeLibraryConfig.All.WithCuda(false).WithVulkan().WithSycl(false).WithLogCallback(HandleNativeLog);
+                break;
+            case "CUDA":
+                NativeLibraryConfig.All.WithCuda().WithVulkan(false).WithSycl(false).WithAutoFallback(false).WithLogCallback(HandleNativeLog);
+                break;
+            case "SYCL":
+                NativeLibraryConfig.All.WithCuda(false).WithVulkan(false).WithSycl().WithAutoFallback(false).WithLogCallback(HandleNativeLog);
                 break;
             case "CPU":
-                NativeLibraryConfig.All.WithCuda(false).WithVulkan(false).WithLogCallback(HandleNativeLog);
+                NativeLibraryConfig.All.WithCuda(false).WithVulkan(false).WithSycl(false).WithLogCallback(HandleNativeLog);
                 break;
             default:
-                throw new ArgumentException("Backend must be Vulkan or CPU.", nameof(backend));
+                throw new ArgumentException("Backend must be Vulkan, CUDA, SYCL, or CPU.", nameof(backend));
         }
 
         backendConfigured = true;
+        configuredBackend = normalizedBackend;
     }
+
+    private static bool IsGpuBackend(string backend) =>
+        backend.Equals("VULKAN", StringComparison.OrdinalIgnoreCase) ||
+        backend.Equals("CUDA", StringComparison.OrdinalIgnoreCase) ||
+        backend.Equals("SYCL", StringComparison.OrdinalIgnoreCase);
 
     private void HandleNativeLog(LLamaLogLevel level, string message)
     {
@@ -439,7 +497,7 @@ public sealed class LlamaModelLoader : IDisposable
         activeLoadCancellation?.Cancel();
         DisposeChatSessions();
         foreach (var model in loadedModels.Values)
-            model.Weights.Dispose();
+            model.Dispose();
         loadedModels.Clear();
         weights = null;
         activeLoadCancellation?.Dispose();
@@ -453,7 +511,34 @@ public sealed class LlamaModelLoader : IDisposable
         chatSessions.Clear();
     }
 
-    private sealed record LoadedModel(LLamaWeights Weights, ModelLoadStatus Status);
+    private static string? ResolveMmprojPath(string modelPath, string? configuredPath)
+    {
+        if (!string.IsNullOrWhiteSpace(configuredPath))
+        {
+            var fullPath = Path.GetFullPath(configuredPath.Trim());
+            if (!File.Exists(fullPath))
+                throw new FileNotFoundException("The configured multimodal projector file was not found.", fullPath);
+            return fullPath;
+        }
+
+        var directory = Path.GetDirectoryName(modelPath);
+        return directory is null || !Directory.Exists(directory)
+            ? null
+            : Directory.EnumerateFiles(directory)
+                .Where(path => Path.GetFileName(path).StartsWith("mmproj", StringComparison.OrdinalIgnoreCase))
+                .Where(path => string.Equals(Path.GetExtension(path), ".gguf", StringComparison.OrdinalIgnoreCase))
+                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+    }
+
+    private sealed record LoadedModel(LLamaWeights Weights, MtmdWeights? MtmdWeights, ModelLoadStatus Status) : IDisposable
+    {
+        public void Dispose()
+        {
+            MtmdWeights?.Dispose();
+            Weights.Dispose();
+        }
+    }
 }
 
 public sealed record LlamaLoadOptions(
@@ -480,4 +565,5 @@ public sealed record LlamaLoadOptions(
     float? YarnAttentionFactor = null,
     float? YarnBetaFast = null,
     float? YarnBetaSlow = null,
-    uint? YarnOriginalContext = null);
+    uint? YarnOriginalContext = null,
+    string? MmprojPath = null);

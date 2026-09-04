@@ -29,6 +29,8 @@ public sealed class OpenVinoModelLoader : IDisposable
 
     public bool IsLoaded => llmPipeline is not null || vlmPipeline is not null;
 
+    public bool SupportsImageInput => vlmPipeline is not null;
+
     public string? LoadedModelPath => loadedModelPath;
 
     public string? LoadedDevice => loadedDevice;
@@ -139,6 +141,10 @@ public sealed class OpenVinoModelLoader : IDisposable
             var properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             if (!string.IsNullOrWhiteSpace(cacheDirectory))
                 properties["CACHE_DIR"] = Path.GetFullPath(cacheDirectory.Trim());
+            if (TryGetDynamicQuantizationGroupSize(fullModelPath) is int dynamicQuantizationGroupSize)
+                properties["DYNAMIC_QUANTIZATION_GROUP_SIZE"] = dynamicQuantizationGroupSize.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            if (isVisionLanguageModel && IsQwen35Model(fullModelPath))
+                properties["ATTENTION_BACKEND"] = "SDPA";
             if (isNpu)
             {
                 properties["MAX_PROMPT_LEN"] = npu.MaxPromptLength.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -383,6 +389,42 @@ public sealed class OpenVinoModelLoader : IDisposable
         }
     }
 
+    private static bool IsQwen35Model(string modelPath)
+    {
+        var configPath = Path.Combine(modelPath, "config.json");
+        if (!File.Exists(configPath))
+            return false;
+
+        using var document = JsonDocument.Parse(File.ReadAllText(configPath));
+        return document.RootElement.TryGetProperty("model_type", out var modelType) &&
+            string.Equals(modelType.GetString(), "qwen3_5", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int? TryGetDynamicQuantizationGroupSize(string modelPath)
+    {
+        var configPath = Path.Combine(modelPath, "openvino_config.json");
+        if (!File.Exists(configPath))
+            return null;
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(configPath));
+            if (!document.RootElement.TryGetProperty("quantization_config", out var quantizationConfig) ||
+                !quantizationConfig.TryGetProperty("quantization_configs", out var quantizationConfigs) ||
+                !quantizationConfigs.TryGetProperty("lm_model", out var languageModelConfig) ||
+                !languageModelConfig.TryGetProperty("dq_group_size", out var groupSize) ||
+                groupSize.ValueKind != JsonValueKind.Number ||
+                !groupSize.TryGetInt32(out var value) || value <= 0)
+                return null;
+
+            return value;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     private static void LoadLinuxOpenVinoDependencies(string runtimeDirectory)
     {
         var tbbLibrary = Path.GetFullPath(Path.Combine(
@@ -601,10 +643,22 @@ public sealed class OpenVinoChatSession : IDisposable
     }
 
     public OpenVinoGenerationResult GenerateWithStats(
+        IReadOnlyList<ChatMessage> messages,
+        IReadOnlyList<OpenAiToolDefinition>? tools = null,
+        Action<string>? streamer = null,
+        OpenVinoGenerationOptions? generationOptions = null,
+        Tensor[]? images = null)
+    {
+        var openAiMessages = messages.Select(message => new OpenAiChatMessage(message.Role, message.Content)).ToArray();
+        return GenerateWithStats(openAiMessages, tools, streamer, generationOptions, images);
+    }
+
+    public OpenVinoGenerationResult GenerateWithStats(
         IReadOnlyList<OpenAiChatMessage> messages,
         IReadOnlyList<OpenAiToolDefinition>? tools = null,
         Action<string>? streamer = null,
-        OpenVinoGenerationOptions? generationOptions = null)
+        OpenVinoGenerationOptions? generationOptions = null,
+        Tensor[]? images = null)
     {
         if (messages is null || messages.Count == 0)
             throw new ArgumentException("At least one chat message is required.", nameof(messages));
@@ -613,7 +667,7 @@ public sealed class OpenVinoChatSession : IDisposable
         try
         {
             using var generationConfig = GetGenerationConfig(generationOptions);
-            using var history = CreateChatHistory(messages, tools, generationOptions?.ReasoningEffort);
+            using var history = CreateChatHistory(messages, tools, generationOptions?.ReasoningEffort, images is { Length: > 0 });
             if (llmPipeline is not null)
             {
                 using var results = streamer is null
@@ -630,11 +684,11 @@ public sealed class OpenVinoChatSession : IDisposable
             {
                 if (streamer is null)
                 {
-                    using var nonStreamingResults = vlmPipeline.GenerateWithHistory(history, null, generationConfig);
+                    using var nonStreamingResults = vlmPipeline.GenerateWithHistory(history, images, generationConfig);
                     return CreateGenerationResult(nonStreamingResults.GetText(), nonStreamingResults.GetPerformanceMetrics());
                 }
 
-                using var streamedResults = vlmPipeline.GenerateWithHistory(history, null, generationConfig, text =>
+                using var streamedResults = vlmPipeline.GenerateWithHistory(history, images, generationConfig, text =>
                 {
                     streamer(text);
                     return StreamingStatus.Running;
@@ -653,11 +707,17 @@ public sealed class OpenVinoChatSession : IDisposable
     private static ChatHistory CreateChatHistory(
         IReadOnlyList<OpenAiChatMessage> messages,
         IReadOnlyList<OpenAiToolDefinition>? tools,
-        string? reasoningEffort)
+        string? reasoningEffort,
+        bool hasImages)
     {
         var history = new ChatHistory();
         foreach (var message in messages)
-            history.PushBackJson(SerializeChatMessageForHistory(message));
+        {
+            if (hasImages)
+                history.AddMessage(message.Role, GetPlainHistoryContent(message.Content));
+            else
+                history.PushBackJson(SerializeChatMessageForHistory(message));
+        }
 
         var templateContext = CreateChatTemplateContext(reasoningEffort);
         if (templateContext is not null)
@@ -673,6 +733,19 @@ public sealed class OpenVinoChatSession : IDisposable
         }
 
         return history;
+    }
+
+    private static string GetPlainHistoryContent(object? content)
+    {
+        if (content is JsonElement element && element.ValueKind == JsonValueKind.Array)
+        {
+            return string.Concat(element.EnumerateArray()
+                .Where(part => part.TryGetProperty("type", out var type) && type.GetString() == "text")
+                .Select(part => part.TryGetProperty("text", out var text) ? text.GetString() : null)
+                .Where(text => text is not null));
+        }
+
+        return content?.ToString() ?? string.Empty;
     }
 
     internal static string? CreateChatTemplateContext(string? reasoningEffort)

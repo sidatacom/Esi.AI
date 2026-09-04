@@ -5,7 +5,7 @@
 @using Esi.AI.Models
 @inject IDataService DataService
 @inject NavigationManager NavigationManager
-@inject IModelRuntimeEvents RuntimeEvents
+@inject IClientStateStore StateStore
 
 <div class="provider-shell">
     <header class="provider-header">
@@ -48,20 +48,20 @@
                     <p class="eyebrow">AVAILABLE MODELS</p>
                     <h2 id="models-heading">Geladene Modelle</h2>
                 </div>
-                <span class="provider-count">@loadedModels.Count</span>
+                <span class="provider-count">@LoadedModels.Count</span>
             </div>
-            @if (isRefreshing && loadedModels.Count == 0)
+            @if (isRefreshing && LoadedModels.Count == 0)
             {
                 <p class="provider-empty">Lese den Runtime-Status ...</p>
             }
-            else if (loadedModels.Count == 0)
+            else if (LoadedModels.Count == 0)
             {
                 <div class="provider-empty"><strong>Kein Modell geladen.</strong><span>Lade zuerst ein Modell unter Backends.</span><button class="secondary-button" type="button" @onclick="OpenBackends">Backends öffnen</button></div>
             }
             else
             {
                 <div class="provider-model-list">
-                    @foreach (var model in loadedModels)
+                    @foreach (var model in LoadedModels)
                     {
                         <article class="provider-model @(model.IsLoading ? "provider-model-loading" : "")">
                             <div>
@@ -115,18 +115,15 @@
 </style>
 
 @code {
-    private readonly List<LoadedModelStatus> loadedModels = [];
     private bool isRefreshing;
     private string? errorMessage;
 
-    private bool IsConnected => !string.IsNullOrWhiteSpace(status?.Backend) || loadedModels.Count > 0;
-    private ModelLoadStatus? status;
+    private IReadOnlyList<LoadedModelStatus> LoadedModels => StateStore.LoadedModels.LoadedModels;
+    private bool IsConnected => !string.IsNullOrWhiteSpace(StateStore.LoadedModels.Backend) || LoadedModels.Count > 0;
 
     protected override async Task OnInitializedAsync()
     {
-        RuntimeEvents.LoadedModel_Create += HandleLoadedModelUpdateAsync;
-        RuntimeEvents.LoadedModel_Update += HandleLoadedModelUpdateAsync;
-        RuntimeEvents.LoadedModel_Delete += HandleLoadedModelUpdateAsync;
+        StateStore.Changed += HandleStateChanged;
         await RefreshAsync();
     }
 
@@ -136,14 +133,10 @@
         errorMessage = null;
         try
         {
-            status = await DataService.LoadedModel_ReadAsync();
-            loadedModels.Clear();
-            loadedModels.AddRange(status.LoadedModels);
+            StateStore.ApplyLoadedModels(await DataService.LoadedModel_ReadAsync());
         }
         catch (Exception exception)
         {
-            status = null;
-            loadedModels.Clear();
             errorMessage = exception.Message;
         }
         finally
@@ -156,19 +149,11 @@
 
     private void OpenChat() => NavigationManager.NavigateTo("chats");
 
-    private async Task HandleLoadedModelUpdateAsync(ModelLoadStatus update)
-    {
-        status = update;
-        loadedModels.Clear();
-        loadedModels.AddRange(update.LoadedModels);
-        await InvokeAsync(StateHasChanged);
-    }
+    private void HandleStateChanged() => _ = InvokeAsync(StateHasChanged);
 
     public ValueTask DisposeAsync()
     {
-        RuntimeEvents.LoadedModel_Create -= HandleLoadedModelUpdateAsync;
-        RuntimeEvents.LoadedModel_Update -= HandleLoadedModelUpdateAsync;
-        RuntimeEvents.LoadedModel_Delete -= HandleLoadedModelUpdateAsync;
+        StateStore.Changed -= HandleStateChanged;
         return ValueTask.CompletedTask;
     }
 

@@ -1,7 +1,8 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Runtime.CompilerServices;
 using System.Threading.Channels;
-using Esi.AI.Studio.Client.Services;
+using Esi.AI.Studio.Contracts;
 using Esi.AI.Studio.Data;
 using Esi.AI.Core.Chat;
 using Esi.AI.Core.ModelLoading;
@@ -12,13 +13,25 @@ namespace Esi.AI.Studio.Services;
 
 public sealed class DataService(
     IDbContextFactory<ApplicationDbContext> dbContextFactory,
-    ModelLibraryService modelLibrary,
+    ILocalModelCatalog localModelCatalog,
+    IModelDirectoryCatalog modelDirectoryCatalog,
+    IHuggingFaceCatalog huggingFaceCatalog,
+    IModelDownloadManager downloadManager,
     OpenVinoDiagnosticsService openVinoDiagnostics,
     OpenVinoDriverInstaller openVinoInstaller,
     ModelRuntime modelRuntime,
     BackendPrerequisiteProvisioner? backendPrerequisites = null,
-    BackendRequirementMonitor? requirementMonitor = null) : IDataService
+    BackendRequirementMonitor? requirementMonitor = null,
+    BackendRuntimeInstaller? backendRuntimeInstaller = null,
+    IBackendRuntimeStatusPublisher? backendRuntimePublisher = null,
+    IInferenceService? inferenceService = null) : IDataService
 {
+    private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
+    private readonly IInferenceService effectiveInferenceService = inferenceService ?? new InferenceService(modelRuntime, new InferenceScheduler());
+
     #region BackendRequirements
 
     public Task<BackendRequirementState> GetBackendRequirementStateAsync(CancellationToken cancellationToken = default) =>
@@ -30,7 +43,7 @@ public sealed class DataService(
 
     public async Task<IReadOnlyList<LocalModel>> LocalModel_ReadAsync(CancellationToken cancellationToken = default)
     {
-        var scannedModels = await modelLibrary.ScanLocalModelsAsync(cancellationToken);
+        var scannedModels = await localModelCatalog.ScanLocalModelsAsync(cancellationToken);
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var metadata = await db.ModelMetadata
             .ToDictionaryAsync(item => item.ModelPath, StringComparer.OrdinalIgnoreCase, cancellationToken);
@@ -103,13 +116,13 @@ public sealed class DataService(
         return modelIds;
     }
 
-    public IReadOnlyList<string> GetModelDirectories() => modelLibrary.GetModelDirectories();
+    public IReadOnlyList<string> GetModelDirectories() => modelDirectoryCatalog.GetModelDirectories();
 
     public Task<IReadOnlyList<string>> ModelDirectory_ReadAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(GetModelDirectories());
 
     public async Task<IReadOnlyList<HuggingFaceModel>> SearchModelsAsync(HuggingFaceSearchRequest request, CancellationToken cancellationToken = default) =>
-        (await modelLibrary.SearchHuggingFaceAsync(request, cancellationToken))
+        (await huggingFaceCatalog.SearchHuggingFaceAsync(request, cancellationToken))
         .Select(model => new HuggingFaceModel(
             model.Id,
             model.Author,
@@ -149,7 +162,7 @@ public sealed class DataService(
     {
         var normalizedPath = Path.GetFullPath(modelPath.Trim());
         var normalizedModelId = huggingFaceModelId.Trim();
-        var metadata = await modelLibrary.GetHuggingFaceModelMetadataAsync(normalizedModelId, cancellationToken);
+        var metadata = await huggingFaceCatalog.GetHuggingFaceModelMetadataAsync(normalizedModelId, cancellationToken);
         var compatibleBackends = ModelBackendCompatibility.FromHuggingFace(metadata.LibraryName, metadata.Tags);
 
         await using (var db = await dbContextFactory.CreateDbContextAsync(cancellationToken))
@@ -211,7 +224,7 @@ public sealed class DataService(
         return await LocalModel_ReadAsync(cancellationToken);
     }
 
-    private bool IsWithinModelDirectory(string modelPath) => modelLibrary.GetModelDirectories()
+    private bool IsWithinModelDirectory(string modelPath) => modelDirectoryCatalog.GetModelDirectories()
         .Select(Path.GetFullPath)
         .Any(directory =>
         {
@@ -234,27 +247,30 @@ public sealed class DataService(
     #region ModelDownloads
 
     public Task<Guid> ModelDownload_CreateAsync(ModelDownloadRequest request, CancellationToken cancellationToken = default) =>
-        modelLibrary.StartDownloadAsync(request.ModelId, request.FileName, request.Library, cancellationToken);
+        downloadManager.StartDownloadAsync(request.ModelId, request.FileName, request.Library, cancellationToken);
 
     public Task<IReadOnlyList<ModelDownloadOption>> ModelDownload_ReadOptionsAsync(string modelId, string library = "gguf", CancellationToken cancellationToken = default) =>
-        modelLibrary.GetDownloadOptionsAsync(modelId, library, cancellationToken);
+        downloadManager.GetDownloadOptionsAsync(modelId, library, cancellationToken);
 
     public Task ModelDownload_UpdateAsync(Guid id, bool paused, CancellationToken cancellationToken = default) =>
-        paused ? modelLibrary.PauseDownloadAsync(id, cancellationToken) : modelLibrary.ResumeDownloadAsync(id, cancellationToken);
+        paused ? downloadManager.PauseDownloadAsync(id, cancellationToken) : downloadManager.ResumeDownloadAsync(id, cancellationToken);
 
     public Task ModelDownload_DeleteAsync(Guid id, CancellationToken cancellationToken = default) =>
-        modelLibrary.CancelDownloadAsync(id, cancellationToken);
+        downloadManager.CancelDownloadAsync(id, cancellationToken);
+
+    public Task ModelDownload_DeleteCompletedAsync(CancellationToken cancellationToken = default) =>
+        downloadManager.DeleteCompletedDownloadsAsync(cancellationToken);
 
     public DownloadStatus? ModelDownload_Read(Guid id)
     {
-        var status = modelLibrary.GetDownload(id);
+        var status = downloadManager.GetDownload(id);
         return status is null ? null : new DownloadStatus(status.Id, status.ModelId, status.FileName, status.DestinationPath,
             status.BytesDownloaded, status.TotalBytes, status.Completed, status.Error, status.Paused, status.Queued, status.Files);
     }
 
     /// <summary>Returns the current model download state for SignalR synchronization.</summary>
     public IReadOnlyList<DownloadStatus> ModelDownload_Read() =>
-        modelLibrary.GetDownloads().Select(status => new DownloadStatus(
+        downloadManager.GetDownloads().Select(status => new DownloadStatus(
             status.Id,
             status.ModelId,
             status.FileName,
@@ -334,6 +350,59 @@ public sealed class DataService(
             .OrderBy(model => model.Name)
             .ToArrayAsync(cancellationToken);
         return models.Select(ToModel).ToArray();
+    }
+
+    /// <summary>Synchronizes and returns internal models together with persisted load configurations.</summary>
+    public async Task<ApplicationModelCatalog> ApplicationModelCatalog_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        var models = await Model_UpdateAsync(cancellationToken);
+        var configurations = await ModelConfiguration_ReadAsync(cancellationToken);
+        return new ApplicationModelCatalog(models, configurations);
+    }
+
+    /// <summary>Loads an internal model using the persisted configuration selected by its internal ID.</summary>
+    public async Task<ModelLoadStatus> LoadConfiguredModelAsync(
+        ApplicationModelLoadRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.ModelId == Guid.Empty)
+            throw new ArgumentException("ModelId is required.", nameof(request));
+        if (request.ConfigurationId == Guid.Empty)
+            throw new ArgumentException("ConfigurationId is required.", nameof(request));
+
+        var model = (await Model_UpdateAsync(cancellationToken))
+            .SingleOrDefault(item => item.Id == request.ModelId)
+            ?? throw new KeyNotFoundException($"The model '{request.ModelId}' was not found.");
+        var configuration = await ModelConfiguration_ReadAsync(request.ConfigurationId, cancellationToken)
+            ?? throw new KeyNotFoundException($"The model configuration '{request.ConfigurationId}' was not found.");
+        if (!string.Equals(Path.GetFullPath(model.Path), Path.GetFullPath(configuration.ModelPath), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("The selected model configuration does not belong to the selected model.");
+
+        switch (configuration.Backend)
+        {
+            case ConfigurationBackend.Llama:
+                await LoadModelAsync(DeserializeConfiguration<LoadModelRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, cancellationToken);
+                break;
+            case ConfigurationBackend.OpenVino:
+                await modelRuntime.LoadAsync(DeserializeConfiguration<OpenVinoLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, cancellationToken);
+                break;
+            case ConfigurationBackend.Vllm:
+            case ConfigurationBackend.Sglang:
+                await LoadPythonModelAsync(DeserializeConfiguration<PythonInferenceLoadRequest>(configuration.ConfigurationJson) with
+                {
+                    ModelPath = model.Path,
+                    Backend = configuration.Backend
+                }, cancellationToken);
+                break;
+            case ConfigurationBackend.DotLlm:
+                await LoadDotLlmModelAsync(DeserializeConfiguration<DotLlmLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, cancellationToken);
+                break;
+            default:
+                throw new ArgumentException("The model configuration backend is not supported.", nameof(request));
+        }
+
+        return modelRuntime.LoadedModel_Read();
     }
 
     public async Task<IReadOnlyList<BackendModel>> BackendModel_ReadAsync(ConfigurationBackend backend, CancellationToken cancellationToken = default)
@@ -647,6 +716,61 @@ public sealed class DataService(
 
     #region BackendDiagnostics
 
+    public Task<IReadOnlyList<BackendRuntimeStatus>> BackendRuntime_ReadAsync(CancellationToken cancellationToken = default) =>
+        backendRuntimeInstaller is null
+            ? Task.FromResult<IReadOnlyList<BackendRuntimeStatus>>([])
+            : backendRuntimeInstaller.ReadAsync(cancellationToken);
+
+    public async Task<BackendRuntimeStatus> BackendRuntime_CreateAsync(BackendRuntimeInstallRequest request, CancellationToken cancellationToken = default)
+    {
+        if (backendRuntimeInstaller is null)
+            return new(request.PackageId, ConfigurationBackend.Llama, string.Empty, string.Empty, string.Empty, BackendRuntimeState.Failed,
+                "Backend runtime installation is not configured.", false, true, DateTimeOffset.UtcNow);
+
+        var package = await backendRuntimeInstaller.FindPackageByIdAsync(request.PackageId, cancellationToken).ConfigureAwait(false);
+        if (package is null)
+            return new(request.PackageId, ConfigurationBackend.Llama, string.Empty, string.Empty, string.Empty, BackendRuntimeState.Failed,
+                "The selected backend runtime package is not available in the gallery.", false, true, DateTimeOffset.UtcNow);
+
+        var installing = new BackendRuntimeStatus(package.Id, package.Backend, package.Route, package.RuntimeIdentifier, package.Version,
+            BackendRuntimeState.Installing, "Downloading and verifying backend runtime...", false, package.RequiresRestart, DateTimeOffset.UtcNow);
+        if (backendRuntimePublisher is not null)
+            await backendRuntimePublisher.PublishCreateAsync(installing, cancellationToken).ConfigureAwait(false);
+
+        var result = await backendRuntimeInstaller.InstallAsync(new BackendRuntimeInstallRequest(package.Id), cancellationToken).ConfigureAwait(false);
+        if (backendRuntimePublisher is not null)
+        {
+            if (result.IsInstalled)
+                await backendRuntimePublisher.PublishUpdateAsync(result, cancellationToken).ConfigureAwait(false);
+            else
+                await backendRuntimePublisher.PublishDeleteAsync(result, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (result.IsInstalled)
+            requirementMonitor?.RequestRefresh();
+        return result;
+    }
+
+    public async Task<BackendRuntimeStatus> BackendRuntime_UpdateAsync(string packageId, CancellationToken cancellationToken = default)
+    {
+        var status = (await BackendRuntime_ReadAsync(cancellationToken).ConfigureAwait(false))
+            .FirstOrDefault(item => item.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase));
+        if (status is null)
+            return new(packageId, ConfigurationBackend.Llama, string.Empty, string.Empty, string.Empty, BackendRuntimeState.Failed,
+                "The backend runtime package was not found.", false, true, DateTimeOffset.UtcNow);
+        if (backendRuntimePublisher is not null)
+            await backendRuntimePublisher.PublishUpdateAsync(status, cancellationToken).ConfigureAwait(false);
+        return status;
+    }
+
+    public async Task BackendRuntime_DeleteAsync(string packageId, CancellationToken cancellationToken = default)
+    {
+        var status = (await BackendRuntime_ReadAsync(cancellationToken).ConfigureAwait(false))
+            .FirstOrDefault(item => item.PackageId.Equals(packageId, StringComparison.OrdinalIgnoreCase));
+        if (status is not null && backendRuntimePublisher is not null)
+            await backendRuntimePublisher.PublishDeleteAsync(status, cancellationToken).ConfigureAwait(false);
+    }
+
     public Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default)
     {
         var result = openVinoDiagnostics.Diagnose();
@@ -688,6 +812,19 @@ public sealed class DataService(
 
     public async Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null)
     {
+        if (backend == ConfigurationBackend.Llama)
+        {
+            var route = devices?.FirstOrDefault()?.Split(':', 2)[0] ?? "cpu";
+            var package = backendRuntimeInstaller is null
+                ? null
+                : await backendRuntimeInstaller.FindPackageAsync(backend, route, cancellationToken).ConfigureAwait(false);
+            if (package is null)
+                return new(false, "No verified LLama runtime package is configured for this route.", "Configure a backend gallery package before installing this requirement.");
+
+            var result = await BackendRuntime_CreateAsync(new BackendRuntimeInstallRequest(package.Id), cancellationToken).ConfigureAwait(false);
+            return new(result.IsInstalled, result.Message, $"Package: {result.PackageId}{Environment.NewLine}Version: {result.Version}{Environment.NewLine}Route: {result.Route}");
+        }
+
         if (backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
             return new(false, "This backend has no user-space preparation action.", string.Empty);
 
@@ -737,7 +874,7 @@ public sealed class DataService(
         if (chat is null)
             return null;
 
-        var generation = await GenerateChatWithStatsAsync(chat, request, backend, null, cancellationToken);
+        var generation = await effectiveInferenceService.GenerateAsync(chat, request, backend, cancellationToken: cancellationToken);
         return await Chat_UpdateCoreAsync(id, request.Content.Trim(), generation, request.ModelPath, backend, cancellationToken);
     }
 
@@ -756,7 +893,7 @@ public sealed class DataService(
 
         var deltas = Channel.CreateUnbounded<string>();
         var generationTask = Task.Factory.StartNew(
-            () => GenerateChatWithStatsAsync(
+            () => effectiveInferenceService.GenerateAsync(
                 chat,
                 request,
                 backend,
@@ -785,60 +922,14 @@ public sealed class DataService(
 
     #region Helpers
 
-    private async Task<GenerationResult> GenerateChatWithStatsAsync(
-        PersistedChat chat,
-        ChatExchangeRequest request,
-        string backend,
-        Func<string, Task>? onDelta,
-        CancellationToken cancellationToken)
-    {
-        var content = request.Content.Trim();
-        if (string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase))
-        {
-            var modelPath = Path.GetFullPath(request.ModelPath!);
-            var openVinoStatus = modelRuntime.GetOpenVinoStatus();
-            if (!openVinoStatus.IsModelLoaded)
-                throw new InvalidOperationException("The selected OpenVINO model is not loaded.");
-            if (!string.Equals(openVinoStatus.ModelPath, modelPath, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"The selected OpenVINO model does not match the loaded model. Loaded: '{openVinoStatus.ModelPath}', selected: '{modelPath}'.");
-
-            using var openVinoSession = modelRuntime.CreateOpenVinoChatSession();
-            var openVinoGeneration = openVinoSession.GenerateWithStats(content, delta =>
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (onDelta is not null)
-                    onDelta(delta).GetAwaiter().GetResult();
-            });
-            return new GenerationResult(openVinoGeneration.Text, openVinoGeneration.TokenCount, TimeSpan.Zero, openVinoGeneration.TokensPerSecond);
-        }
-
-        var messages = chat.Messages.Select(message => new ChatMessage(message.Role, message.Content))
-            .Append(new ChatMessage("user", content)).ToArray();
-        if (string.Equals(backend, "vLLM", StringComparison.OrdinalIgnoreCase) || string.Equals(backend, "SGLang", StringComparison.OrdinalIgnoreCase))
-        {
-            using var pythonSession = modelRuntime.CreatePythonChatSession();
-            return await pythonSession.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (string.Equals(backend, "dotLLM", StringComparison.OrdinalIgnoreCase))
-        {
-            using var dotLlmSession = modelRuntime.CreateDotLlmChatSession();
-            return await dotLlmSession.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (!string.Equals(Path.GetExtension(request.ModelPath), ".gguf", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("LLama chat requires a .gguf model path.", nameof(request));
-
-        using var session = modelRuntime.CreateLlamaChatSession("You are a helpful assistant.", request.ModelPath);
-        return await session.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
-    }
-
     private static string ValidateChatBackend(string? backend)
     {
         var normalizedBackend = backend?.Trim();
         if (normalizedBackend is null ||
             (!string.Equals(normalizedBackend, "OpenVINO", StringComparison.OrdinalIgnoreCase) &&
              !string.Equals(normalizedBackend, "Vulkan", StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(normalizedBackend, "CUDA", StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(normalizedBackend, "SYCL", StringComparison.OrdinalIgnoreCase) &&
              !string.Equals(normalizedBackend, "CPU", StringComparison.OrdinalIgnoreCase) &&
              !string.Equals(normalizedBackend, "vLLM", StringComparison.OrdinalIgnoreCase) &&
              !string.Equals(normalizedBackend, "SGLang", StringComparison.OrdinalIgnoreCase) &&
@@ -870,6 +961,19 @@ public sealed class DataService(
     private static ModelConfiguration ToConfiguration(ModelConfigurationEntity entity) =>
         new(entity.Id, entity.Name, entity.Description, entity.ModelPath, entity.IsDefault, entity.SchemaVersion,
             entity.ConfigurationJson, entity.CreatedAtUtc, entity.UpdatedAtUtc, entity.Backend);
+
+    private static T DeserializeConfiguration<T>(string configurationJson)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<T>(configurationJson, ConfigurationJsonOptions)
+                ?? throw new ArgumentException("The selected model configuration is empty.", nameof(configurationJson));
+        }
+        catch (JsonException exception)
+        {
+            throw new ArgumentException("The selected model configuration is invalid.", nameof(configurationJson), exception);
+        }
+    }
 
     private static Model ToModel(ModelEntity entity) =>
         new(entity.Id, entity.Name, entity.Path, entity.SizeInBytes, entity.LastWriteTimeUtc, entity.ConfigurationId);

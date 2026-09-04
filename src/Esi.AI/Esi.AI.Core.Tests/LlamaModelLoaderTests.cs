@@ -1,4 +1,6 @@
+using Esi.AI.Core.Chat;
 using Esi.AI.Core.ModelLoading;
+using Esi.AI.Models;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Esi.AI.Core.Tests;
@@ -38,5 +40,47 @@ public sealed class LlamaModelLoaderTests
         {
             File.Delete(filePath);
         }
+    }
+
+    [TestMethod]
+    public async Task LoadAsync_SyclRuntimeMissing_ThrowsBeforeNativeModelLoad()
+    {
+        var applicationDirectory = Path.Combine(Path.GetTempPath(), $"esi-ai-sycl-{Guid.NewGuid():N}");
+        var modelPath = Path.Combine(Path.GetTempPath(), $"esi-ai-sycl-{Guid.NewGuid():N}.gguf");
+        await File.WriteAllTextAsync(modelPath, "not a GGUF model");
+
+        try
+        {
+            using var loader = new LlamaModelLoader(applicationDirectory);
+
+            var exception = await Assert.ThrowsExactlyAsync<InvalidOperationException>(() => loader.LoadAsync(modelPath, "SYCL", 20));
+
+            StringAssert.Contains(exception.Message, "SYCL 16 native runtime");
+            Assert.IsFalse(loader.GetStatus().IsModelLoaded);
+        }
+        finally
+        {
+            File.Delete(modelPath);
+            if (Directory.Exists(applicationDirectory))
+                Directory.Delete(applicationDirectory, recursive: true);
+        }
+    }
+
+    [TestMethod]
+    public void BuildMultimodalContent_WhenImageIsBetweenTextParts_PreservesImagePosition()
+    {
+        var message = new ChatMessage(
+            "user",
+            "beforeafter",
+            [new ChatImage("image/png", [1])],
+            [
+                new ChatMessageContentPart("before"),
+                new ChatMessageContentPart(ImageIndex: 0),
+                new ChatMessageContentPart("after")
+            ]);
+
+        var content = LlamaChatSession.BuildMultimodalContent(message, "<media>");
+
+        Assert.AreEqual("before<media>after", content);
     }
 }

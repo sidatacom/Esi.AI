@@ -15,8 +15,14 @@ public sealed class ModelRuntime : IHostedService, IDisposable
     private readonly OpenVinoModelLoader openVino;
     private readonly PythonInferenceServer python;
     private readonly DotLlmInProcessRuntime dotLlm;
+    private readonly LlamaRuntimeAdapter llamaAdapter;
+    private readonly OpenVinoRuntimeAdapter openVinoAdapter;
+    private readonly PythonRuntimeAdapter pythonAdapter;
+    private readonly DotLlmRuntimeAdapter dotLlmAdapter;
+    private readonly BackendRuntimeRegistry runtimeRegistry;
     private readonly BackendPrerequisiteProvisioner prerequisites;
     private readonly IModelRuntimeStatusPublisher statusPublisher;
+    private readonly ModelLifecycleCoordinator lifecycleCoordinator;
     private readonly ConcurrentDictionary<string, PendingModel> pendingModels = new(StringComparer.OrdinalIgnoreCase);
 
     public ModelRuntime()
@@ -35,14 +41,21 @@ public sealed class ModelRuntime : IHostedService, IDisposable
         PythonInferenceServer python,
         DotLlmInProcessRuntime dotLlm,
         BackendPrerequisiteProvisioner? prerequisites = null,
-        IModelRuntimeStatusPublisher? statusPublisher = null)
+        IModelRuntimeStatusPublisher? statusPublisher = null,
+        ModelLifecycleCoordinator? lifecycleCoordinator = null)
     {
         this.llama = llama ?? throw new ArgumentNullException(nameof(llama));
         this.openVino = openVino ?? throw new ArgumentNullException(nameof(openVino));
         this.python = python ?? throw new ArgumentNullException(nameof(python));
         this.dotLlm = dotLlm ?? throw new ArgumentNullException(nameof(dotLlm));
+        llamaAdapter = new LlamaRuntimeAdapter(this.llama);
+        openVinoAdapter = new OpenVinoRuntimeAdapter(this.openVino);
+        pythonAdapter = new PythonRuntimeAdapter(this.python);
+        dotLlmAdapter = new DotLlmRuntimeAdapter(this.dotLlm);
+        runtimeRegistry = new BackendRuntimeRegistry([llamaAdapter, openVinoAdapter, pythonAdapter, dotLlmAdapter]);
         this.prerequisites = prerequisites ?? new BackendPrerequisiteProvisioner();
         this.statusPublisher = statusPublisher ?? NoOpModelRuntimeStatusPublisher.Instance;
+        this.lifecycleCoordinator = lifecycleCoordinator ?? new ModelLifecycleCoordinator();
     }
 
     /// <inheritdoc />
@@ -85,19 +98,29 @@ public sealed class ModelRuntime : IHostedService, IDisposable
 
     public OpenVinoModelLoadStatus GetOpenVinoStatus() => openVino.GetStatus();
 
+    /// <summary>Returns the current lifecycle state for all model loading operations.</summary>
+    public IReadOnlyList<ModelLifecycleState> ReadLifecycleStates() => lifecycleCoordinator.ReadAll();
+
+    public bool SupportsImageInput(string backend, string? modelPath)
+    {
+        try
+        {
+            return runtimeRegistry.Resolve(backend).SupportsImageInput(modelPath);
+        }
+        catch (ArgumentException)
+        {
+            return false;
+        }
+    }
+
     public Task LoadAsync(LoadModelRequest request, CancellationToken cancellationToken = default) =>
         TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.Llama, request.Backend, async () =>
         {
-            await prerequisites.PrepareAsync(ConfigurationBackend.Llama, cancellationToken: cancellationToken).ConfigureAwait(false);
-            var advanced = request.Advanced;
-            await llama.LoadAsync(request.ModelPath, request.Backend, request.GpuLayerCount, request.ContextSize,
-                request.VulkanDeviceWeights,
-                new LlamaLoadOptions(advanced.MainGpu, advanced.SeqMax, advanced.RecurrentRollbackSnapshots, advanced.UseMemorymap,
-                    advanced.UseDirectIO, advanced.UseMemoryLock, advanced.Threads, advanced.BatchThreads, advanced.BatchSize,
-                    advanced.UBatchSize, advanced.Embeddings, advanced.NoKqvOffload, advanced.FlashAttention, advanced.VocabOnly,
-                    advanced.OpOffload, advanced.SwaFull, advanced.KVUnified, advanced.RopeFrequencyBase, advanced.RopeFrequencyScale,
-                    advanced.YarnExtrapolationFactor, advanced.YarnAttentionFactor, advanced.YarnBetaFast, advanced.YarnBetaSlow,
-                    advanced.YarnOriginalContext), cancellationToken).ConfigureAwait(false);
+            await prerequisites.PrepareAsync(
+                ConfigurationBackend.Llama,
+                cancellationToken: cancellationToken,
+                devices: [$"{request.Backend.ToLowerInvariant()}:0"]).ConfigureAwait(false);
+            await llamaAdapter.LoadAsync(request, cancellationToken).ConfigureAwait(false);
         });
 
     public Task LoadAsync(
@@ -106,17 +129,7 @@ public sealed class ModelRuntime : IHostedService, IDisposable
         TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.OpenVino, request.Device, async () =>
         {
             await prerequisites.PrepareAsync(ConfigurationBackend.OpenVino, cancellationToken: cancellationToken).ConfigureAwait(false);
-            await openVino.LoadAsync(
-                request.ModelPath,
-                request.Device,
-                cancellationToken,
-                new OpenVinoGenerationOptions(request.MaxNewTokens, request.Temperature, request.TopP, request.DoSample, request.TopK, request.RepetitionPenalty),
-                request.CacheDirectory,
-                new OpenVinoNpuOptions(
-                    request.Npu?.MaxPromptLength ?? 1024,
-                    request.Npu?.MinResponseLength ?? 128,
-                    request.Npu?.PrefillHint ?? "DYNAMIC",
-                    request.Npu?.GenerateHint ?? "FAST_COMPILE")).ConfigureAwait(false);
+            await openVinoAdapter.LoadAsync(request, cancellationToken).ConfigureAwait(false);
         });
 
     public Task LoadAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default) =>
@@ -125,13 +138,13 @@ public sealed class ModelRuntime : IHostedService, IDisposable
             ConfigurationBackend.Vllm => "vLLM",
             ConfigurationBackend.Sglang => "SGLang",
             _ => request.Backend.ToString()
-        }, () => python.LoadAsync(request, cancellationToken));
+        }, () => pythonAdapter.LoadAsync(request, cancellationToken));
 
     public Task LoadAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default) =>
         TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.DotLlm, "dotLLM / In-Process", async () =>
         {
             await prerequisites.PrepareAsync(ConfigurationBackend.DotLlm, cancellationToken: cancellationToken).ConfigureAwait(false);
-            await dotLlm.LoadAsync(request, cancellationToken).ConfigureAwait(false);
+            await dotLlmAdapter.LoadAsync(request, cancellationToken).ConfigureAwait(false);
         });
 
     public Task LoadLlamaAsync(
@@ -211,15 +224,22 @@ public sealed class ModelRuntime : IHostedService, IDisposable
     {
         var key = $"{backend}|{modelPath}";
         pendingModels[key] = new PendingModel(modelPath, backend, runtime);
+        lifecycleCoordinator.Begin(modelPath, backend, runtime);
         using var monitorCancellation = new CancellationTokenSource();
         Task monitorTask = Task.CompletedTask;
         var completed = false;
+        Exception? loadFailure = null;
         try
         {
             await statusPublisher.LoadedModel_CreateAsync(LoadedModel_Read()).ConfigureAwait(false);
             monitorTask = PublishChangedStatusesAsync(LoadedModel_Read(), monitorCancellation.Token);
             await load().ConfigureAwait(false);
             completed = true;
+        }
+        catch (Exception exception)
+        {
+            loadFailure = exception;
+            throw;
         }
         finally
         {
@@ -232,6 +252,10 @@ public sealed class ModelRuntime : IHostedService, IDisposable
             {
             }
             pendingModels.TryRemove(key, out _);
+            if (completed)
+                lifecycleCoordinator.Complete(modelPath, backend, runtime);
+            else if (loadFailure is not null)
+                lifecycleCoordinator.Fail(modelPath, backend, runtime, loadFailure.Message);
             var status = LoadedModel_Read();
             if (completed)
                 await statusPublisher.LoadedModel_UpdateAsync(status).ConfigureAwait(false);

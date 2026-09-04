@@ -1,7 +1,7 @@
-using Esi.AI.Studio.Client.Services;
 using Esi.AI.Core.Chat;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
+using Esi.AI.Studio.Contracts;
 using Esi.AI.Studio.Services;
 using Microsoft.AspNetCore.SignalR;
 
@@ -9,10 +9,9 @@ namespace Esi.AI.Studio.Hubs;
 
 public sealed class DataHub(
     DataService dataService,
-    OpenVinoDiagnosticsService openVinoDiagnostics,
-    OpenVinoDriverInstaller openVinoInstaller,
-    ModelLibraryService modelLibrary,
-    BackendRequirementMonitor requirementMonitor) : Hub
+    IBackendDiagnosticsService backendDiagnostics,
+    IModelDirectoryCatalog modelDirectories,
+    IBackendRequirementState requirementMonitor) : Hub
 {
     public override async Task OnConnectedAsync()
     {
@@ -20,6 +19,8 @@ public sealed class DataHub(
         foreach (var download in dataService.ModelDownload_Read())
             await Clients.Caller.SendAsync("ModelDownload_Create", new ModelDownloadUpdate(download), Context.ConnectionAborted);
         await Clients.Caller.SendAsync("LoadedModel_Update", await dataService.LoadedModel_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
+        foreach (var runtime in await dataService.BackendRuntime_ReadAsync(Context.ConnectionAborted))
+            await Clients.Caller.SendAsync("BackendRuntime_Create", runtime, Context.ConnectionAborted);
     }
 
     public Task<IReadOnlyList<ModelSettings>> ModelSettings_Read() => dataService.ModelSettings_ReadAsync(Context.ConnectionAborted);
@@ -74,31 +75,7 @@ public sealed class DataHub(
     public Task<ModelLoadStatus> UnloadModelByPathForBackend(string modelPath, ConfigurationBackend backend) =>
         dataService.UnloadModelAsync(modelPath, backend, Context.ConnectionAborted);
 
-    public OpenVinoDiagnosticsDto GetOpenVinoDiagnostics()
-    {
-        var result = openVinoDiagnostics.Diagnose();
-        return new OpenVinoDiagnosticsDto
-        {
-            IsGpuReady = result.IsGpuReady,
-            IsNpuReady = result.IsNpuReady,
-            Devices = result.Devices.Select(device => new OpenVinoDeviceDto
-            {
-                Id = device.Id,
-                Name = device.Name,
-                IsCompatible = device.IsCompatible,
-                Detail = device.Detail
-            }).ToArray(),
-            Checks = result.Checks.Select(check => new OpenVinoDiagnosticCheckDto
-            {
-                Name = check.Name,
-                Id = check.Id,
-                IsAvailable = check.IsAvailable,
-                Detail = check.Detail,
-                CanSolve = check.CanSolve
-            }).ToArray(),
-            Error = result.Error
-        };
-    }
+    public OpenVinoDiagnosticsDto GetOpenVinoDiagnostics() => backendDiagnostics.GetOpenVinoDiagnostics();
 
     public Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisites(ConfigurationBackend backend, string pythonExecutable, IReadOnlyList<string>? devices) =>
         dataService.GetBackendPrerequisitesAsync(backend, pythonExecutable, Context.ConnectionAborted, devices);
@@ -106,10 +83,40 @@ public sealed class DataHub(
     public Task<BackendRequirementState> GetBackendRequirementState() =>
         Task.FromResult(requirementMonitor.Current);
 
+    public Task<IReadOnlyList<BackendRuntimeStatus>> BackendRuntime_Read() =>
+        dataService.BackendRuntime_ReadAsync(Context.ConnectionAborted);
+
+    public Task<BackendRuntimeStatus> BackendRuntime_Create(BackendRuntimeInstallRequest request)
+    {
+        var remoteAddress = Context.GetHttpContext()?.Connection.RemoteIpAddress;
+        if (remoteAddress is null || !System.Net.IPAddress.IsLoopback(remoteAddress))
+        {
+            return Task.FromResult(new BackendRuntimeStatus(
+                request.PackageId,
+                ConfigurationBackend.Llama,
+                string.Empty,
+                string.Empty,
+                string.Empty,
+                BackendRuntimeState.Failed,
+                "Backend runtime installation is only available from the local machine.",
+                false,
+                true,
+                DateTimeOffset.UtcNow));
+        }
+
+        return dataService.BackendRuntime_CreateAsync(request, Context.ConnectionAborted);
+    }
+
+    public Task<BackendRuntimeStatus> BackendRuntime_Update(string packageId) =>
+        dataService.BackendRuntime_UpdateAsync(packageId, Context.ConnectionAborted);
+
+    public Task BackendRuntime_Delete(string packageId) =>
+        dataService.BackendRuntime_DeleteAsync(packageId, Context.ConnectionAborted);
+
     public async Task<BackendPrerequisiteSolveResult> PrepareBackend(ConfigurationBackend backend, string pythonExecutable, IReadOnlyList<string>? devices)
     {
-        if (backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
-            return new(false, "Only Python backends can be prepared from this tile.", string.Empty);
+        if (backend is not (ConfigurationBackend.Llama or ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
+            return new(false, "This backend has no preparation action from this tile.", string.Empty);
 
         var result = await dataService.PrepareBackendAsync(backend, pythonExecutable, Context.ConnectionAborted, devices);
         requirementMonitor.RequestRefresh();
@@ -129,20 +136,7 @@ public sealed class DataHub(
             };
         }
 
-        var result = checkId switch
-        {
-            "level-zero-loader" or "intel-level-zero-gpu" => await openVinoInstaller.InstallAsync(Context.ConnectionAborted),
-            "render-permissions" => await openVinoInstaller.AddUserToRenderGroupsAsync(Context.ConnectionAborted),
-            _ => new OpenVinoInstallResult(false, "This diagnostic cannot be repaired automatically.", string.Empty)
-        };
-        return new OpenVinoSolveResultDto
-        {
-            Succeeded = result.Succeeded,
-            Message = result.Message,
-            Output = string.IsNullOrWhiteSpace(result.Output)
-                ? "No installer output was returned by the server."
-                : result.Output
-        };
+        return await backendDiagnostics.SolveOpenVinoDiagnosticAsync(checkId, Context.ConnectionAborted);
     }
 
     public Task<OpenVinoLoadResultDto> LoadOpenVinoModel(OpenVinoLoadRequest request) =>
@@ -163,7 +157,7 @@ public sealed class DataHub(
     public Task<IReadOnlyList<LocalModel>> LocalModel_Delete(ModelDeletionRequest request) =>
         dataService.LocalModel_DeleteAsync(request, Context.ConnectionAborted);
 
-    public IReadOnlyList<string> ModelDirectory_Read() => modelLibrary.GetModelDirectories();
+    public IReadOnlyList<string> ModelDirectory_Read() => modelDirectories.GetModelDirectories();
 
     public async Task<IReadOnlyList<HuggingFaceModel>> SearchModels(HuggingFaceSearchRequest request) =>
         await dataService.SearchModelsAsync(request, Context.ConnectionAborted);
@@ -179,6 +173,9 @@ public sealed class DataHub(
 
     public Task ModelDownload_Delete(Guid id) =>
         dataService.ModelDownload_DeleteAsync(id, Context.ConnectionAborted);
+
+    public Task ModelDownload_DeleteCompleted() =>
+        dataService.ModelDownload_DeleteCompletedAsync(Context.ConnectionAborted);
 
     public Task<DownloadStatus?> ModelDownload_ReadById(Guid id) =>
         Task.FromResult(dataService.ModelDownload_Read(id));

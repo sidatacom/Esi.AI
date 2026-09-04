@@ -1,9 +1,9 @@
 using Esi.AI.Models;
-using Esi.AI.Studio.Client.Services;
+using Esi.AI.Studio.Contracts;
 
 namespace Esi.AI.Studio.Services;
 
-internal sealed class ServerModelDownloadEvents : IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents
+internal sealed class ServerModelDownloadEvents : IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents
 {
     public event Func<ModelDownloadUpdate, Task>? ModelDownload_Create
     {
@@ -42,6 +42,24 @@ internal sealed class ServerModelDownloadEvents : IModelDownloadEvents, IModelRu
     }
 
     public event Func<BackendRequirementState, Task>? BackendRequirementStateUpdated
+    {
+        add { }
+        remove { }
+    }
+
+    public event Func<BackendRuntimeStatus, Task>? BackendRuntime_Create
+    {
+        add { }
+        remove { }
+    }
+
+    public event Func<BackendRuntimeStatus, Task>? BackendRuntime_Update
+    {
+        add { }
+        remove { }
+    }
+
+    public event Func<BackendRuntimeStatus, Task>? BackendRuntime_Delete
     {
         add { }
         remove { }

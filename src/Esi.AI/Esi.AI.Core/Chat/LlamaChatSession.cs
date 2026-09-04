@@ -1,6 +1,7 @@
 using LLama;
 using LLama.Abstractions;
 using LLama.Common;
+using LLama.Native;
 using LLama.Sampling;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
@@ -14,16 +15,20 @@ public sealed class LlamaChatSession : IDisposable
     private readonly LLamaContext context;
     private readonly Action onDispose;
     private readonly string? systemPrompt;
+    private readonly MtmdWeights? mtmdWeights;
     private int disposed;
 
     public ChatSession Session { get; }
 
-    public LlamaChatSession(LLamaContext context, string systemPrompt, Action onDispose)
+    public LlamaChatSession(LLamaContext context, string systemPrompt, MtmdWeights? mtmdWeights, Action onDispose)
     {
         this.context = context;
         this.onDispose = onDispose;
         this.systemPrompt = systemPrompt;
-        Session = new ChatSession(new InteractiveExecutor(context));
+        this.mtmdWeights = mtmdWeights;
+        Session = new ChatSession(mtmdWeights is null
+            ? new InteractiveExecutor(context)
+            : new InteractiveExecutor(context, mtmdWeights));
         Session.HistoryTransform = new ChatMlHistoryTransform();
         if (!string.IsNullOrWhiteSpace(systemPrompt))
             Session.AddSystemMessage(systemPrompt);
@@ -76,36 +81,99 @@ public sealed class LlamaChatSession : IDisposable
         if (messages.Count == 0)
             throw new ArgumentException("At least one chat message is required.", nameof(messages));
 
-        for (var index = 0; index < messages.Count - 1; index++)
+        var hasMedia = messages.Any(message => message.Images is { Count: > 0 });
+        try
         {
-            var message = messages[index];
-            Session.AddMessage(new ChatHistory.Message(ParseRole(message.Role), message.Content));
+            var preparedMessages = PrepareMessages(messages);
+            for (var index = 0; index < preparedMessages.Count - 1; index++)
+            {
+                var message = preparedMessages[index];
+                Session.AddMessage(new ChatHistory.Message(ParseRole(message.Role), message.Content));
+            }
+
+            var lastMessage = preparedMessages[^1];
+            await foreach (var token in Session.ChatAsync(
+                new ChatHistory.Message(ParseRole(lastMessage.Role), lastMessage.Content),
+                new InferenceParams
+                {
+                    MaxTokens = options.MaxTokens,
+                    AntiPrompts = ["<|im_end|>", "\nUser:", .. options.StopSequences ?? []],
+                    SamplingPipeline = new DefaultSamplingPipeline
+                    {
+                        Temperature = options.Temperature,
+                        TopP = options.TopP,
+                        TopK = options.TopK,
+                        MinP = options.MinP,
+                        RepeatPenalty = options.RepetitionPenalty,
+                        FrequencyPenalty = options.FrequencyPenalty,
+                        PresencePenalty = options.PresencePenalty,
+                        PenaltyCount = options.PenaltyCount,
+                        Seed = (uint)(options.Seed ?? Random.Shared.Next())
+                    }
+                },
+                cancellationToken).ConfigureAwait(false))
+            {
+                yield return token;
+            }
+        }
+        finally
+        {
+            if (hasMedia)
+                mtmdWeights?.ClearMedia();
+        }
+    }
+
+    private IReadOnlyList<ChatMessage> PrepareMessages(IReadOnlyList<ChatMessage> messages)
+    {
+        if (!messages.Any(message => message.Images is { Count: > 0 }))
+            return messages;
+        if (mtmdWeights is null || !mtmdWeights.SupportsVision)
+            throw new InvalidOperationException("The loaded Llama model does not support image input.");
+
+        var marker = MtmdContextParams.Default().MediaMarker ?? NativeApi.MtmdDefaultMarker() ?? "<media>";
+        var prepared = new List<ChatMessage>(messages.Count);
+        try
+        {
+            foreach (var message in messages)
+            {
+                var images = message.Images;
+                if (images is null or { Count: 0 })
+                {
+                    prepared.Add(message);
+                    continue;
+                }
+
+                foreach (var image in images)
+                    mtmdWeights.LoadMedia(image.Data);
+                var content = BuildMultimodalContent(message, marker);
+                prepared.Add(message with { Content = content, Images = null, ContentParts = null });
+            }
+        }
+        catch
+        {
+            mtmdWeights.ClearMedia();
+            throw;
         }
 
-        var lastMessage = messages[^1];
-        await foreach (var token in Session.ChatAsync(
-            new ChatHistory.Message(ParseRole(lastMessage.Role), lastMessage.Content),
-            new InferenceParams
-            {
-                MaxTokens = options.MaxTokens,
-                AntiPrompts = ["<|im_end|>", "\nUser:", .. options.StopSequences ?? []],
-                SamplingPipeline = new DefaultSamplingPipeline
-                {
-                    Temperature = options.Temperature,
-                    TopP = options.TopP,
-                    TopK = options.TopK,
-                    MinP = options.MinP,
-                    RepeatPenalty = options.RepetitionPenalty,
-                    FrequencyPenalty = options.FrequencyPenalty,
-                    PresencePenalty = options.PresencePenalty,
-                    PenaltyCount = options.PenaltyCount,
-                    Seed = (uint)(options.Seed ?? Random.Shared.Next())
-                }
-            },
-            cancellationToken).ConfigureAwait(false))
+        return prepared;
+    }
+
+    internal static string BuildMultimodalContent(ChatMessage message, string marker)
+    {
+        if (message.ContentParts is not { Count: > 0 } contentParts ||
+            !contentParts.Any(part => part.ImageIndex is not null))
+            return message.Content + string.Concat(Enumerable.Repeat(marker, message.Images?.Count ?? 0));
+
+        var builder = new StringBuilder(message.Content.Length + marker.Length * (message.Images?.Count ?? 0));
+        foreach (var part in contentParts)
         {
-            yield return token;
+            if (part.ImageIndex is not null)
+                builder.Append(marker);
+            else
+                builder.Append(part.Text);
         }
+
+        return builder.ToString();
     }
 
     public void Dispose()

@@ -8,7 +8,7 @@ using Microsoft.AspNetCore.SignalR;
 namespace Esi.AI.Studio.Services;
 
 /// <summary>Maintains backend prerequisite diagnostics outside the page request path.</summary>
-public sealed class BackendRequirementMonitor : BackgroundService
+public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequirementState
 {
     private static readonly BackendRoute[] Routes =
     [
@@ -67,13 +67,25 @@ public sealed class BackendRequirementMonitor : BackgroundService
     {
         var entries = new List<BackendRequirementSnapshot>
         {
-            CreateBundledSnapshot(ConfigurationBackend.Llama, "NVIDIA / CUDA"),
-            CreateBundledSnapshot(ConfigurationBackend.Llama, "Intel / XPU"),
-            CreateBundledSnapshot(ConfigurationBackend.Llama, "AMD / ROCm"),
             CreateBundledSnapshot(ConfigurationBackend.DotLlm, "NVIDIA / CUDA"),
             CreateBundledSnapshot(ConfigurationBackend.DotLlm, "Intel / XPU"),
             CreateBundledSnapshot(ConfigurationBackend.DotLlm, "AMD / ROCm")
         };
+
+        foreach (var route in new (string Vendor, IReadOnlyList<string> Devices)[]
+        {
+            new("NVIDIA / CUDA", new[] { "cuda:0" }),
+            new("Intel / XPU", new[] { "sycl:0" }),
+            new("AMD / ROCm", new[] { "vulkan:0" })
+        })
+        {
+            var diagnostics = await prerequisites.DiagnoseAsync(
+                ConfigurationBackend.Llama,
+                applicationDirectory: AppContext.BaseDirectory,
+                cancellationToken: cancellationToken,
+                devices: route.Item2).ConfigureAwait(false);
+            entries.Insert(0, new(ConfigurationBackend.Llama, route.Item1, route.Item2, diagnostics));
+        }
 
         await PublishAsync(entries, true, cancellationToken).ConfigureAwait(false);
 

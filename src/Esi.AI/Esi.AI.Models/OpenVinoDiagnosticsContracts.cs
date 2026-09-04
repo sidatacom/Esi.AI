@@ -1,5 +1,8 @@
-namespace Esi.AI.Studio.Client.Services;
+namespace Esi.AI.Models;
 
+/// <summary>
+/// Describes the current OpenVINO device and prerequisite state.
+/// </summary>
 public sealed class OpenVinoDiagnosticsDto
 {
     public bool IsGpuReady { get; set; }
@@ -9,6 +12,9 @@ public sealed class OpenVinoDiagnosticsDto
     public string? Error { get; set; }
 }
 
+/// <summary>
+/// Describes an OpenVINO device discovered by the diagnostics service.
+/// </summary>
 public sealed class OpenVinoDeviceDto
 {
     public string Id { get; set; } = string.Empty;
@@ -19,6 +25,9 @@ public sealed class OpenVinoDeviceDto
     public string Detail { get; set; } = string.Empty;
 }
 
+/// <summary>
+/// Describes one repairable or informational OpenVINO diagnostic check.
+/// </summary>
 public sealed class OpenVinoDiagnosticCheckDto
 {
     public string Id { get; set; } = string.Empty;
@@ -28,6 +37,9 @@ public sealed class OpenVinoDiagnosticCheckDto
     public bool CanSolve { get; set; }
 }
 
+/// <summary>
+/// Contains the result of an OpenVINO prerequisite repair operation.
+/// </summary>
 public sealed class OpenVinoSolveResultDto
 {
     public bool Succeeded { get; set; }
