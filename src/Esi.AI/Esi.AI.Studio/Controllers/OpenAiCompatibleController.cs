@@ -19,6 +19,7 @@ public sealed class OpenAiCompatibleController(
     DataService? dataService = null) : ControllerBase
 {
     private static readonly JsonSerializerOptions SseJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly TimeSpan SseHeartbeatInterval = TimeSpan.FromSeconds(15);
 
     [HttpGet("models")]
     public async Task<IActionResult> ListModels(CancellationToken cancellationToken)
@@ -189,10 +190,28 @@ public sealed class OpenAiCompatibleController(
 
         try
         {
-            await foreach (var delta in deltas.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
+            var readTask = deltas.Reader.WaitToReadAsync(cancellationToken).AsTask();
+            var heartbeatTask = Task.Delay(SseHeartbeatInterval, cancellationToken);
+            while (true)
             {
-                if (!string.IsNullOrEmpty(delta))
-                    await WriteSseAsync(CreateChunk(completionId, model, new OpenAiChatCompletionDelta(Content: delta), null), cancellationToken).ConfigureAwait(false);
+                var completedTask = await Task.WhenAny(readTask, heartbeatTask).ConfigureAwait(false);
+                if (completedTask == heartbeatTask)
+                {
+                    await WriteSseHeartbeatAsync(cancellationToken).ConfigureAwait(false);
+                    heartbeatTask = Task.Delay(SseHeartbeatInterval, cancellationToken);
+                    continue;
+                }
+
+                if (!await readTask.ConfigureAwait(false))
+                    break;
+
+                while (deltas.Reader.TryRead(out var delta))
+                {
+                    if (!string.IsNullOrEmpty(delta))
+                        await WriteSseAsync(CreateChunk(completionId, model, new OpenAiChatCompletionDelta(Content: delta), null), cancellationToken).ConfigureAwait(false);
+                }
+
+                readTask = deltas.Reader.WaitToReadAsync(cancellationToken).AsTask();
             }
             await generationTask.ConfigureAwait(false);
         }
@@ -428,6 +447,12 @@ public sealed class OpenAiCompatibleController(
     private async Task WriteSseErrorAsync(string message, CancellationToken cancellationToken)
     {
         await Response.WriteAsync($"data: {JsonSerializer.Serialize(CreateError(message, "server_error"), SseJsonOptions)}\n\n", cancellationToken).ConfigureAwait(false);
+        await Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task WriteSseHeartbeatAsync(CancellationToken cancellationToken)
+    {
+        await Response.WriteAsync(": keep-alive\n\n", cancellationToken).ConfigureAwait(false);
         await Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 

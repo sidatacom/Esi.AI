@@ -210,57 +210,62 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     const textFilter = new VisibleResponseTextFilter();
     let usage: OpenAiUsage | undefined;
     let loggedSseChunks = 0;
-    for await (const data of readServerSentEvents(response.body, token)) {
-      if (loggedSseChunks < 200) {
-        const traceData = data.length > 4096 ? `${data.slice(0, 4096)}...[truncated]` : data;
-        this.trace("sse", { data: traceData });
-        loggedSseChunks++;
-      } else if (loggedSseChunks === 200) {
-        this.trace("sse", { data: "[further SSE chunks omitted]" });
-        loggedSseChunks++;
-      }
-      if (data === "[DONE]") {
-        const finalText = textFilter.finish();
-        if (finalText.length > 0) {
-          progress.report(new vscode.LanguageModelTextPart(finalText));
+    try {
+      for await (const data of readServerSentEvents(response.body, token)) {
+        if (loggedSseChunks < 200) {
+          const traceData = data.length > 4096 ? `${data.slice(0, 4096)}...[truncated]` : data;
+          this.trace("sse", { data: traceData });
+          loggedSseChunks++;
+        } else if (loggedSseChunks === 200) {
+          this.trace("sse", { data: "[further SSE chunks omitted]" });
+          loggedSseChunks++;
         }
-        this.reportToolCalls([...toolCalls.values()], progress);
-        this.reportUsage(usage, progress);
-        return;
+        if (data === "[DONE]") {
+          const finalText = textFilter.finish();
+          if (finalText.length > 0) {
+            progress.report(new vscode.LanguageModelTextPart(finalText));
+          }
+          this.reportToolCalls([...toolCalls.values()], progress);
+          this.reportUsage(usage, progress);
+          return;
+        }
+
+        const chunk = JSON.parse(data) as OpenAiStreamChunk;
+        if (typeof chunk.error?.message === "string" && chunk.error.message.length > 0) {
+          throw new Error(`Esi.AI Studio request failed: ${chunk.error.message}`);
+        }
+        usage = chunk.usage ?? usage;
+        const content = chunk.choices?.[0]?.delta?.content;
+        if (typeof content === "string" && content.length > 0) {
+          const visibleContent = textFilter.push(content);
+          if (visibleContent.length > 0) {
+            progress.report(new vscode.LanguageModelTextPart(visibleContent));
+          }
+        }
+        for (const toolCall of chunk.choices?.[0]?.delta?.tool_calls ?? []) {
+          const index = typeof toolCall.index === "number" ? toolCall.index : 0;
+          const existing = toolCalls.get(index) ?? {};
+          toolCalls.set(index, {
+            id: toolCall.id ?? existing.id,
+            type: toolCall.type ?? existing.type,
+            function: {
+              name: appendValue(existing.function?.name, toolCall.function?.name),
+              arguments: appendValue(existing.function?.arguments, toolCall.function?.arguments),
+            },
+          });
+        }
+      }
+    } catch (error) {
+      if (token.isCancellationRequested) {
+        throw new vscode.CancellationError();
       }
 
-      const chunk = JSON.parse(data) as OpenAiStreamChunk;
-      if (typeof chunk.error?.message === "string" && chunk.error.message.length > 0) {
-        throw new Error(`Esi.AI Studio request failed: ${chunk.error.message}`);
-      }
-      usage = chunk.usage ?? usage;
-      const content = chunk.choices?.[0]?.delta?.content;
-      if (typeof content === "string" && content.length > 0) {
-        const visibleContent = textFilter.push(content);
-        if (visibleContent.length > 0) {
-          progress.report(new vscode.LanguageModelTextPart(visibleContent));
-        }
-      }
-      for (const toolCall of chunk.choices?.[0]?.delta?.tool_calls ?? []) {
-        const index = typeof toolCall.index === "number" ? toolCall.index : 0;
-        const existing = toolCalls.get(index) ?? {};
-        toolCalls.set(index, {
-          id: toolCall.id ?? existing.id,
-          type: toolCall.type ?? existing.type,
-          function: {
-            name: appendValue(existing.function?.name, toolCall.function?.name),
-            arguments: appendValue(existing.function?.arguments, toolCall.function?.arguments),
-          },
-        });
-      }
+      const message = error instanceof Error ? error.message : String(error);
+      this.output.appendLine(`SSE stream failed: ${message}`);
+      throw new Error(`Esi.AI Studio SSE stream terminated before completion: ${message}`, { cause: error });
     }
 
-    const finalText = textFilter.finish();
-    if (finalText.length > 0) {
-      progress.report(new vscode.LanguageModelTextPart(finalText));
-    }
-    this.reportToolCalls([...toolCalls.values()], progress);
-    this.reportUsage(usage, progress);
+    throw new Error("Esi.AI Studio SSE stream ended before the [DONE] marker.");
   }
 
   private reportUsage(usage: OpenAiUsage | undefined, progress: vscode.Progress<vscode.LanguageModelResponsePart>): void {
