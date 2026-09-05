@@ -19,3 +19,7 @@
 	path = origins/sidatacom/dotLLM
 	url = https://github.com/sidatacom/dotLLM.git
 	branch = main
+[submodule "origins/sidatacom/fluentui-blazor"]
+	path = origins/sidatacom/fluentui-blazor
+	url = https://github.com/sidatacom/fluentui-blazor.git
+	branch = dev-v5
