@@ -137,8 +137,18 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     progress: vscode.Progress<vscode.LanguageModelResponsePart>,
     token: vscode.CancellationToken,
   ): Promise<void> {
-    const supportsImages = model.capabilities.imageInput === true;
-    const supportsTools = model.capabilities.toolCalling === true || typeof model.capabilities.toolCalling === "number";
+    let requestModel = model;
+    if (this.containsImageData(messages) && model.capabilities.imageInput !== true) {
+      try {
+        await this.refresh(token);
+        requestModel = this.models.find(candidate => candidate.id === model.id) ?? model;
+      } catch {
+        requestModel = model;
+      }
+    }
+
+    const supportsImages = requestModel.capabilities.imageInput === true;
+    const supportsTools = requestModel.capabilities.toolCalling === true || typeof requestModel.capabilities.toolCalling === "number";
     if (!supportsTools && options.tools && options.tools.length > 0) {
       throw new Error("The selected Esi.AI Studio model does not support tool calling.");
     }
@@ -147,11 +157,12 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
       progress.report(new vscode.LanguageModelTextPart(toolOptimizationResponse));
       return;
     }
-    const maxTokens = this.isToolOptimizationRequest(messages) ? 512 : model.maxOutputTokens;
+    const maxTokens = this.isToolOptimizationRequest(messages) ? 512 : requestModel.maxOutputTokens;
     const reasoningEffort = getReasoningEffort(options.modelOptions) ?? getConfiguredReasoningEffort();
+    const openAiMessages = messages.map((message) => this.toOpenAiMessage(message, supportsImages));
     const requestBody = {
-      model: this.backendModelIds.get(model.id) ?? model.id,
-      messages: messages.map((message) => this.toOpenAiMessage(message, supportsImages)),
+      model: this.backendModelIds.get(requestModel.id) ?? requestModel.id,
+      messages: openAiMessages,
       max_tokens: maxTokens,
       reasoning_effort: reasoningEffort,
       top_p: 0.9,
@@ -576,6 +587,12 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     };
   }
 
+  private containsImageData(messages: readonly vscode.LanguageModelChatRequestMessage[]): boolean {
+    return messages.some(message => message.content.some(
+      part => part instanceof vscode.LanguageModelDataPart && part.mimeType.toLowerCase().startsWith("image/"),
+    ));
+  }
+
   private toOpenAiContent(parts: readonly unknown[], supportsImages: boolean): string | OpenAiContentPart[] {
     const content: OpenAiContentPart[] = [];
     for (const part of parts) {
@@ -584,8 +601,12 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
         continue;
       }
       if (part instanceof vscode.LanguageModelDataPart) {
-        if (!supportsImages || !part.mimeType.startsWith("image/")) {
-          throw new Error("The selected Esi.AI Studio model does not support this input content type.");
+        const mimeType = part.mimeType.trim().toLowerCase();
+        if (mimeType === "stateful_marker") {
+          continue;
+        }
+        if (!supportsImages || !mimeType.startsWith("image/")) {
+          throw new Error(`The selected Esi.AI Studio model does not support input content type '${part.mimeType}'.`);
         }
         content.push({
           type: "image_url",

@@ -37,6 +37,13 @@ dotnet run --project src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj
 
 Die SQLite-Verbindungszeichenfolge steht in `appsettings.json`. In der Entwicklungsumgebung aktiviert die App den Migrations-Endpunkt.
 
+## VS Code, Debugging und Hot Reload
+
+Der verbindliche Entwicklungsablauf mit `dotnet watch`, CoreCLR-Server-Debugging,
+WebAssembly-Attach und dem Linux-Polling-Watcher ist in
+[Esi.AI Studio: Debugging und Hot Reload](../../../studio-development.md)
+dokumentiert.
+
 ## Aktueller Stand
 
 Das Projekt basiert auf dem Blazor-Template. Fachliche Studio-Seiten und die spaetere LLama-Integration sind noch nicht umgesetzt.

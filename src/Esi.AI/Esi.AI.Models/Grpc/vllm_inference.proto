@@ -43,6 +43,15 @@ message ModelOperationResponse {
 message ChatMessage {
   string role = 1;
   string content = 2;
+  string tool_calls_json = 3;
+  string tool_call_id = 4;
+}
+
+message ToolDefinition {
+  string type = 1;
+  string name = 2;
+  string description = 3;
+  string parameters_json = 4;
 }
 
 message GenerateRequest {
@@ -57,6 +66,8 @@ message GenerateRequest {
   float repetition_penalty = 9;
   int32 seed = 10;
   repeated string stop_sequences = 11;
+  repeated ToolDefinition tools = 12;
+  string tool_choice_json = 13;
 }
 
 message GenerateResponse {
@@ -66,4 +77,5 @@ message GenerateResponse {
   uint32 prompt_tokens = 4;
   double tokens_per_second = 5;
   string error = 6;
+  string tool_calls_json = 7;
 }

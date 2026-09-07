@@ -15,6 +15,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   log("EsiMCP extension activating...");
   sessionManager = new SessionManager();
   debugManager = new DebugManager();
+  sessionManager.attachDebugManager(debugManager);
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.text = "$(terminal) EsiMCP: 0 sessions";
   statusBarItem.tooltip = "EsiMCP terminal and debug controls";

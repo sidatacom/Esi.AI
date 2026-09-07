@@ -1,31 +1,7 @@
 {
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "Esi.AI Studio (Server Debug)",
-      "type": "coreclr",
-      "request": "launch",
-      "preLaunchTask": "build-and-watch-esi-ai-studio",
-      "postDebugTask": "stop-esi-ai-studio-watchdog",
-      "program": "${workspaceFolder}/src/Esi.AI/Esi.AI.Studio/bin/Debug/net10.0/Esi.AI.Studio",
-      "args": [],
-      "cwd": "${workspaceFolder}/src/Esi.AI/Esi.AI.Studio",
-      "stopAtEntry": false,
-      "console": "integratedTerminal",
-      "env": {
-        "ASPNETCORE_ENVIRONMENT": "Development",
-        "ASPNETCORE_URLS": "http://localhost:7010",
-        "ESI_AI_STUDIO_WATCHDOG_PID_FILE": "/tmp/esi-ai-studio-watchdog-7010.pid",
-        "DOTNET_USE_POLLING_FILE_WATCHER": "1",
-        "ESI_VLLM_PYTHON_EXECUTABLE": "/home/llm/.venvs/esi-ai-vllm/bin/python",
-        "ESI_SGLANG_PYTHON_EXECUTABLE": "/home/llm/.venvs/esi-ai-sglang/bin/python",
-        "VLLM_USE_FLASHINFER_SAMPLER": "0",
-        "CUDA_HOME": "/home/llm/.venvs/esi-ai-vllm/lib/python3.12/site-packages/nvidia/cu13"
-      },
-      "serverReadyAction": {
-        "action": "openIntegratedBrowser",
-        "pattern": "\\bNow (?:listening on|ready on):\\s+(https?://\\S+)"
-      }
-    }
-  ]
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": []
 }

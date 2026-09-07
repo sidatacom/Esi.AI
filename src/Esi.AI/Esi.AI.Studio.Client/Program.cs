@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
+using Microsoft.FluentUI.AspNetCore.Components;
 using Esi.AI.Studio.Contracts;
 using Esi.AI.Studio.Client.Services;
 
@@ -11,6 +12,7 @@ builder.Services.AddScoped(sp => new HttpClient
 builder.Services.AddAuthorizationCore();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddAuthenticationStateDeserialization();
+builder.Services.AddFluentUIComponents();
 builder.Services.AddScoped<IClientStateStore, ClientStateStore>();
 builder.Services.AddScoped<SignalRDataService>();
 builder.Services.AddScoped<IDataService>(services => services.GetRequiredService<SignalRDataService>());
@@ -18,5 +20,7 @@ builder.Services.AddScoped<IModelDownloadEvents>(services => services.GetRequire
 builder.Services.AddScoped<IModelRuntimeEvents>(services => services.GetRequiredService<SignalRDataService>());
 builder.Services.AddScoped<IBackendRequirementEvents>(services => services.GetRequiredService<SignalRDataService>());
 builder.Services.AddScoped<IBackendRuntimeEvents>(services => services.GetRequiredService<SignalRDataService>());
+builder.Services.AddScoped<IApplicationSettingsEvents>(services => services.GetRequiredService<SignalRDataService>());
+builder.Services.AddScoped<IProviderTraceEvents>(services => services.GetRequiredService<SignalRDataService>());
 
 await builder.Build().RunAsync();

@@ -3,7 +3,7 @@ using Esi.AI.Studio.Contracts;
 
 namespace Esi.AI.Studio.Services;
 
-internal sealed class ServerModelDownloadEvents : IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents
+internal sealed class ServerModelDownloadEvents : IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents, IApplicationSettingsEvents
 {
     public event Func<ModelDownloadUpdate, Task>? ModelDownload_Create
     {
@@ -64,4 +64,11 @@ internal sealed class ServerModelDownloadEvents : IModelDownloadEvents, IModelRu
         add { }
         remove { }
     }
+
+    public event Func<ApplicationSettings, Task>? ApplicationSettings_Update
+    {
+        add { }
+        remove { }
+    }
+
 }

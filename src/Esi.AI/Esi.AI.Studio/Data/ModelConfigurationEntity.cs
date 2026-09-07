@@ -16,9 +16,13 @@ public sealed class ModelConfigurationEntity
 
     public bool IsDefault { get; set; }
 
+    public bool AutoLaunch { get; set; } = true;
+
     public int SchemaVersion { get; set; } = 1;
 
     public string ConfigurationJson { get; set; } = "{}";
+
+    public string? InferenceTimeoutJson { get; set; }
 
     public DateTime CreatedAtUtc { get; set; }
 

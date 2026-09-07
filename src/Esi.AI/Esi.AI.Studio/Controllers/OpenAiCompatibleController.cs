@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Text;
 using System.Threading.Channels;
 using Esi.AI.Core.Chat;
 using Esi.AI.Core.ModelLoading;
@@ -17,7 +16,9 @@ public sealed class OpenAiCompatibleController(
     ILocalModelCatalog localModelCatalog,
     IOmniRouteClient omniRouteClient,
     IOptions<OmniRouteOptions> omniRouteOptions,
-    DataService? dataService = null) : ControllerBase
+    OpenAiCompatibleBackendMiddleware backendMiddleware,
+    DataService? dataService = null,
+    ProviderTraceStore? providerTraceStore = null) : ControllerBase
 {
     private static readonly JsonSerializerOptions SseJsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan SseHeartbeatInterval = TimeSpan.FromSeconds(15);
@@ -35,6 +36,40 @@ public sealed class OpenAiCompatibleController(
         }
 
         var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (dataService is not null)
+        {
+            var configurations = await dataService.ModelConfiguration_ReadAsync(cancellationToken).ConfigureAwait(false);
+            var localModels = await dataService.LocalModel_ReadAsync(cancellationToken).ConfigureAwait(false);
+            var loadedConfigurationModels = modelRuntime.LoadedModel_Read().LoadedModels
+                .Where(loadedModel => !loadedModel.IsLoading)
+                .ToArray();
+            var apiConfigurations = configurations.Select(configuration =>
+            {
+                var localModel = localModels.FirstOrDefault(model =>
+                    string.Equals(model.Path, configuration.ModelPath, StringComparison.OrdinalIgnoreCase));
+                var loadedModel = loadedConfigurationModels.FirstOrDefault(model =>
+                    string.Equals(model.ModelPath, configuration.ModelPath, StringComparison.OrdinalIgnoreCase) &&
+                    model.Backend == configuration.Backend);
+                var capabilities = localModel?.Capabilities ?? new ModelCapabilities();
+                if (loadedModel is not null && modelRuntime.SupportsImageInput(loadedModel.Runtime, loadedModel.ModelPath))
+                    capabilities = capabilities with { ImageInput = true };
+
+                return new OpenAiModel(
+                    configuration.Id.ToString("D"),
+                    "model",
+                    created,
+                    "esi-ai",
+                    configuration.Name,
+                    capabilities,
+                    loadedModel is not null,
+                    configuration.Id,
+                    configuration.Backend,
+                    configuration.AutoLaunch);
+            }).ToArray();
+
+            return Ok(new OpenAiModelListResponse("list", apiConfigurations));
+        }
+
         var loadedModels = modelRuntime.LoadedModel_Read().LoadedModels
             .Where(loadedModel => !loadedModel.IsLoading)
             .ToArray();
@@ -161,6 +196,14 @@ public sealed class OpenAiCompatibleController(
         OpenAiChatRequest? request,
         CancellationToken cancellationToken)
     {
+        var requestId = $"req-{Guid.NewGuid():N}";
+        await TraceAsync(
+            requestId,
+            "API",
+            "in",
+            "Request empfangen",
+            "POST /v1/chat/completions",
+            SerializeTracePayload(request)).ConfigureAwait(false);
         var validationError = ValidateRequest(request, omniRouteOptions.Value.Enabled);
         if (validationError is not null)
             return BadRequest(validationError);
@@ -168,64 +211,68 @@ public sealed class OpenAiCompatibleController(
         try
         {
             if (omniRouteOptions.Value.Enabled)
-                return await ForwardToOmniRouteAsync(request!, cancellationToken).ConfigureAwait(false);
+                return await ForwardToOmniRouteAsync(requestId, request!, cancellationToken).ConfigureAwait(false);
 
-            var status = GetLoadedModelStatus(request!.Model);
-            var messages = request.Messages!.Select(ParseMessage).ToArray();
-            var imageCapabilityError = ValidateImageCapability(status, messages);
-            if (imageCapabilityError is not null)
-                return BadRequest(imageCapabilityError);
-            var hasEmptyMessage = messages.Select((message, index) => (message, index))
-                .Any(item => string.IsNullOrWhiteSpace(item.message.Content) && item.message.Images is not { Count: > 0 } && !IsToolMessage(request.Messages![item.index]));
-            if (request.ResponseFormat is not null || hasEmptyMessage)
-                return BadRequest(CreateError("Every chat message requires non-empty text or image content.", "invalid_request_error"));
-            var model = string.IsNullOrWhiteSpace(request.Model) ? GetModelId(status) : request.Model;
-            var options = ToGenerationOptions(request);
-
-            if (request.Stream)
+            if (request!.Stream)
             {
                 await StreamCompletionAsync(
-                    status.Backend!,
-                    status.ModelPath,
-                    messages,
-                    model,
-                    options,
-                    request.Messages,
-                    request.Tools,
+                    requestId,
+                    request!,
                     request.StreamOptions?.IncludeUsage == true,
                     cancellationToken).ConfigureAwait(false);
+                await TraceAsync(requestId, "API", "out", "Streaming-Antwort abgeschlossen", "SSE-Stream mit [DONE] beendet").ConfigureAwait(false);
                 return new EmptyResult();
             }
 
-            var result = await GenerateAsync(
-                status.Backend!,
-                status.ModelPath,
-                messages,
-                null,
-                options,
-                cancellationToken,
-                request.Messages,
-                request.Tools).ConfigureAwait(false);
-            return Ok(CreateCompletion(result, model, result.FinishReason));
+            var backendRequest = await PrepareBackendRequestAsync(request!, requestId, null, cancellationToken).ConfigureAwait(false);
+            var result = await backendMiddleware.GenerateAsync(backendRequest, null, cancellationToken).ConfigureAwait(false);
+            await TraceGenerationResultAsync(requestId, result).ConfigureAwait(false);
+            await TraceAsync(requestId, "API", "out", "Antwort an Client", $"HTTP 200 · finish_reason={result.FinishReason}").ConfigureAwait(false);
+            return Ok(CreateCompletion(result, backendRequest.Model, result.FinishReason));
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            await TraceAsync(requestId, "API", "error", "Request abgebrochen", "Die Client-Verbindung wurde beendet").ConfigureAwait(false);
+            return new EmptyResult();
+        }
+        catch (InferenceTimeoutException exception)
+        {
+            await TraceAsync(requestId, "Backend", "error", "Backend-Timeout", exception.Message).ConfigureAwait(false);
+            if (Response.HasStarted)
+                await WriteSseErrorAsync(exception.Message, cancellationToken).ConfigureAwait(false);
+            else
+                return StatusCode(StatusCodes.Status504GatewayTimeout, CreateError(exception.Message, "timeout"));
+
             return new EmptyResult();
         }
         catch (OperationCanceledException)
         {
-            return StatusCode(StatusCodes.Status504GatewayTimeout, CreateError("OmniRoute request timed out.", "upstream_error"));
+            await TraceAsync(requestId, "Backend", "error", "Backend-Timeout", "Lokale Inferenz hat das Zeitlimit erreicht").ConfigureAwait(false);
+            return StatusCode(StatusCodes.Status504GatewayTimeout, CreateError("Local inference request timed out.", "timeout"));
         }
         catch (HttpRequestException)
         {
+            await TraceAsync(requestId, "Backend", "error", "Upstream nicht erreichbar", "OmniRoute konnte nicht erreicht werden").ConfigureAwait(false);
             return StatusCode(StatusCodes.Status503ServiceUnavailable, CreateError("OmniRoute is unavailable.", "upstream_error"));
         }
         catch (ArgumentException exception)
         {
+            await TraceAsync(requestId, "API", "error", "Ungültige Anfrage", exception.Message).ConfigureAwait(false);
             return BadRequest(CreateError(exception.Message, "invalid_request_error"));
+        }
+        catch (KeyNotFoundException exception)
+        {
+            await TraceAsync(requestId, "Routing", "error", "Konfiguration nicht gefunden", exception.Message).ConfigureAwait(false);
+            if (Response.HasStarted)
+                await WriteSseErrorAsync(exception.Message, cancellationToken).ConfigureAwait(false);
+            else
+                return NotFound(CreateError(exception.Message, "model_not_found"));
+
+            return new EmptyResult();
         }
         catch (InvalidOperationException exception)
         {
+            await TraceAsync(requestId, "Backend", "error", "Backend konnte nicht starten", exception.Message).ConfigureAwait(false);
             if (Response.HasStarted)
                 await WriteSseErrorAsync(exception.Message, cancellationToken).ConfigureAwait(false);
             else
@@ -235,13 +282,15 @@ public sealed class OpenAiCompatibleController(
         }
         catch (Exception exception) when (Response.HasStarted)
         {
+            await TraceAsync(requestId, "Backend", "error", "Backend-Fehler", exception.Message).ConfigureAwait(false);
             await WriteSseErrorAsync(exception.Message, cancellationToken).ConfigureAwait(false);
             return new EmptyResult();
         }
     }
 
-    private async Task<IActionResult> ForwardToOmniRouteAsync(OpenAiChatRequest request, CancellationToken cancellationToken)
+    private async Task<IActionResult> ForwardToOmniRouteAsync(string requestId, OpenAiChatRequest request, CancellationToken cancellationToken)
     {
+        await TraceAsync(requestId, "Routing", "out", "An OmniRoute geroutet", "OpenAI-kompatibler Upstream", SerializeTracePayload(request)).ConfigureAwait(false);
         using var upstreamResponse = await omniRouteClient.CreateChatCompletionAsync(
             request,
             Request.Headers.Authorization.ToString(),
@@ -259,17 +308,14 @@ public sealed class OpenAiCompatibleController(
             Response.Headers["X-Accel-Buffering"] = "no";
 
         await upstreamResponse.Content.CopyToAsync(Response.Body, cancellationToken).ConfigureAwait(false);
+        await TraceAsync(requestId, "Backend", "in", "Antwort von OmniRoute", $"HTTP {(int)upstreamResponse.StatusCode} · {upstreamResponse.Content.Headers.ContentType}").ConfigureAwait(false);
+        await TraceAsync(requestId, "API", "out", "Antwort an Client", $"HTTP {(int)upstreamResponse.StatusCode}").ConfigureAwait(false);
         return new EmptyResult();
     }
 
     private async Task StreamCompletionAsync(
-        string backend,
-        string? modelPath,
-        IReadOnlyList<ChatMessage> messages,
-        string model,
-        ChatGenerationOptions options,
-        IReadOnlyList<OpenAiChatMessage>? openAiMessages,
-        IReadOnlyList<OpenAiToolDefinition>? tools,
+        string requestId,
+        OpenAiChatRequest request,
         bool includeUsage,
         CancellationToken cancellationToken)
     {
@@ -278,25 +324,22 @@ public sealed class OpenAiCompatibleController(
         Response.Headers.Append("X-Accel-Buffering", "no");
 
         var completionId = $"chatcmpl-{Guid.NewGuid():N}";
-        await WriteSseAsync(CreateChunk(completionId, model, new OpenAiChatCompletionDelta("assistant"), null), cancellationToken).ConfigureAwait(false);
+        await WriteSseAsync(CreateChunk(completionId, request.Model ?? string.Empty, new OpenAiChatCompletionDelta("assistant"), null), cancellationToken).ConfigureAwait(false);
 
-        var structuredOpenVinoOutput = string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase) && tools is { Count: > 0 };
+        var backendRequest = await PrepareBackendRequestAsync(request, requestId, completionId, cancellationToken).ConfigureAwait(false);
+
+        var structuredToolOutput = request.Tools is { Count: > 0 };
         var deltas = Channel.CreateUnbounded<string>();
-        var generationTask = GenerateAsync(
-            backend,
-            modelPath,
-            messages,
-            structuredOpenVinoOutput
+        var generationTask = backendMiddleware.GenerateAsync(
+            backendRequest,
+            structuredToolOutput
                 ? null
                 : delta =>
                 {
                     deltas.Writer.TryWrite(delta);
                     return Task.CompletedTask;
                 },
-            options,
-            cancellationToken,
-            openAiMessages,
-            tools);
+            cancellationToken);
         _ = CompleteChannelAsync(generationTask, deltas.Writer);
 
         try
@@ -308,7 +351,7 @@ public sealed class OpenAiCompatibleController(
                 var completedTask = await Task.WhenAny(readTask, heartbeatTask).ConfigureAwait(false);
                 if (completedTask == heartbeatTask)
                 {
-                    await WriteSseHeartbeatAsync(cancellationToken).ConfigureAwait(false);
+                    await WriteSseHeartbeatAsync(completionId, backendRequest.Model, cancellationToken).ConfigureAwait(false);
                     heartbeatTask = Task.Delay(SseHeartbeatInterval, cancellationToken);
                     continue;
                 }
@@ -319,7 +362,7 @@ public sealed class OpenAiCompatibleController(
                 while (deltas.Reader.TryRead(out var delta))
                 {
                     if (!string.IsNullOrEmpty(delta))
-                        await WriteSseAsync(CreateChunk(completionId, model, new OpenAiChatCompletionDelta(Content: delta), null), cancellationToken).ConfigureAwait(false);
+                        await WriteSseAsync(CreateChunk(completionId, backendRequest.Model, new OpenAiChatCompletionDelta(Content: delta), null), cancellationToken).ConfigureAwait(false);
                 }
 
                 readTask = deltas.Reader.WaitToReadAsync(cancellationToken).AsTask();
@@ -332,14 +375,15 @@ public sealed class OpenAiCompatibleController(
         }
 
         var generationResult = await generationTask.ConfigureAwait(false);
-        var finalDelta = structuredOpenVinoOutput
+        await TraceGenerationResultAsync(requestId, generationResult).ConfigureAwait(false);
+        var finalDelta = structuredToolOutput
             ? new OpenAiChatCompletionDelta(
                 Content: string.IsNullOrEmpty(generationResult.Text) ? null : generationResult.Text,
                 ToolCalls: ToToolCallDeltas(generationResult.ToolCalls))
             : new OpenAiChatCompletionDelta();
         await WriteSseAsync(CreateChunk(
             completionId,
-            model,
+            backendRequest.Model,
             finalDelta,
             generationResult.FinishReason,
             includeUsage ? CreateUsage(generationResult) : null), cancellationToken).ConfigureAwait(false);
@@ -347,83 +391,118 @@ public sealed class OpenAiCompatibleController(
         await Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private Task<GenerationResult> GenerateAsync(
-        string backend,
-        string? modelPath,
-        IReadOnlyList<ChatMessage> messages,
-        Func<string, Task>? onDelta,
-        ChatGenerationOptions options,
-        CancellationToken cancellationToken,
-        IReadOnlyList<OpenAiChatMessage>? openAiMessages = null,
-        IReadOnlyList<OpenAiToolDefinition>? tools = null) =>
-        backend switch
-        {
-            "OpenVINO" => StartOpenVinoGeneration(messages, openAiMessages ?? messages.Select(message => new OpenAiChatMessage(message.Role, message.Content)).ToArray(), tools, onDelta, options, cancellationToken),
-            "vLLM" or "SGLang" => GeneratePythonAsync(messages, onDelta, options, cancellationToken),
-            "dotLLM" => GenerateDotLlmAsync(messages, onDelta, options, cancellationToken),
-            "Vulkan" or "VULKAN" or "CUDA" or "SYCL" or "CPU" => GenerateLlamaAsync(modelPath, messages, onDelta, options, cancellationToken),
-            _ => throw new ArgumentException($"Unsupported model backend '{backend}'.", nameof(backend))
-        };
-
-    private Task<GenerationResult> StartOpenVinoGeneration(
-        IReadOnlyList<ChatMessage> chatMessages,
-        IReadOnlyList<OpenAiChatMessage> openAiMessages,
-        IReadOnlyList<OpenAiToolDefinition>? tools,
-        Func<string, Task>? onDelta,
-        ChatGenerationOptions options,
+    private async Task<OpenAiBackendChatRequest> PrepareBackendRequestAsync(
+        OpenAiChatRequest request,
+        string requestId,
+        string? completionId,
         CancellationToken cancellationToken)
     {
-        return Task.Factory.StartNew(() =>
+        var status = await EnsureConfigurationLoadedAsync(request.Model, requestId, completionId, cancellationToken).ConfigureAwait(false);
+        var backendRequest = backendMiddleware.Prepare(request, status);
+        if (dataService is not null && !string.IsNullOrWhiteSpace(status.ModelPath))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var imageTensors = OpenVinoImageTensorFactory.Create(chatMessages);
-            try
+            var configurationBackend = status.Backend is "Vulkan" or "VULKAN" or "CUDA" or "SYCL" or "CPU"
+                ? ConfigurationBackend.Llama
+                : Enum.TryParse<ConfigurationBackend>(status.Backend, true, out var parsedBackend)
+                    ? parsedBackend
+                    : (ConfigurationBackend?)null;
+            var timeout = configurationBackend is ConfigurationBackend backend
+                ? await dataService.GetActiveInferenceTimeoutAsync(status.ModelPath, backend, cancellationToken).ConfigureAwait(false)
+                : null;
+            if (timeout is not null)
+                backendRequest = backendRequest with { InferenceTimeout = timeout };
+        }
+
+        await TraceAsync(
+            requestId,
+            "Routing",
+            "out",
+            "An lokales Backend geroutet",
+            $"{backendRequest.Backend} · Modell {backendRequest.Model}",
+            SerializeTracePayload(new
             {
-                using var session = modelRuntime.CreateOpenVinoChatSession();
-                Action<string>? streamer = onDelta is null
-                    ? null
-                    : delta =>
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        onDelta(delta).GetAwaiter().GetResult();
-                    };
-                var result = session.GenerateWithStats(
-                    openAiMessages,
-                    tools,
-                    streamer,
-                    ToOpenVinoOptions(options),
-                    imageTensors.Length == 0 ? null : imageTensors);
-                return new GenerationResult(result.Text, result.TokenCount, TimeSpan.Zero, result.TokensPerSecond, result.PromptTokenCount, result.FinishReason, result.ToolCalls);
-            }
-            finally
+                backendRequest.Backend,
+                backendRequest.Model,
+                MessageCount = backendRequest.Messages.Count,
+                ToolCount = backendRequest.Tools?.Count ?? 0,
+                backendRequest.InferenceTimeout
+            })).ConfigureAwait(false);
+        await TraceAsync(
+            requestId,
+            "Backend",
+            "out",
+            "Request an Backend",
+            $"{backendRequest.Backend} verarbeitet die Anfrage",
+            SerializeTracePayload(backendRequest)).ConfigureAwait(false);
+
+        return backendRequest;
+    }
+
+    private async Task<ModelLoadStatus> EnsureConfigurationLoadedAsync(
+        string? identifier,
+        string requestId,
+        string? completionId,
+        CancellationToken cancellationToken)
+    {
+        if (dataService is null)
+            return GetLoadedModelStatus(identifier);
+
+        var configuration = await dataService.ResolveApiModelConfigurationAsync(identifier, cancellationToken).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"The model configuration '{identifier}' was not found.");
+        var currentStatus = modelRuntime.LoadedModel_Read();
+        var matchingModel = currentStatus.LoadedModels.FirstOrDefault(model =>
+            string.Equals(model.ModelPath, configuration.ModelPath, StringComparison.OrdinalIgnoreCase) &&
+            model.Backend == configuration.Backend);
+        if (matchingModel is null)
+        {
+            if (!configuration.AutoLaunch)
+                throw new InvalidOperationException($"The configuration '{configuration.Name}' is not loaded and AutoLaunch is disabled.");
+
+            await TraceAsync(
+                requestId,
+                "Routing",
+                "out",
+                "AutoLaunch gestartet",
+                $"Konfiguration {configuration.Name} wird geladen",
+                SerializeTracePayload(new { configuration.Id, configuration.Name, configuration.ModelPath, configuration.Backend })).ConfigureAwait(false);
+        }
+        else if (!matchingModel.IsLoading)
+        {
+            return GetLoadedModelStatus(currentStatus, configuration.ModelPath, configuration.Backend);
+        }
+
+        var loadTask = dataService.LoadModelConfigurationAsync(configuration.Id, cancellationToken);
+        ModelLoadStatus loadedStatus;
+        if (completionId is null)
+        {
+            loadedStatus = await loadTask.ConfigureAwait(false);
+        }
+        else
+        {
+            while (!loadTask.IsCompleted)
             {
-                foreach (var imageTensor in imageTensors)
-                    imageTensor.Dispose();
+                var completedTask = await Task.WhenAny(
+                    loadTask,
+                    Task.Delay(SseHeartbeatInterval, cancellationToken)).ConfigureAwait(false);
+                if (completedTask != loadTask)
+                    await WriteSseHeartbeatAsync(completionId, configuration.Name, cancellationToken).ConfigureAwait(false);
             }
-        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+
+            loadedStatus = await loadTask.ConfigureAwait(false);
+        }
+
+        await TraceAsync(requestId, "Backend", "in", "Konfiguration geladen", $"{configuration.Name} ist bereit").ConfigureAwait(false);
+        return GetLoadedModelStatus(loadedStatus, configuration.ModelPath, configuration.Backend);
     }
 
-    private async Task<GenerationResult> GenerateLlamaAsync(string? modelPath, IReadOnlyList<ChatMessage> messages, Func<string, Task>? onDelta, ChatGenerationOptions options, CancellationToken cancellationToken)
-    {
-        using var session = modelRuntime.CreateLlamaChatSession(string.Empty, modelPath);
-        return await session.GenerateWithStatsAsync(messages, onDelta, options, cancellationToken).ConfigureAwait(false);
-    }
+    private ModelLoadStatus GetLoadedModelStatus(string? requestedModel, ConfigurationBackend? requestedBackend = null) =>
+        GetLoadedModelStatus(modelRuntime.LoadedModel_Read(), requestedModel, requestedBackend);
 
-    private async Task<GenerationResult> GeneratePythonAsync(IReadOnlyList<ChatMessage> messages, Func<string, Task>? onDelta, ChatGenerationOptions options, CancellationToken cancellationToken)
+    private ModelLoadStatus GetLoadedModelStatus(
+        ModelLoadStatus status,
+        string? requestedModel,
+        ConfigurationBackend? requestedBackend = null)
     {
-        using var session = modelRuntime.CreatePythonChatSession();
-        return await session.GenerateWithStatsAsync(messages, onDelta, options, cancellationToken).ConfigureAwait(false);
-    }
-
-    private async Task<GenerationResult> GenerateDotLlmAsync(IReadOnlyList<ChatMessage> messages, Func<string, Task>? onDelta, ChatGenerationOptions options, CancellationToken cancellationToken)
-    {
-        using var session = modelRuntime.CreateDotLlmChatSession();
-        return await session.GenerateWithStatsAsync(messages, onDelta, options, cancellationToken).ConfigureAwait(false);
-    }
-
-    private ModelLoadStatus GetLoadedModelStatus(string? requestedModel)
-    {
-        var status = modelRuntime.LoadedModel_Read();
         if (!status.IsModelLoaded || string.IsNullOrWhiteSpace(status.Backend))
             throw new InvalidOperationException("No model is currently loaded.");
 
@@ -431,8 +510,9 @@ public sealed class OpenAiCompatibleController(
             return status;
 
         var loadedModel = status.LoadedModels.FirstOrDefault(model =>
-            string.Equals(model.ModelPath, requestedModel, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(Path.GetFileName(model.ModelPath), requestedModel, StringComparison.OrdinalIgnoreCase));
+            (string.Equals(model.ModelPath, requestedModel, StringComparison.OrdinalIgnoreCase) ||
+             string.Equals(Path.GetFileName(model.ModelPath), requestedModel, StringComparison.OrdinalIgnoreCase)) &&
+            (!requestedBackend.HasValue || model.Backend == requestedBackend));
         if (loadedModel is null)
             throw new InvalidOperationException($"The selected model '{requestedModel}' is not loaded. Load it in Esi.AI Studio first.");
 
@@ -478,29 +558,6 @@ public sealed class OpenAiCompatibleController(
         return null;
     }
 
-    private static ChatGenerationOptions ToGenerationOptions(OpenAiChatRequest request) => new(
-        MaxTokens: request.MaxCompletionTokens ?? request.MaxTokens ?? 128,
-        Temperature: request.Temperature ?? .7f,
-        TopP: request.TopP ?? .9f,
-        TopK: request.TopK ?? 50,
-        MinP: request.MinP ?? .1f,
-        RepetitionPenalty: request.RepetitionPenalty ?? 1f,
-        Seed: request.Seed,
-        StopSequences: request.Stop,
-        ReasoningEffort: request.ReasoningEffort);
-
-    internal static OpenVinoGenerationOptions ToOpenVinoOptions(ChatGenerationOptions options) => new(
-        MaxNewTokens: options.MaxTokens,
-        Temperature: options.Temperature,
-        TopP: options.TopP,
-        DoSample: options.Temperature > 0,
-        RepetitionPenalty: options.RepetitionPenalty,
-        FrequencyPenalty: options.FrequencyPenalty,
-        PresencePenalty: options.PresencePenalty,
-        Seed: options.Seed,
-        StopSequences: options.StopSequences,
-        ReasoningEffort: options.ReasoningEffort);
-
     private static bool IsSupportedReasoningEffort(string value) => value.Trim().ToLowerInvariant() switch
     {
         "none" or "low" or "medium" or "high" or "xhigh" or "max" => true,
@@ -516,12 +573,6 @@ public sealed class OpenAiCompatibleController(
                 toolCall.Type,
                 new OpenAiToolCallFunctionDelta(toolCall.Function.Name, toolCall.Function.Arguments))).ToArray();
 
-    private static bool IsToolMessage(OpenAiChatMessage message) =>
-        string.Equals(message.Role, "tool", StringComparison.OrdinalIgnoreCase) || message.ToolCalls is { Count: > 0 };
-
-    private static string GetModelId(ModelLoadStatus status) =>
-        string.IsNullOrWhiteSpace(status.ModelPath) ? "local-model" : Path.GetFileNameWithoutExtension(status.ModelPath);
-
     private static OpenAiChatCompletionResponse CreateCompletion(GenerationResult result, string model, string finishReason) =>
         new($"chatcmpl-{Guid.NewGuid():N}", "chat.completion", DateTimeOffset.UtcNow.ToUnixTimeSeconds(), model,
             new[] { new OpenAiChatCompletionChoice(
@@ -536,101 +587,6 @@ public sealed class OpenAiCompatibleController(
             ? promptTokens + result.TokenCount
             : null;
         return new OpenAiUsage(result.PromptTokenCount, result.TokenCount, totalTokens, result.TokensPerSecond);
-    }
-
-    internal static ChatMessage ParseMessage(OpenAiChatMessage message)
-    {
-        if (message.Content is null)
-            return new ChatMessage(message.Role, string.Empty);
-        if (message.Content is string text)
-            return new ChatMessage(message.Role, text);
-        if (message.Content is JsonElement { ValueKind: JsonValueKind.String } textElement)
-            return new ChatMessage(message.Role, textElement.GetString() ?? string.Empty);
-        if (message.Content is not JsonElement { ValueKind: JsonValueKind.Array } parts)
-            throw new ArgumentException("Message content must be a string or an array of text and image parts.", nameof(message));
-
-        var textBuilder = new StringBuilder();
-        var images = new List<ChatImage>();
-        var contentParts = new List<ChatMessageContentPart>();
-        foreach (var part in parts.EnumerateArray())
-        {
-            if (part.ValueKind != JsonValueKind.Object || !part.TryGetProperty("type", out var typeProperty) ||
-                typeProperty.ValueKind != JsonValueKind.String)
-                throw new ArgumentException("Every message content part requires a type.", nameof(message));
-
-            switch (typeProperty.GetString())
-            {
-                case "text":
-                    if (!part.TryGetProperty("text", out var textProperty) || textProperty.ValueKind != JsonValueKind.String)
-                        throw new ArgumentException("Text content parts require a text value.", nameof(message));
-                    var textPart = textProperty.GetString() ?? string.Empty;
-                    textBuilder.Append(textPart);
-                    contentParts.Add(new ChatMessageContentPart(textPart));
-                    break;
-                case "image_url":
-                    var imageIndex = images.Count;
-                    images.Add(ParseImagePart(part));
-                    contentParts.Add(new ChatMessageContentPart(ImageIndex: imageIndex));
-                    break;
-                default:
-                    throw new ArgumentException("Only text and image_url content parts are supported by local backends.", nameof(message));
-            }
-        }
-
-        return new ChatMessage(
-            message.Role,
-            textBuilder.ToString(),
-            images.Count == 0 ? null : images,
-            contentParts);
-    }
-
-    private static ChatImage ParseImagePart(JsonElement part)
-    {
-        if (!part.TryGetProperty("image_url", out var imageUrl) || imageUrl.ValueKind != JsonValueKind.Object ||
-            !imageUrl.TryGetProperty("url", out var urlProperty) || urlProperty.ValueKind != JsonValueKind.String)
-            throw new ArgumentException("Image content parts require an image_url.url value.", nameof(part));
-
-        var url = urlProperty.GetString();
-        if (string.IsNullOrWhiteSpace(url) || !url.StartsWith("data:", StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException("Only local data image URLs are supported; remote image URLs are not fetched.", nameof(part));
-
-        var comma = url.IndexOf(',');
-        if (comma < 0)
-            throw new ArgumentException("The image data URL is invalid.", nameof(part));
-        var metadata = url["data:".Length..comma].Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var mediaType = metadata.FirstOrDefault() ?? string.Empty;
-        if (!mediaType.StartsWith("image/", StringComparison.OrdinalIgnoreCase) ||
-            !metadata.Skip(1).Any(value => value.Equals("base64", StringComparison.OrdinalIgnoreCase)))
-            throw new ArgumentException("Images must use a base64 data URL with an image media type.", nameof(part));
-
-        byte[] data;
-        try
-        {
-            data = Convert.FromBase64String(url[(comma + 1)..]);
-        }
-        catch (FormatException exception)
-        {
-            throw new ArgumentException("The image data URL contains invalid base64 data.", nameof(part), exception);
-        }
-
-        const int maximumImageBytes = 20 * 1024 * 1024;
-        if (data.Length == 0 || data.Length > maximumImageBytes)
-            throw new ArgumentException("Image data must be between 1 byte and 20 MiB.", nameof(part));
-
-        return new ChatImage(mediaType, data);
-    }
-
-    private OpenAiErrorResponse? ValidateImageCapability(ModelLoadStatus status, IReadOnlyList<ChatMessage> messages)
-    {
-        if (!messages.Any(message => message.Images is { Count: > 0 }))
-            return null;
-
-        if (status.Backend is not ("OpenVINO" or "Vulkan" or "VULKAN" or "CUDA" or "SYCL" or "CPU"))
-            return CreateError($"Image input is not supported by the '{status.Backend}' backend.", "unsupported_request_error");
-        if (!modelRuntime.SupportsImageInput(status.Backend, status.ModelPath))
-            return CreateError("The loaded model does not support image input.", "unsupported_request_error");
-
-        return null;
     }
 
     private static OpenAiChatCompletionChunk CreateChunk(
@@ -702,13 +658,62 @@ public sealed class OpenAiCompatibleController(
     private async Task WriteSseErrorAsync(string message, CancellationToken cancellationToken)
     {
         await Response.WriteAsync($"data: {JsonSerializer.Serialize(CreateError(message, "server_error"), SseJsonOptions)}\n\n", cancellationToken).ConfigureAwait(false);
+        await Response.WriteAsync("data: [DONE]\n\n", cancellationToken).ConfigureAwait(false);
         await Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task WriteSseHeartbeatAsync(CancellationToken cancellationToken)
+    private Task WriteSseHeartbeatAsync(string completionId, string model, CancellationToken cancellationToken) =>
+        WriteSseAsync(CreateChunk(completionId, model, new OpenAiChatCompletionDelta(), null), cancellationToken);
+
+    private async Task TraceGenerationResultAsync(string requestId, GenerationResult result)
     {
-        await Response.WriteAsync(": keep-alive\n\n", cancellationToken).ConfigureAwait(false);
-        await Response.Body.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await TraceAsync(
+            requestId,
+            "Backend",
+            "in",
+            "Antwort vom Backend",
+            $"{result.TokenCount} Tokens · {result.TokensPerSecond:0.##} tok/s · finish_reason={result.FinishReason}",
+            SerializeTracePayload(new
+            {
+                result.Text,
+                result.TokenCount,
+                DurationMilliseconds = result.Duration.TotalMilliseconds,
+                result.TokensPerSecond,
+                result.PromptTokenCount,
+                result.FinishReason,
+                result.ToolCalls
+            })).ConfigureAwait(false);
+    }
+
+    private async Task TraceAsync(
+        string requestId,
+        string layer,
+        string direction,
+        string title,
+        string detail,
+        string? payload = null)
+    {
+        if (providerTraceStore is null)
+            return;
+
+        try
+        {
+            await providerTraceStore.PublishAsync(
+                new ProviderTraceEntry(Guid.NewGuid(), requestId, DateTimeOffset.UtcNow, layer, direction, title, detail, payload),
+                CancellationToken.None).ConfigureAwait(false);
+        }
+        catch
+        {
+        }
+    }
+
+    private static string? SerializeTracePayload<T>(T? value)
+    {
+        if (value is null)
+            return null;
+
+        var payload = JsonSerializer.Serialize(value, SseJsonOptions);
+        return payload.Length <= 4000 ? payload : $"{payload[..4000]}...";
     }
 
     private static async Task CompleteChannelAsync(Task<GenerationResult> generationTask, ChannelWriter<string> writer)

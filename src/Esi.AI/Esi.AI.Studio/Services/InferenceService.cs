@@ -46,8 +46,13 @@ public sealed class InferenceScheduler : IInferenceScheduler, IDisposable
 }
 
 /// <summary>Coordinates backend selection, multimodal preparation, and token generation.</summary>
-public sealed class InferenceService(ModelRuntime modelRuntime, IInferenceScheduler scheduler) : IInferenceService
+public sealed class InferenceService(
+    ModelRuntime modelRuntime,
+    IInferenceScheduler scheduler,
+    IInferenceFailureCoordinator? failureCoordinator = null) : IInferenceService
 {
+    private readonly IInferenceFailureCoordinator effectiveFailureCoordinator = failureCoordinator ?? NoOpInferenceFailureCoordinator.Instance;
+
     /// <inheritdoc />
     public Task<GenerationResult> GenerateAsync(
         PersistedChat chat,
@@ -69,51 +74,75 @@ public sealed class InferenceService(ModelRuntime modelRuntime, IInferenceSchedu
         var content = request.Content.Trim();
         var messages = chat.Messages.Select(message => new ChatMessage(message.Role, message.Content))
             .Append(new ChatMessage("user", content, request.Images, request.ContentParts)).ToArray();
+        OpenVinoModelLoadStatus? openVinoStatus = null;
         if (string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase))
         {
             var modelPath = Path.GetFullPath(request.ModelPath!);
-            var openVinoStatus = modelRuntime.GetOpenVinoStatus();
+            openVinoStatus = modelRuntime.GetOpenVinoStatus();
             if (!openVinoStatus.IsModelLoaded)
                 throw new InvalidOperationException("The selected OpenVINO model is not loaded.");
             if (!string.Equals(openVinoStatus.ModelPath, modelPath, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException($"The selected OpenVINO model does not match the loaded model. Loaded: '{openVinoStatus.ModelPath}', selected: '{modelPath}'.");
-
-            using var openVinoSession = modelRuntime.CreateOpenVinoChatSession();
-            var imageTensors = OpenVinoImageTensorFactory.Create(messages);
-            try
-            {
-                var openVinoGeneration = openVinoSession.GenerateWithStats(messages, streamer: delta =>
-                {
-                    cancellationToken.ThrowIfCancellationRequested();
-                    onDelta?.Invoke(delta).GetAwaiter().GetResult();
-                }, images: imageTensors.Length == 0 ? null : imageTensors);
-                return new GenerationResult(openVinoGeneration.Text, openVinoGeneration.TokenCount, TimeSpan.Zero, openVinoGeneration.TokensPerSecond);
-            }
-            finally
-            {
-                foreach (var imageTensor in imageTensors)
-                    imageTensor.Dispose();
-            }
         }
 
         if (request.Images is { Count: > 0 } && !modelRuntime.SupportsImageInput(backend, request.ModelPath))
             throw new InvalidOperationException($"The {backend} backend does not support image input.");
-        if (string.Equals(backend, "vLLM", StringComparison.OrdinalIgnoreCase) || string.Equals(backend, "SGLang", StringComparison.OrdinalIgnoreCase))
-        {
-            using var pythonSession = modelRuntime.CreatePythonChatSession();
-            return await pythonSession.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (string.Equals(backend, "dotLLM", StringComparison.OrdinalIgnoreCase))
-        {
-            using var dotLlmSession = modelRuntime.CreateDotLlmChatSession();
-            return await dotLlmSession.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
-        }
-
-        if (!string.Equals(Path.GetExtension(request.ModelPath), ".gguf", StringComparison.OrdinalIgnoreCase))
+        if (!string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(backend, "vLLM", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(backend, "SGLang", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(backend, "dotLLM", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(Path.GetExtension(request.ModelPath), ".gguf", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("LLama chat requires a .gguf model path.", nameof(request));
 
-        using var session = modelRuntime.CreateLlamaChatSession("You are a helpful assistant.", request.ModelPath);
-        return await session.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            if (string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase))
+            {
+                using var openVinoSession = modelRuntime.CreateOpenVinoChatSession();
+                var imageTensors = OpenVinoImageTensorFactory.Create(messages);
+                try
+                {
+                    var openVinoGeneration = openVinoSession.GenerateWithStats(messages, streamer: delta =>
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        onDelta?.Invoke(delta).GetAwaiter().GetResult();
+                    }, images: imageTensors.Length == 0 ? null : imageTensors);
+                    return new GenerationResult(openVinoGeneration.Text, openVinoGeneration.TokenCount, TimeSpan.Zero, openVinoGeneration.TokensPerSecond);
+                }
+                finally
+                {
+                    foreach (var imageTensor in imageTensors)
+                        imageTensor.Dispose();
+                }
+            }
+
+            if (string.Equals(backend, "vLLM", StringComparison.OrdinalIgnoreCase) || string.Equals(backend, "SGLang", StringComparison.OrdinalIgnoreCase))
+            {
+                using var pythonSession = modelRuntime.CreatePythonChatSession();
+                return await pythonSession.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (string.Equals(backend, "dotLLM", StringComparison.OrdinalIgnoreCase))
+            {
+                using var dotLlmSession = modelRuntime.CreateDotLlmChatSession();
+                return await dotLlmSession.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
+            }
+
+            using var session = modelRuntime.CreateLlamaChatSession("You are a helpful assistant.", request.ModelPath);
+            return await session.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (ArgumentException exception) when (exception.ParamName == nameof(request))
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            await effectiveFailureCoordinator.FailAsync(exception).ConfigureAwait(false);
+            throw;
+        }
     }
 }

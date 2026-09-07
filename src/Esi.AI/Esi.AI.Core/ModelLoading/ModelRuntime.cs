@@ -1,15 +1,23 @@
 using System.Collections.Concurrent;
-using System.Text.Json;
 using Esi.AI.Core.Chat;
 using Esi.AI.Models;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Esi.AI.Core.ModelLoading;
 
 /// <summary>
 /// Coordinates all model runtimes and exposes one backend-independent loaded-model view.
 /// </summary>
-public sealed class ModelRuntime : IHostedService, IDisposable
+/// <summary>Exposes process-wide model runtime cleanup to application lifecycle services.</summary>
+public interface IModelRuntimeShutdown
+{
+    /// <summary>Stops every active model runtime and releases its resources.</summary>
+    Task StopAsync(CancellationToken cancellationToken = default);
+}
+
+public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDisposable
 {
     private readonly LlamaModelLoader llama;
     private readonly OpenVinoModelLoader openVino;
@@ -23,7 +31,10 @@ public sealed class ModelRuntime : IHostedService, IDisposable
     private readonly BackendPrerequisiteProvisioner prerequisites;
     private readonly IModelRuntimeStatusPublisher statusPublisher;
     private readonly ModelLifecycleCoordinator lifecycleCoordinator;
+    private readonly OpenVinoLoadGate openVinoLoadGate;
+    private readonly ILogger<ModelRuntime> logger;
     private readonly ConcurrentDictionary<string, PendingModel> pendingModels = new(StringComparer.OrdinalIgnoreCase);
+    private int stopStarted;
 
     public ModelRuntime()
         : this(new LlamaModelLoader(), new OpenVinoModelLoader(), new PythonInferenceServer(), new DotLlmInProcessRuntime())
@@ -42,7 +53,9 @@ public sealed class ModelRuntime : IHostedService, IDisposable
         DotLlmInProcessRuntime dotLlm,
         BackendPrerequisiteProvisioner? prerequisites = null,
         IModelRuntimeStatusPublisher? statusPublisher = null,
-        ModelLifecycleCoordinator? lifecycleCoordinator = null)
+        ModelLifecycleCoordinator? lifecycleCoordinator = null,
+        ILogger<ModelRuntime>? logger = null,
+        OpenVinoLoadGate? openVinoLoadGate = null)
     {
         this.llama = llama ?? throw new ArgumentNullException(nameof(llama));
         this.openVino = openVino ?? throw new ArgumentNullException(nameof(openVino));
@@ -56,6 +69,8 @@ public sealed class ModelRuntime : IHostedService, IDisposable
         this.prerequisites = prerequisites ?? new BackendPrerequisiteProvisioner();
         this.statusPublisher = statusPublisher ?? NoOpModelRuntimeStatusPublisher.Instance;
         this.lifecycleCoordinator = lifecycleCoordinator ?? new ModelLifecycleCoordinator();
+        this.logger = logger ?? NullLogger<ModelRuntime>.Instance;
+        this.openVinoLoadGate = openVinoLoadGate ?? new OpenVinoLoadGate();
     }
 
     /// <inheritdoc />
@@ -126,11 +141,11 @@ public sealed class ModelRuntime : IHostedService, IDisposable
     public Task LoadAsync(
         OpenVinoLoadRequest request,
         CancellationToken cancellationToken = default) =>
-        TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.OpenVino, request.Device, async () =>
+        ExecuteOpenVinoLoadAsync(() => TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.OpenVino, request.Device, async () =>
         {
             await prerequisites.PrepareAsync(ConfigurationBackend.OpenVino, cancellationToken: cancellationToken).ConfigureAwait(false);
             await openVinoAdapter.LoadAsync(request, cancellationToken).ConfigureAwait(false);
-        });
+        }));
 
     public Task LoadAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default) =>
         TrackPendingModelAsync(request.ModelPath, request.Backend, request.Backend switch
@@ -157,7 +172,11 @@ public sealed class ModelRuntime : IHostedService, IDisposable
         CancellationToken cancellationToken = default) =>
         llama.LoadAsync(modelPath, backend, gpuLayerCount, contextSize, vulkanDeviceWeights, advanced, cancellationToken);
 
-    public Task StopLlamaAsync(CancellationToken cancellationToken = default) => llama.StopAsync(cancellationToken);
+    public async Task StopLlamaAsync(CancellationToken cancellationToken = default)
+    {
+        await llama.StopAsync(cancellationToken).ConfigureAwait(false);
+        await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
+    }
 
     /// <summary>
     /// Stops every active model runtime and releases its loaded model resources.
@@ -166,14 +185,27 @@ public sealed class ModelRuntime : IHostedService, IDisposable
     /// <inheritdoc />
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        await llama.StopAsync(cancellationToken).ConfigureAwait(false);
-        await openVino.UnloadAsync(cancellationToken).ConfigureAwait(false);
-        await python.StopAsync(cancellationToken).ConfigureAwait(false);
-        await dotLlm.StopAsync(cancellationToken).ConfigureAwait(false);
+        if (Interlocked.Exchange(ref stopStarted, 1) != 0)
+            return;
+
+        var failures = new List<Exception>();
+        await StopRuntimeAsync("LLama", () => llama.StopAsync(cancellationToken), failures).ConfigureAwait(false);
+        await StopRuntimeAsync("OpenVINO", () => openVino.UnloadAsync(cancellationToken), failures).ConfigureAwait(false);
+        await StopRuntimeAsync("Python", () => python.StopAsync(cancellationToken), failures).ConfigureAwait(false);
+        await StopRuntimeAsync("dotLLM", () => dotLlm.StopAsync(cancellationToken), failures).ConfigureAwait(false);
+        await PublishStatusAsync(
+            "LoadedModel_Delete",
+            () => statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken)).ConfigureAwait(false);
+
+        if (failures.Count > 0)
+            throw new AggregateException("One or more model runtimes failed to stop.", failures);
     }
 
-    public Task UnloadLlamaAsync(string modelPath, CancellationToken cancellationToken = default) =>
-        llama.UnloadAsync(modelPath, cancellationToken);
+    public async Task UnloadLlamaAsync(string modelPath, CancellationToken cancellationToken = default)
+    {
+        await llama.UnloadAsync(modelPath, cancellationToken).ConfigureAwait(false);
+        await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
+    }
 
     public LlamaChatSession CreateLlamaChatSession(string systemPrompt, string? modelPath = null) =>
         llama.CreateChatSession(systemPrompt, modelPath);
@@ -185,20 +217,31 @@ public sealed class ModelRuntime : IHostedService, IDisposable
         OpenVinoGenerationOptions? generationOptions,
         string? cacheDirectory,
         OpenVinoNpuOptions? npuOptions) =>
-        openVino.LoadAsync(modelPath, device, cancellationToken, generationOptions, cacheDirectory, npuOptions);
+        ExecuteOpenVinoLoadAsync(() => openVino.LoadAsync(modelPath, device, cancellationToken, generationOptions, cacheDirectory, npuOptions));
 
     public OpenVinoChatSession CreateOpenVinoChatSession() => openVino.CreateChatSession();
 
-    public Task UnloadOpenVinoAsync(CancellationToken cancellationToken = default) =>
-        openVino.UnloadAsync(cancellationToken);
+    public async Task UnloadOpenVinoAsync(CancellationToken cancellationToken = default)
+    {
+        await openVino.UnloadAsync(cancellationToken).ConfigureAwait(false);
+        await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
+    }
 
-    public Task StopPythonAsync(CancellationToken cancellationToken = default) => python.StopAsync(cancellationToken);
+    public async Task StopPythonAsync(CancellationToken cancellationToken = default)
+    {
+        await python.StopAsync(cancellationToken).ConfigureAwait(false);
+        await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
+    }
 
     public PythonInferenceChatSession CreatePythonChatSession() => python.CreateChatSession();
 
     public DotLlmInProcessChatSession CreateDotLlmChatSession() => dotLlm.CreateChatSession();
 
-    public Task StopDotLlmAsync(CancellationToken cancellationToken = default) => dotLlm.StopAsync(cancellationToken);
+    public async Task StopDotLlmAsync(CancellationToken cancellationToken = default)
+    {
+        await dotLlm.StopAsync(cancellationToken).ConfigureAwait(false);
+        await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
+    }
 
     public async Task UnloadAsync(string modelPath, ConfigurationBackend backend, CancellationToken cancellationToken = default)
     {
@@ -210,6 +253,8 @@ public sealed class ModelRuntime : IHostedService, IDisposable
             await dotLlm.StopAsync(cancellationToken);
         else
             await llama.UnloadAsync(modelPath, cancellationToken);
+
+        await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
     }
 
     public void Dispose()
@@ -225,14 +270,13 @@ public sealed class ModelRuntime : IHostedService, IDisposable
         var key = $"{backend}|{modelPath}";
         pendingModels[key] = new PendingModel(modelPath, backend, runtime);
         lifecycleCoordinator.Begin(modelPath, backend, runtime);
-        using var monitorCancellation = new CancellationTokenSource();
-        Task monitorTask = Task.CompletedTask;
         var completed = false;
         Exception? loadFailure = null;
         try
         {
-            await statusPublisher.LoadedModel_CreateAsync(LoadedModel_Read()).ConfigureAwait(false);
-            monitorTask = PublishChangedStatusesAsync(LoadedModel_Read(), monitorCancellation.Token);
+            await PublishStatusAsync(
+                "LoadedModel_Create",
+                () => statusPublisher.LoadedModel_CreateAsync(LoadedModel_Read())).ConfigureAwait(false);
             await load().ConfigureAwait(false);
             completed = true;
         }
@@ -243,46 +287,61 @@ public sealed class ModelRuntime : IHostedService, IDisposable
         }
         finally
         {
-            monitorCancellation.Cancel();
-            try
-            {
-                await monitorTask.ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (monitorCancellation.IsCancellationRequested)
-            {
-            }
             pendingModels.TryRemove(key, out _);
             if (completed)
                 lifecycleCoordinator.Complete(modelPath, backend, runtime);
             else if (loadFailure is not null)
                 lifecycleCoordinator.Fail(modelPath, backend, runtime, loadFailure.Message);
             var status = LoadedModel_Read();
-            if (completed)
-                await statusPublisher.LoadedModel_UpdateAsync(status).ConfigureAwait(false);
-            else
-                await statusPublisher.LoadedModel_DeleteAsync(status).ConfigureAwait(false);
+            await PublishStatusAsync(
+                "LoadedModel_Update",
+                () => statusPublisher.LoadedModel_UpdateAsync(status)).ConfigureAwait(false);
+            if (!completed)
+            {
+                await PublishStatusAsync(
+                    "LoadedModel_Delete",
+                    () => statusPublisher.LoadedModel_DeleteAsync(status)).ConfigureAwait(false);
+            }
         }
     }
 
-    private async Task PublishChangedStatusesAsync(ModelLoadStatus previous, CancellationToken cancellationToken)
+    private async Task ExecuteOpenVinoLoadAsync(Func<Task> load)
     {
-        while (!cancellationToken.IsCancellationRequested)
+        if (!openVinoLoadGate.TryEnter())
+            throw new InvalidOperationException("An OpenVINO model load is already in progress.");
+
+        try
         {
-            try
-            {
-                await Task.Delay(250, cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                return;
-            }
+            await load().ConfigureAwait(false);
+        }
+        finally
+        {
+            openVinoLoadGate.Exit();
+        }
+    }
 
-            var current = LoadedModel_Read();
-            if (JsonSerializer.Serialize(previous) == JsonSerializer.Serialize(current))
-                continue;
+    private async Task PublishStatusAsync(string eventName, Func<Task> publish)
+    {
+        try
+        {
+            await publish().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Failed to publish model runtime status event {EventName}.", eventName);
+        }
+    }
 
-            await statusPublisher.LoadedModel_UpdateAsync(current, cancellationToken).ConfigureAwait(false);
-            previous = current;
+    private async Task StopRuntimeAsync(string runtime, Func<Task> stop, ICollection<Exception> failures)
+    {
+        try
+        {
+            await stop().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            failures.Add(exception);
+            logger.LogError(exception, "Failed to stop the {Runtime} model runtime.", runtime);
         }
     }
 

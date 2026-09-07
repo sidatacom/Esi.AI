@@ -1,4 +1,9 @@
 import { z } from "zod";
+import { zodToJsonSchema } from "zod-to-json-schema";
+
+export function toJsonSchema(schema: z.ZodType): Record<string, unknown> {
+  return zodToJsonSchema(schema, { target: "openApi3" }) as Record<string, unknown>;
+}
 
 // z.coerce.boolean() converts "false" string to true (truthy).
 // This preprocessor handles string "false"/"true" correctly.
@@ -121,4 +126,18 @@ export const debugVariablesSchema = z.object({ scope: debugScopeSchema }).strict
 export const debugVariableValuesSchema = z.object({ variableNames: z.array(variableNameSchema).min(1).max(20), scope: debugScopeSchema }).strict();
 export const debugEvaluateSchema = z.object({ expression: z.string().min(1).max(500).refine((expression) => !expression.includes("*"), { message: "Wildcard expressions are not allowed" }) }).strict();
 export const debugSettingsSchema = z.object({ setting: z.string().min(3).max(128).refine((setting) => setting.includes(".") && !/[\\*]/.test(setting), { message: "A fully qualified setting name without wildcards is required" }) }).strict();
-export const debugCheckHostReadinessSchema = debugEmptySchema;
+export const debugRestartSchema = z.object({ rebuildTaskName: z.string().min(1).optional().describe("Optional exact task name from tasks.json to run after stopping and before restarting") }).strict();
+export const debugCheckHostReadinessSchema = z.object({ sessionId: z.string().min(1).optional() }).strict();
+export const csharpDevKitEmptySchema = debugEmptySchema;
+export const csharpDevKitArgumentsSchema = z.array(z.unknown()).max(20).describe("Optional positional arguments forwarded to the C# Dev Kit command; the extension does not publish command-specific argument metadata");
+export const csharpDevKitReadinessArgumentsSchema = z.array(z.object({ sessionId: z.string().min(1).optional() }).strict()).max(1).describe("Optional active debug session ID; when omitted, EsiMCP reads vscode.debug.activeDebugSession at call time");
+export const csharpDevKitRestartArgumentsSchema = z.array(debugRestartSchema).max(1).describe("Optional restart settings; rebuildTaskName must match a task name from tasks.json");
+export const csharpDevKitNoArgumentsSchema = z.array(z.unknown()).max(0).describe("This virtual command does not accept arguments");
+export const csharpDevKitCommandSchema = z.object({
+  commandId: z.string().min(1).max(256),
+  arguments: z.array(z.unknown()).max(20).optional(),
+}).strict();
+export const vscodeCommandSchema = z.object({
+  commandId: z.string().min(1).max(256),
+  arguments: z.record(z.unknown()).optional(),
+}).strict();

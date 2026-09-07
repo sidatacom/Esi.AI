@@ -143,3 +143,64 @@
         overflow-y: auto;
     }
 }
+
+.studio-brand {
+    padding: 1.55rem 1.25rem 1.35rem;
+    border-bottom: 1px solid rgba(255, 255, 255, .12);
+}
+
+.studio-brand a {
+    display: flex;
+    align-items: center;
+    gap: .75rem;
+    color: #f5fbfa;
+    text-decoration: none;
+}
+
+.studio-brand-mark {
+    display: grid;
+    width: 2.15rem;
+    height: 2.15rem;
+    place-items: center;
+    border: 1px solid #e2a07f;
+    color: #ffd8c5;
+    font-size: 1.1rem;
+    font-weight: 700;
+}
+
+.studio-brand strong,
+.studio-brand small { display: block; }
+.studio-brand strong { font-size: 1rem; letter-spacing: .02em; }
+.studio-brand small { margin-top: .15rem; color: #a8c4c2; font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; }
+
+::deep .fluent-nav {
+    width: auto !important;
+    min-width: 0 !important;
+    padding: 1rem .75rem;
+    background: transparent;
+    background-color: #12343d !important;
+}
+
+::deep .fluent-nav .fluent-navitem {
+    margin: .18rem 0;
+    padding: .7rem .8rem;
+    border-radius: 2px;
+    background: transparent !important;
+    color: #b9d0ce !important;
+    font-size: .87rem;
+}
+
+::deep .fluent-nav .fluent-navitem:hover {
+    background: rgba(255, 255, 255, .08) !important;
+    color: #ffffff !important;
+}
+
+::deep .fluent-nav .fluent-navitem.active {
+    background: #1f5960 !important;
+    color: #ffffff !important;
+    box-shadow: inset 3px 0 #d5e0df;
+}
+
+.studio-logout-form { margin: .65rem 0 0; padding: .65rem .8rem 0; border-top: 1px solid rgba(255, 255, 255, .12); }
+.studio-logout-form button { width: 100%; padding: .55rem 0; border: 0; background: transparent; color: #b9d0ce; cursor: pointer; text-align: left; font: inherit; font-size: .87rem; }
+.studio-logout-form button:hover { color: #ffffff; }

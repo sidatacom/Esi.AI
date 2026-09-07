@@ -1,16 +1,20 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using DotLLM.Core.Configuration;
 using DotLLM.Core.Models;
 using DotLLM.Engine;
+using DotLLM.Engine.Constraints;
 using DotLLM.Models;
 using DotLLM.Models.Gguf;
 using DotLLM.Tokenizers;
 using DotLLM.Tokenizers.ChatTemplates;
+using DotLLM.Tokenizers.ToolCallParsers;
 using GenerationResult = Esi.AI.Core.Chat.GenerationResult;
 using Esi.AI.Models;
 using ModelChatMessage = Esi.AI.Models.ChatMessage;
 using DotChatMessage = DotLLM.Tokenizers.ChatMessage;
+using DotToolCall = DotLLM.Tokenizers.ToolCall;
 
 using System.Text;
 
@@ -26,6 +30,7 @@ public sealed class DotLlmInProcessRuntime : IDisposable
     private GgufFile? gguf;
     private DotLLM.Tokenizers.ITokenizer? tokenizer;
     private JinjaChatTemplate? chatTemplate;
+    private IToolCallParser? toolCallParser;
     private string? modelPath;
     private string loadLog = string.Empty;
 
@@ -68,12 +73,14 @@ public sealed class DotLlmInProcessRuntime : IDisposable
         var loaded = await Task.Run(() => ModelLoader.LoadFromGguf(request.ModelPath, CreateThreading(request.Threads)), cancellationToken).ConfigureAwait(false);
         var loadedTokenizer = GgufBpeTokenizerFactory.Load(loaded.Gguf.Metadata);
         var loadedTemplate = GgufChatTemplateFactory.TryCreate(loaded.Gguf.Metadata, loadedTokenizer);
+        var loadedToolCallParser = GgufChatTemplateFactory.CreateToolCallParser(loaded.Gguf.Metadata, loaded.Model.Config.Architecture);
         lock (sync)
         {
             model = loaded.Model;
             gguf = loaded.Gguf;
             tokenizer = loadedTokenizer;
             chatTemplate = loadedTemplate;
+            toolCallParser = loadedToolCallParser;
             modelPath = request.ModelPath;
             loadLog = $"Loaded dotLLM in-process on {request.Device}.";
         }
@@ -86,7 +93,7 @@ public sealed class DotLlmInProcessRuntime : IDisposable
         {
             if (model is null || tokenizer is null)
                 throw new InvalidOperationException("No in-process dotLLM model is loaded.");
-            return new DotLlmInProcessChatSession(model, tokenizer, chatTemplate);
+            return new DotLlmInProcessChatSession(model, tokenizer, chatTemplate, toolCallParser);
         }
     }
 
@@ -104,6 +111,7 @@ public sealed class DotLlmInProcessRuntime : IDisposable
             gguf = null;
             tokenizer = null;
             chatTemplate = null;
+            toolCallParser = null;
             modelPath = null;
             loadLog = "dotLLM unloaded.";
         }
@@ -119,7 +127,11 @@ public sealed class DotLlmInProcessRuntime : IDisposable
 }
 
 /// <summary>Generates chat responses using an in-process dotLLM model.</summary>
-public sealed class DotLlmInProcessChatSession(IModel model, DotLLM.Tokenizers.ITokenizer tokenizer, JinjaChatTemplate? chatTemplate) : IDisposable
+public sealed class DotLlmInProcessChatSession(
+    IModel model,
+    DotLLM.Tokenizers.ITokenizer tokenizer,
+    JinjaChatTemplate? chatTemplate,
+    IToolCallParser? toolCallParser) : IDisposable
 {
     /// <summary>Generates a response for the supplied chat messages.</summary>
     public Task<GenerationResult> GenerateWithStatsAsync(IReadOnlyList<ModelChatMessage> messages, CancellationToken cancellationToken = default) =>
@@ -142,7 +154,7 @@ public sealed class DotLlmInProcessChatSession(IModel model, DotLLM.Tokenizers.I
         if (messages.Count == 0)
             throw new ArgumentException("At least one chat message is required.", nameof(messages));
 
-        var prompt = CreatePrompt(messages);
+        var prompt = CreatePrompt(messages, options);
         var generator = new TextGenerator(model, tokenizer);
         var inferenceOptions = new InferenceOptions
         {
@@ -153,7 +165,8 @@ public sealed class DotLlmInProcessChatSession(IModel model, DotLLM.Tokenizers.I
             MinP = options.MinP,
             RepetitionPenalty = options.RepetitionPenalty,
             StopSequences = options.StopSequences ?? [],
-            Seed = options.Seed
+            Seed = options.Seed,
+            ResponseFormat = CreateToolResponseFormat(options)
         };
         var stopwatch = Stopwatch.StartNew();
         var responseText = new StringBuilder();
@@ -170,7 +183,21 @@ public sealed class DotLlmInProcessChatSession(IModel model, DotLLM.Tokenizers.I
         if (string.IsNullOrWhiteSpace(responseText.ToString()))
             throw new InvalidOperationException("dotLLM returned an empty answer.");
         var promptTokenCount = tokenizer.Encode(prompt).Length;
-        return new GenerationResult(responseText.ToString(), generatedTokenCount, stopwatch.Elapsed, tokensPerSecond, promptTokenCount);
+        var generatedText = responseText.ToString();
+        var toolCalls = options.Tools is { Count: > 0 } && toolCallParser is not null
+            ? toolCallParser.TryParse(generatedText)
+            : null;
+        return new GenerationResult(
+            toolCalls is { Length: > 0 } ? string.Empty : generatedText,
+            generatedTokenCount,
+            stopwatch.Elapsed,
+            tokensPerSecond,
+            promptTokenCount,
+            toolCalls is { Length: > 0 } ? "tool_calls" : "stop",
+            toolCalls?.Select(call => new OpenAiToolCall(
+                call.Id,
+                "function",
+                new OpenAiToolCallFunction(call.FunctionName, call.Arguments))).ToArray());
     }
 
     /// <inheritdoc />
@@ -178,12 +205,68 @@ public sealed class DotLlmInProcessChatSession(IModel model, DotLLM.Tokenizers.I
     {
     }
 
-    private string CreatePrompt(IReadOnlyList<ModelChatMessage> messages)
+    private string CreatePrompt(IReadOnlyList<ModelChatMessage> messages, ChatGenerationOptions options)
     {
-        var templateMessages = messages.Select(message => new DotChatMessage { Role = message.Role, Content = message.Content }).ToArray();
+        var templateMessages = messages.Select(message => new DotChatMessage
+        {
+            Role = message.Role,
+            Content = message.Content,
+            ToolCallId = message.ToolCallId,
+            ToolCalls = message.ToolCalls?.Select(call => new DotToolCall(call.Id, call.Function.Name, call.Function.Arguments)).ToArray()
+        }).ToArray();
         if (chatTemplate is not null)
-            return chatTemplate.Apply(templateMessages, new ChatTemplateOptions { AddGenerationPrompt = true });
+            return chatTemplate.Apply(templateMessages, new ChatTemplateOptions
+            {
+                AddGenerationPrompt = true,
+                Tools = CreateToolDefinitions(options)
+            });
 
         return string.Join('\n', messages.Select(message => $"{message.Role}: {message.Content}")) + "\nassistant:";
     }
+
+    private static DotLLM.Tokenizers.ToolDefinition[]? CreateToolDefinitions(ChatGenerationOptions options)
+    {
+        if (options.Tools is not { Count: > 0 } || IsToolChoiceNone(options.ToolChoice))
+            return null;
+
+        return options.Tools.Select(tool => new DotLLM.Tokenizers.ToolDefinition(
+            tool.Function.Name,
+            tool.Function.Description ?? string.Empty,
+            tool.Function.Parameters?.GetRawText() ?? "{}"))
+            .ToArray();
+    }
+
+    private static ResponseFormat? CreateToolResponseFormat(ChatGenerationOptions options)
+    {
+        if (options.Tools is not { Count: > 0 } || options.ToolChoice is not JsonElement toolChoice)
+            return null;
+
+        if (toolChoice.ValueKind == JsonValueKind.String && toolChoice.GetString() == "required")
+            return new ResponseFormat.JsonSchema
+            {
+                Schema = ToolCallSchemaBuilder.BuildForRequired(CreateToolDefinitions(options)!),
+                Name = "tool_call"
+            };
+
+        if (toolChoice.ValueKind != JsonValueKind.Object ||
+            !toolChoice.TryGetProperty("function", out var function) ||
+            !function.TryGetProperty("name", out var nameProperty) ||
+            nameProperty.ValueKind != JsonValueKind.String)
+            return null;
+
+        var tool = options.Tools.FirstOrDefault(candidate => candidate.Function.Name == nameProperty.GetString());
+        return tool is null
+            ? throw new ArgumentException($"tool_choice references unknown function '{nameProperty.GetString()}'.", nameof(options))
+            : new ResponseFormat.JsonSchema
+            {
+                Schema = ToolCallSchemaBuilder.BuildForFunction(new DotLLM.Tokenizers.ToolDefinition(
+                    tool.Function.Name,
+                    tool.Function.Description ?? string.Empty,
+                    tool.Function.Parameters?.GetRawText() ?? "{}")),
+                Name = "tool_call"
+            };
+    }
+
+    private static bool IsToolChoiceNone(JsonElement? toolChoice) =>
+        toolChoice is JsonElement choice && choice.ValueKind == JsonValueKind.String && choice.GetString() == "none";
 }

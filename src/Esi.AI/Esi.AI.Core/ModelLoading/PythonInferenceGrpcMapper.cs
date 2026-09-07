@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Esi.AI.Core.Grpc;
 using Esi.AI.Models;
 using ModelChatMessage = Esi.AI.Models.ChatMessage;
@@ -50,10 +51,24 @@ internal static class PythonInferenceGrpcMapper
             Seed = generationOptions.Seed ?? 0
         };
         request.StopSequences.AddRange(generationOptions.StopSequences ?? []);
+        if (generationOptions.Tools is { Count: > 0 })
+        {
+            request.Tools.AddRange(generationOptions.Tools.Select(tool => new ToolDefinition
+            {
+                Type = tool.Type,
+                Name = tool.Function.Name,
+                Description = tool.Function.Description ?? string.Empty,
+                ParametersJson = tool.Function.Parameters?.GetRawText() ?? "{}"
+            }));
+        }
+        if (generationOptions.ToolChoice is JsonElement toolChoice && toolChoice.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null)
+            request.ToolChoiceJson = toolChoice.GetRawText();
         request.Messages.AddRange(messages.Select(message => new Esi.AI.Core.Grpc.ChatMessage
         {
             Role = message.Role,
-            Content = message.Content
+            Content = message.Content,
+            ToolCallsJson = message.ToolCalls is { Count: > 0 } ? JsonSerializer.Serialize(message.ToolCalls) : string.Empty,
+            ToolCallId = message.ToolCallId ?? string.Empty
         }));
         return request;
     }

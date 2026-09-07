@@ -133,6 +133,17 @@ public sealed class OpenAiCompatibleControllerTests
         await dataService.LocalModel_UpdateAsync(new ModelCompatibilityUpdate(
             modelPath,
             Capabilities: new ModelCapabilities(ToolCalling: true, ImageInput: true, Thinking: true)));
+        var configuration = await dataService.ModelConfiguration_CreateAsync(new ModelConfiguration(
+            Guid.Empty,
+            "Vision CPU",
+            "Vision test configuration",
+            modelPath,
+            true,
+            1,
+            JsonSerializer.Serialize(new LoadModelRequest(modelPath, "CPU", 0, 4096, new Dictionary<string, float>(), null)),
+            default,
+            default,
+            ConfigurationBackend.Llama));
 
         using var runtime = new ModelRuntime();
         var controller = CreateController(runtime, dataService: dataService);
@@ -141,10 +152,13 @@ public sealed class OpenAiCompatibleControllerTests
         var response = ((OkObjectResult)result).Value as OpenAiModelListResponse;
 
         Assert.IsNotNull(response);
-        var model = response.Data.Single(item => item.Id == modelPath);
-        Assert.IsTrue(model.Capabilities!.ToolCalling);
-        Assert.IsTrue(model.Capabilities.ImageInput);
-        Assert.IsTrue(model.Capabilities.Thinking);
+    var model = response.Data.Single();
+    Assert.AreEqual(configuration.Id.ToString("D"), model.Id);
+    Assert.AreEqual(configuration.Name, model.Name);
+    Assert.IsTrue(model.AutoLaunch);
+    Assert.IsTrue(model.Capabilities!.ToolCalling);
+    Assert.IsTrue(model.Capabilities.ImageInput);
+    Assert.IsTrue(model.Capabilities.Thinking);
 
         Directory.Delete(directory, recursive: true);
     }
@@ -172,7 +186,7 @@ public sealed class OpenAiCompatibleControllerTests
     [TestMethod]
     public void ToOpenVinoOptions_WhenTemperatureIsZero_DisablesSampling()
     {
-        var options = OpenAiCompatibleController.ToOpenVinoOptions(new ChatGenerationOptions(Temperature: 0));
+        var options = OpenAiCompatibleBackendMiddleware.ToOpenVinoOptions(new ChatGenerationOptions(Temperature: 0));
 
         Assert.IsFalse(options.DoSample);
     }
@@ -180,7 +194,7 @@ public sealed class OpenAiCompatibleControllerTests
     [TestMethod]
     public void ToOpenVinoOptions_WhenTemperatureIsPositive_EnablesSampling()
     {
-        var options = OpenAiCompatibleController.ToOpenVinoOptions(new ChatGenerationOptions(Temperature: .7f));
+        var options = OpenAiCompatibleBackendMiddleware.ToOpenVinoOptions(new ChatGenerationOptions(Temperature: .7f));
 
         Assert.IsTrue(options.DoSample);
     }
@@ -188,9 +202,61 @@ public sealed class OpenAiCompatibleControllerTests
     [TestMethod]
     public void ToOpenVinoOptions_WhenReasoningEffortIsProvided_PreservesIt()
     {
-        var options = OpenAiCompatibleController.ToOpenVinoOptions(new ChatGenerationOptions(ReasoningEffort: "high"));
+        var options = OpenAiCompatibleBackendMiddleware.ToOpenVinoOptions(new ChatGenerationOptions(ReasoningEffort: "high"));
 
         Assert.AreEqual("high", options.ReasoningEffort);
+    }
+
+    [TestMethod]
+    public void InferenceTimeoutPolicy_WhenBackendDefaultExists_UsesThatBackendDefault()
+    {
+        using var document = JsonDocument.Parse("{\"name\":\"lookup\"}");
+        var request = new OpenAiBackendChatRequest(
+            "OpenVINO",
+            "model",
+            "/models/model",
+            [new OpenAiChatMessage("user", "Hello")],
+            [new ChatMessage("user", "Hello")],
+            [new OpenAiToolDefinition("function", new OpenAiToolFunction("lookup", Parameters: document.RootElement.Clone()))],
+            new ChatGenerationOptions());
+        var policy = new InferenceTimeoutPolicy(Options.Create(new InferenceTimeoutOptions
+        {
+            Backends = new Dictionary<string, InferenceTimeoutBackendOptions>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["OpenVINO"] = new() { BaseSeconds = 10, SecondsPerTool = 2, SecondsPerPrefillToken = .05 }
+            }
+        }));
+
+        var decision = policy.Calculate(request);
+
+        Assert.AreEqual("OpenVINO", decision.Backend);
+        Assert.AreEqual(1, decision.ToolCount);
+        Assert.IsTrue(decision.Timeout > TimeSpan.FromSeconds(12));
+    }
+
+    [TestMethod]
+    public async Task InferenceTimeoutPolicy_WhenProfileOverrideExists_UsesProfileOverride()
+    {
+        var request = new OpenAiBackendChatRequest(
+            "vLLM",
+            "model",
+            "/models/model",
+            [new OpenAiChatMessage("user", "Hello")],
+            [new ChatMessage("user", "Hello")],
+            null,
+            new ChatGenerationOptions(),
+            new InferenceTimeoutSettings("vLLM", 4, 0, 0));
+        var policy = new InferenceTimeoutPolicy(Options.Create(new InferenceTimeoutOptions
+        {
+            Backends = new Dictionary<string, InferenceTimeoutBackendOptions>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["vLLM"] = new() { BaseSeconds = 1000, SecondsPerTool = 1000, SecondsPerPrefillToken = 1000 }
+            }
+        }));
+
+        var decision = await policy.CalculateAsync(request);
+
+        Assert.AreEqual(TimeSpan.FromSeconds(4), decision.Timeout);
     }
 
     [TestMethod]
@@ -297,7 +363,7 @@ public sealed class OpenAiCompatibleControllerTests
         var dataUrl = $"data:image/png;base64,{Convert.ToBase64String(imageData)}";
         using var document = JsonDocument.Parse($"[{{\"type\":\"text\",\"text\":\"Describe\"}},{{\"type\":\"image_url\",\"image_url\":{{\"url\":\"{dataUrl}\"}}}}]");
 
-        var message = OpenAiCompatibleController.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone()));
+        var message = OpenAiCompatibleBackendMiddleware.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone()));
 
         Assert.AreEqual("Describe", message.Content);
         Assert.IsNotNull(message.Images);
@@ -313,7 +379,7 @@ public sealed class OpenAiCompatibleControllerTests
         var dataUrl = $"data:image/png;base64,{Convert.ToBase64String(imageData)}";
         using var document = JsonDocument.Parse($"[{{\"type\":\"text\",\"text\":\"Describe the image\"}},{{\"type\":\"image_url\",\"image_url\":{{\"url\":\"{dataUrl}\"}}}}]");
 
-        var message = OpenAiCompatibleController.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone()));
+        var message = OpenAiCompatibleBackendMiddleware.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone()));
         var tensors = OpenVinoImageTensorFactory.Create([message]);
 
         try
@@ -337,7 +403,12 @@ public sealed class OpenAiCompatibleControllerTests
     [TestCategory("OpenVINO.Integration")]
     public async Task OpenAiCompatibleApi_WhenPictureIsProvided_DescribesVisibleTools()
     {
-        var apiUrl = Environment.GetEnvironmentVariable("ESI_STUDIO_API_URL") ?? "http://127.0.0.1:7010";
+        var apiUrl = Environment.GetEnvironmentVariable("ESI_STUDIO_API_URL");
+        if (string.IsNullOrWhiteSpace(apiUrl))
+        {
+            Assert.Inconclusive("Set ESI_STUDIO_API_URL to run the model-backed OpenVINO integration test.");
+        }
+
         using var client = new HttpClient
         {
             BaseAddress = new Uri(apiUrl.TrimEnd('/') + "/"),
@@ -398,7 +469,7 @@ public sealed class OpenAiCompatibleControllerTests
     {
         using var document = JsonDocument.Parse("\"Describe this image\"");
 
-        var message = OpenAiCompatibleController.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone()));
+        var message = OpenAiCompatibleBackendMiddleware.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone()));
 
         Assert.AreEqual("Describe this image", message.Content);
         Assert.IsNull(message.Images);
@@ -409,7 +480,135 @@ public sealed class OpenAiCompatibleControllerTests
     {
         using var document = JsonDocument.Parse("[{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://example.com/image.png\"}}]");
 
-        Assert.Throws<ArgumentException>(() => OpenAiCompatibleController.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone())));
+        Assert.Throws<ArgumentException>(() => OpenAiCompatibleBackendMiddleware.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone())));
+    }
+
+    [TestMethod]
+    public void Prepare_WhenToolsAreProvided_PreservesStructuredToolsWithoutPromptInjection()
+    {
+        using var runtime = new ModelRuntime();
+        var middleware = new OpenAiCompatibleBackendMiddleware(runtime, new InferenceScheduler());
+        var status = new ModelLoadStatus("/models/model.gguf", "OpenVINO", 0, 4096, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), true, []);
+        var request = new OpenAiChatRequest(null, [new OpenAiChatMessage("user", "Use lookup.")])
+        {
+            Tools = [new OpenAiToolDefinition("function", new OpenAiToolFunction("lookup", "Looks up a value."))]
+        };
+
+        var normalized = middleware.Prepare(request, status);
+
+        Assert.AreEqual("Use lookup.", normalized.StructuredMessages[0].Content?.ToString());
+        Assert.AreEqual("Use lookup.", normalized.Messages[0].Content);
+        Assert.AreEqual("lookup", normalized.Tools![0].Function.Name);
+    }
+
+    [TestMethod]
+    public void Prepare_WhenManyToolsAreProvided_PreservesEveryToolDefinition()
+    {
+        using var runtime = new ModelRuntime();
+        var middleware = new OpenAiCompatibleBackendMiddleware(runtime, new InferenceScheduler());
+        var status = new ModelLoadStatus("/models/model.gguf", "vLLM", 0, 4096, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), true, []);
+        var tools = Enumerable.Range(1, 89)
+            .Select(index => new OpenAiToolDefinition(
+                "function",
+                new OpenAiToolFunction($"lookup_{index}", $"Looks up value {index}.")))
+            .ToArray();
+        var request = new OpenAiChatRequest(null, [new OpenAiChatMessage("user", "Use a lookup.")])
+        {
+            Tools = tools
+        };
+
+        var normalized = middleware.Prepare(request, status);
+
+        Assert.IsNotNull(normalized.Tools);
+        Assert.AreEqual(89, normalized.Tools.Count);
+        CollectionAssert.AreEqual(
+            tools.Select(tool => tool.Function.Name).ToArray(),
+            normalized.Tools.Select(tool => tool.Function.Name).ToArray());
+    }
+
+    [TestMethod]
+    public void Prepare_WhenOpenVinoReceivesManyTools_LimitsToolDefinitionsTo32()
+    {
+        using var runtime = new ModelRuntime();
+        var middleware = new OpenAiCompatibleBackendMiddleware(runtime, new InferenceScheduler());
+        var status = new ModelLoadStatus("/models/model.gguf", "OpenVINO", 0, 4096, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), true, []);
+        var tools = Enumerable.Range(1, 89)
+            .Select(index => new OpenAiToolDefinition(
+                "function",
+                new OpenAiToolFunction($"lookup_{index}", $"Looks up value {index}.")))
+            .ToArray();
+        var request = new OpenAiChatRequest(null, [new OpenAiChatMessage("user", "Use a lookup.")])
+        {
+            Tools = tools
+        };
+
+        var normalized = middleware.Prepare(request, status);
+
+        Assert.IsNotNull(normalized.Tools);
+        Assert.AreEqual(32, normalized.Tools.Count);
+        Assert.AreEqual("lookup_1", normalized.Tools[0].Function.Name);
+        Assert.AreEqual("lookup_32", normalized.Tools[31].Function.Name);
+    }
+
+    [TestMethod]
+    public void Prepare_WhenOpenVinoRequestsHugeOutput_LimitsOutputTokensTo4096()
+    {
+        using var runtime = new ModelRuntime();
+        var middleware = new OpenAiCompatibleBackendMiddleware(runtime, new InferenceScheduler());
+        var status = new ModelLoadStatus("/models/model.gguf", "OpenVINO", 0, 4096, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), true, []);
+        var request = new OpenAiChatRequest(null, [new OpenAiChatMessage("user", "Reply briefly.")])
+        {
+            MaxTokens = 65536
+        };
+
+        var normalized = middleware.Prepare(request, status);
+
+        Assert.AreEqual(4096, normalized.Options.MaxTokens);
+    }
+
+    [TestMethod]
+    public void Prepare_WhenLlamaBackendReceivesTools_RejectsUnsupportedStructuredContract()
+    {
+        using var runtime = new ModelRuntime();
+        var middleware = new OpenAiCompatibleBackendMiddleware(runtime, new InferenceScheduler());
+        var status = new ModelLoadStatus("/models/model.gguf", "CPU", 0, 4096, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), true, []);
+        var request = new OpenAiChatRequest(null, [new OpenAiChatMessage("user", "Use lookup.")])
+        {
+            Tools = [new OpenAiToolDefinition("function", new OpenAiToolFunction("lookup"))]
+        };
+
+        var exception = Assert.ThrowsException<ArgumentException>(() => middleware.Prepare(request, status));
+
+        StringAssert.Contains(exception.Message, "no native tool-template or tool-parser contract");
+    }
+
+    [TestMethod]
+    public void ResolveOpenVinoTools_WhenSpecificFunctionIsSelected_RestrictsNativeToolContext()
+    {
+        var tools = new[]
+        {
+            new OpenAiToolDefinition("function", new OpenAiToolFunction("lookup")),
+            new OpenAiToolDefinition("function", new OpenAiToolFunction("forecast"))
+        };
+        using var document = JsonDocument.Parse("{\"type\":\"function\",\"function\":{\"name\":\"forecast\"}}");
+
+        var resolved = OpenAiCompatibleBackendMiddleware.ResolveOpenVinoTools(tools, document.RootElement.Clone());
+
+        Assert.AreEqual("forecast", resolved!.Single().Function.Name);
+    }
+
+    [TestMethod]
+    public void ResolveOpenVinoTools_WhenNoneIsSelected_DisablesNativeToolContext()
+    {
+        var tools = new[]
+        {
+            new OpenAiToolDefinition("function", new OpenAiToolFunction("lookup"))
+        };
+        using var document = JsonDocument.Parse("\"none\"");
+
+        var resolved = OpenAiCompatibleBackendMiddleware.ResolveOpenVinoTools(tools, document.RootElement.Clone());
+
+        Assert.IsNull(resolved);
     }
 
     private static OpenAiCompatibleController CreateController(
@@ -417,7 +616,13 @@ public sealed class OpenAiCompatibleControllerTests
         ILocalModelCatalog? catalog = null,
         DataService? dataService = null)
     {
-        var controller = new OpenAiCompatibleController(runtime, catalog ?? new EmptyLocalModelCatalog(), new DisabledOmniRouteClient(), Options.Create(new OmniRouteOptions()), dataService)
+        var controller = new OpenAiCompatibleController(
+            runtime,
+            catalog ?? new EmptyLocalModelCatalog(),
+            new DisabledOmniRouteClient(),
+            Options.Create(new OmniRouteOptions()),
+            new OpenAiCompatibleBackendMiddleware(runtime, new InferenceScheduler()),
+            dataService)
         {
             ControllerContext = new ControllerContext
             {

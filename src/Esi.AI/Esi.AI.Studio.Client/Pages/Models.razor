@@ -1,15 +1,15 @@
 @page "/models"
-@rendermode InteractiveWebAssembly
+@rendermode InteractiveAuto
 @implements IAsyncDisposable
 @using Esi.AI.Models
-@inject NavigationManager NavigationManager
 @inject IDataService DataService
 @inject IModelDownloadEvents DownloadEvents
 
 <div class="models-shell">
-    <header class="models-header">
-        <div><p class="eyebrow">MODEL LIBRARY</p><p class="lede">Lokale Modelle verwalten oder Modell-Dateien von Hugging Face laden.</p></div>
-    </header>
+    <nav class="model-tabs" aria-label="Model library views">
+        <button class="model-tab @(activeTab == ModelTab.Library ? "active" : "")" type="button" @onclick="() => activeTab = ModelTab.Library">Meine Model Library</button>
+        <button class="model-tab @(activeTab == ModelTab.HuggingFace ? "active" : "")" type="button" @onclick="() => activeTab = ModelTab.HuggingFace">Hugging Face suchen</button>
+    </nav>
 
     @if (activeTab == ModelTab.HuggingFace && downloads.Count > 0)
     {
@@ -20,23 +20,6 @@
             }
         </section>
     }
-
-    @if (status is not null)
-    {
-        <section class="runtime-status" aria-live="polite">
-            <div class="runtime-summary">
-                <p class="eyebrow">RUNTIME STATUS</p>
-                <div class="status-line"><span class="status-dot @GetStatusClass()" aria-hidden="true"></span><strong>@GetStatusTitle()</strong></div>
-                <span>@GetStatusDetail()</span>
-            </div>
-            <div class="runtime-actions"><button class="secondary-button" type="button" @onclick="OpenConfiguration">Backend konfigurieren</button><button class="primary-button" type="button" @onclick="OpenChat" disabled="@(!status.IsModelLoaded)">Chat öffnen</button></div>
-        </section>
-    }
-
-    <nav class="model-tabs" aria-label="Model library views">
-        <button class="model-tab @(activeTab == ModelTab.Library ? "active" : "")" type="button" @onclick="() => activeTab = ModelTab.Library">Meine Model Library</button>
-        <button class="model-tab @(activeTab == ModelTab.HuggingFace ? "active" : "")" type="button" @onclick="() => activeTab = ModelTab.HuggingFace">Hugging Face suchen</button>
-    </nav>
 
     @if (activeTab == ModelTab.Library)
     {
@@ -49,7 +32,7 @@
             <div class="model-list">
                 @foreach (var model in localModels)
                 {
-                    <article class="model-row @(IsActive(model.Path) ? "selected" : "")"><div class="model-details"><strong>@model.Name</strong><span>@model.Format · @FormatSize(model.SizeInBytes) · @model.Path</span><div class="compatibility-editor"><span class="control-label">Kompatible Backends</span><div class="backend-checkboxes">@foreach (var backend in supportedBackends) { <label><input type="checkbox" checked="@IsCompatible(model, backend)" @onchange="async _ => await SetModelBackendAsync(model, backend)" disabled="@isBusy" /> @GetBackendLabel(backend)</label> }</div><div class="hf-sync-row"><input class="form-control" value="@GetHuggingFaceId(model)" @oninput="eventArgs => SetHuggingFaceId(model.Path, eventArgs.Value?.ToString())" placeholder="owner/repository" /><button class="secondary-button" type="button" @onclick="() => SyncModelBackendAsync(model)" disabled="@isBusy">HF synchronisieren</button></div></div><div class="model-capabilities" aria-label="Provider-Funktionen für @model.Name"><span>Provider</span><label><input type="checkbox" checked="@GetCapabilities(model).ToolCalling" @onchange="(ChangeEventArgs args) => UpdateCapabilitiesAsync(model, ToolCalling: IsChecked(args))" disabled="@isBusy" /> Tool-Aufrufe</label><label><input type="checkbox" checked="@GetCapabilities(model).ImageInput" @onchange="(ChangeEventArgs args) => UpdateCapabilitiesAsync(model, ImageInput: IsChecked(args))" disabled="@isBusy" /> Bildeingabe</label><label><input type="checkbox" checked="@GetCapabilities(model).AgentMode" @onchange="(ChangeEventArgs args) => UpdateCapabilitiesAsync(model, AgentMode: IsChecked(args))" disabled="@isBusy" /> Agent-Modus</label><label><input type="checkbox" checked="@GetCapabilities(model).Thinking" @onchange="(ChangeEventArgs args) => UpdateCapabilitiesAsync(model, Thinking: IsChecked(args))" disabled="@isBusy" /> Thinking</label></div></div><div class="model-actions">@if (model.Format == ReferenceModelFormat.Gguf) { <button class="secondary-button" type="button" @onclick="() => SelectModelAsync(model.Path)">@(IsActive(model.Path) ? "Aktiv" : "Auswählen")</button> } else { <button class="secondary-button" type="button" @onclick="OpenConfiguration">Konfigurieren</button> }<button class="danger-button" type="button" @onclick="() => RequestDeleteModel(model)" disabled="@isBusy">Löschen</button></div></article>
+                    <article class="model-row"><div class="model-details"><strong>@model.Name</strong><span>@model.Format · @FormatSize(model.SizeInBytes) · @model.Path</span><div class="compatibility-editor"><span class="control-label">Kompatible Backends</span><div class="backend-checkboxes">@foreach (var backend in supportedBackends) { <label><input type="checkbox" checked="@IsCompatible(model, backend)" @onchange="async _ => await SetModelBackendAsync(model, backend)" disabled="@isBusy" /> @GetBackendLabel(backend)</label> }</div><div class="hf-sync-row"><input class="form-control" value="@GetHuggingFaceId(model)" @oninput="eventArgs => SetHuggingFaceId(model.Path, eventArgs.Value?.ToString())" placeholder="owner/repository" /><button class="secondary-button" type="button" @onclick="() => SyncModelBackendAsync(model)" disabled="@isBusy">HF synchronisieren</button></div></div><div class="model-capabilities" aria-label="Provider-Funktionen für @model.Name"><span>Provider</span><label><input type="checkbox" checked="@GetCapabilities(model).ToolCalling" @onchange="(ChangeEventArgs args) => UpdateCapabilitiesAsync(model, ToolCalling: IsChecked(args))" disabled="@isBusy" /> Tool-Aufrufe</label><label><input type="checkbox" checked="@GetCapabilities(model).ImageInput" @onchange="(ChangeEventArgs args) => UpdateCapabilitiesAsync(model, ImageInput: IsChecked(args))" disabled="@isBusy" /> Bildeingabe</label><label><input type="checkbox" checked="@GetCapabilities(model).AgentMode" @onchange="(ChangeEventArgs args) => UpdateCapabilitiesAsync(model, AgentMode: IsChecked(args))" disabled="@isBusy" /> Agent-Modus</label><label><input type="checkbox" checked="@GetCapabilities(model).Thinking" @onchange="(ChangeEventArgs args) => UpdateCapabilitiesAsync(model, Thinking: IsChecked(args))" disabled="@isBusy" /> Thinking</label></div></div><div class="model-actions"><button class="danger-button" type="button" @onclick="() => RequestDeleteModel(model)" disabled="@isBusy">Löschen</button></div></article>
                 }
             </div>
         }
@@ -162,10 +145,10 @@
 </div>
 
 <style>
-    .models-shell { max-width: 1040px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+    .models-shell { max-width: 1040px; margin: 0 auto; padding: 0 1.25rem 4rem; }
     .models-header, .runtime-status, .section-heading, .search-row, .model-row, .download-heading, .download-footer { display: flex; justify-content: space-between; gap: 1rem; }
-    .model-tabs { display: flex; gap: .35rem; border-bottom: 1px solid #d9d4ca; margin-top: 1.5rem; }.model-tab { border: 0; border-bottom: 3px solid transparent; background: transparent; color: #756f65; cursor: pointer; font: inherit; font-weight: 700; padding: .8rem 1rem; }.model-tab.active { border-bottom-color: #236b70; color: #236b70; }
-    .models-header { align-items: end; margin-bottom: 1.5rem; }
+    .model-tabs { display: flex; gap: .35rem; border-bottom: 1px solid #d9d4ca; margin: 0; }.model-tab { border: 0; border-bottom: 3px solid transparent; background: transparent; color: #756f65; cursor: pointer; font: inherit; font-weight: 700; padding: .8rem 1rem; }.model-tab.active { border-bottom-color: #236b70; color: #236b70; }
+    .models-header { align-items: end; margin: 1.5rem 0; }
     .runtime-status { align-items: center; border-top: 1px solid #d9d4ca; border-bottom: 1px solid #d9d4ca; margin-bottom: 1.25rem; padding: .85rem 0; }
     .runtime-summary, .model-details, .download-heading { display: grid; gap: .25rem; min-width: 0; }
     .runtime-summary .eyebrow { margin: 0; }.runtime-summary > span, .directories, .model-details span, .download-heading span { color: #756f65; overflow-wrap: anywhere; }
@@ -183,8 +166,9 @@
     .dialog-backdrop { align-items: center; background: rgba(16, 42, 67, .45); display: flex; inset: 3.5rem 0 0 250px; justify-content: center; padding: 1rem; position: fixed; z-index: 10; }
     .delete-dialog { width: min(100%, 38rem); max-height: min(90vh, 28rem); margin: 0; padding: 1.35rem; overflow: auto; background: #fff; box-shadow: 0 1rem 3rem rgba(16, 42, 67, .2); }
     .delete-dialog .eyebrow { margin: 0; }.delete-dialog h2 { margin: .35rem 0 0; }.delete-dialog p:not(.eyebrow) { color: #4e4941; }.delete-files-option { align-items: center; display: inline-flex; gap: .4rem; margin-top: .5rem; }.delete-files-option input { accent-color: #236b70; }.dialog-actions { display: flex; flex-wrap: wrap; gap: .65rem; justify-content: flex-end; margin-top: 1.25rem; }
+    .local-search-row { align-items: center; border-bottom: 1px solid #d9e4e1; padding-bottom: .8rem; }.model-list { gap: .8rem; }.model-row { align-items: stretch; background: #fff; border: 1px solid #d9e4e1; border-radius: 4px; box-shadow: 0 8px 24px rgba(16, 42, 67, .06); display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: 1.1rem 1.15rem; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; }.model-row:hover { border-color: #9bc4c2; box-shadow: 0 12px 28px rgba(16, 42, 67, .1); transform: translateY(-1px); }.model-details { gap: .55rem; }.model-details > strong { color: #102a43; font-size: 1rem; line-height: 1.25; }.model-details > span { color: #627d98; font-size: .76rem; }.compatibility-editor { background: #f5f9f8; border: 1px solid #e1ece9; border-radius: 3px; margin-top: .35rem; padding: .7rem .75rem; }.control-label { color: #236b70; display: block; font-size: .68rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }.backend-checkboxes, .model-capabilities { align-items: center; display: flex; flex-wrap: wrap; gap: .45rem .8rem; }.backend-checkboxes { margin-top: .45rem; }.backend-checkboxes label, .model-capabilities label { align-items: center; color: #304b50; display: inline-flex; font-size: .78rem; gap: .3rem; }.backend-checkboxes input, .model-capabilities input { accent-color: #087f8c; }.hf-sync-row { align-items: center; border-top: 1px solid #dbe8e5; display: grid; gap: .5rem; grid-template-columns: minmax(0, 1fr) auto; margin-top: .7rem; padding-top: .7rem; }.hf-sync-row .form-control { min-width: 0; }.model-capabilities { border-top: 1px solid #e1dbd1; margin-top: .75rem; padding-top: .7rem; }.model-capabilities > span { color: #236b70; font-size: .68rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }.model-actions { align-items: flex-end; display: flex; flex-direction: column; gap: .55rem; justify-content: center; min-width: 5.5rem; }.model-actions .danger-button { background: transparent; border: 1px solid #e6b8ad; color: #8a3b2b; font-size: .78rem; padding: .5rem .7rem; }.model-actions .danger-button:hover { background: #fff4f1; border-color: #c97f70; }.model-actions .secondary-button { font-size: .78rem; padding: .5rem .7rem; }
     @@media (max-width: 640.98px) { .dialog-backdrop { inset: 0; } }
-    @@media (max-width: 680px) { .models-header, .runtime-status, .model-row, .search-row { align-items: stretch; flex-direction: column; } .filter-columns { grid-template-columns: 1fr; }.secondary-button, .primary-button { width: 100%; } }
+    @@media (max-width: 680px) { .models-header, .runtime-status, .model-row, .search-row { align-items: stretch; flex-direction: column; } .model-row { display: flex; padding: .9rem; }.model-actions { align-items: stretch; flex-direction: row; justify-content: flex-start; min-width: 0; }.model-actions button { flex: 0 1 auto; }.hf-sync-row { grid-template-columns: 1fr; }.filter-columns { grid-template-columns: 1fr; }.secondary-button, .primary-button { width: 100%; } }
 </style>
 
 @code {
@@ -225,7 +209,6 @@
     private ModelTab activeTab = ModelTab.Library;
     private bool isBusy, isSearching, hasSearched;
     private string? message;
-    private ModelStatus? status;
     private LocalModel? pendingDeleteModel;
     private bool deleteModelFiles;
 
@@ -237,6 +220,12 @@
         await LoadStatusAsync();
         try { ReplaceLocalModels(await DataService.LocalModel_ReadAsync()); } catch (Exception) { message = "Die lokalen Modelle konnten nicht gelesen werden."; }
         modelDirectories.AddRange(await DataService.ModelDirectory_ReadAsync());
+    }
+    private async Task LoadStatusAsync()
+    {
+        var modelStatus = await DataService.LoadedModel_ReadAsync();
+        detectedHardware.Clear();
+        detectedHardware.AddRange(modelStatus.VulkanDevices.Where(device => device.MemoryCapacityMiB is > 0 && !IsExcludedHardware(device.Description ?? device.Name)));
     }
     private async Task SearchAsync() { isSearching = true; hasSearched = true; message = null; try { searchResults.Clear(); var contextLength = (uint)Math.Clamp(fitContextLength, 1_024, 1_048_576); searchResults.AddRange(await DataService.SearchModelsAsync(new HuggingFaceSearchRequest(searchQuery.Trim(), Libraries: [searchLibrary], Tasks: FilterValues(searchTask), ParameterRanges: FilterValues(searchParameterRange), Languages: FilterValues(searchLanguage), Licenses: FilterValues(searchLicense), Hardware: FilterValues(searchHardware), Filters: FilterValues(searchFilters), Apps: searchApps.ToArray(), InferenceProviders: FilterValues(searchInferenceProvider), BaseOnly: baseOnly, InferenceAvailable: inferenceAvailable, Sort: searchSort, VramBudgetGiB: fitVramBudgetGiB, ContextLength: fitVramBudgetGiB is > 0 ? contextLength : null))); } catch (Exception) { message = "Die Hugging-Face-Suche ist fehlgeschlagen."; } finally { isSearching = false; } }
     private async Task ChooseDownloadAsync(string modelId, string library) { if (library != "gguf") { await DownloadAsync(modelId, null, library); return; } try { isBusy = true; message = null; var options = await DataService.ModelDownload_ReadOptionsAsync(modelId, library); if (options.Count == 1) await DownloadAsync(modelId, options[0].FileName, library); else downloadOptions[modelId] = new DownloadOptions(library, options); } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
@@ -266,12 +255,6 @@
     private void CancelDeleteModel() { pendingDeleteModel = null; deleteModelFiles = false; }
     private async Task ConfirmDeleteModelAsync() { if (pendingDeleteModel is null) return; var model = pendingDeleteModel; try { isBusy = true; var models = await DataService.LocalModel_DeleteAsync(new ModelDeletionRequest(model.Path, deleteModelFiles)); ReplaceLocalModels(models); message = deleteModelFiles ? "Modell und Dateien gelöscht." : "Modell aus der Library entfernt; Dateien behalten."; pendingDeleteModel = null; } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
     private void ReplaceLocalModels(IEnumerable<LocalModel> models) { localModels.Clear(); huggingFaceIds.Clear(); foreach (var model in models) { localModels.Add(model); huggingFaceIds[model.Path] = model.HuggingFaceModelId ?? string.Empty; } }
-    private async Task SelectModelAsync(string path) { try { status = await DataService.SelectModelAsync(new SelectModelRequest(path)); message = "Modell als aktives Chat-Modell ausgewählt. Jetzt unter LLama laden."; } catch (Exception) { message = "Das Modell konnte nicht ausgewählt werden."; } }
-    private async Task LoadStatusAsync() { var modelStatus = await DataService.LoadedModel_ReadAsync(); detectedHardware.Clear(); detectedHardware.AddRange(modelStatus.VulkanDevices.Where(device => device.MemoryCapacityMiB is > 0 && !IsExcludedHardware(device.Description ?? device.Name))); status = new ModelStatus(modelStatus.ModelPath, modelStatus.Backend, modelStatus.GpuLayerCount, modelStatus.ContextSize, modelStatus.FoundVulkanGpuCount, modelStatus.IsModelLoaded); }
-    private string GetStatusTitle() => status?.IsModelLoaded == true ? "Modell geladen" : status?.ModelPath is not null ? "Modell ausgewählt" : "Kein Modell geladen";
-    private string GetStatusDetail() => status?.ModelPath is { Length: > 0 } path ? $"{System.IO.Path.GetFileName(path)} · {status.Backend}" : "Wähle ein Modell aus der Library oder konfiguriere ein Backend.";
-    private string GetStatusClass() => status?.IsModelLoaded == true ? "ready" : status?.ModelPath is not null ? "selected" : "idle";
-    private bool IsActive(string path) => string.Equals(status?.ModelPath, path, StringComparison.OrdinalIgnoreCase);
     private static ModelCapabilities GetCapabilities(LocalModel model) => model.Capabilities ?? new ModelCapabilities();
     private string GetHuggingFaceId(LocalModel model) => huggingFaceIds.TryGetValue(model.Path, out var modelId) ? modelId : model.HuggingFaceModelId ?? string.Empty;
     private void SetHuggingFaceId(string modelPath, string? modelId) => huggingFaceIds[modelPath] = modelId ?? string.Empty;
@@ -281,7 +264,6 @@
     private static string FormatBackends(IReadOnlyList<ConfigurationBackend>? backends) => backends is { Count: > 0 } values ? string.Join(", ", values.Select(GetBackendLabel)) : "nicht zugeordnet";
     private static bool IsChecked(ChangeEventArgs args) => args.Value is bool value && value;
     private bool HasCompletedDownloads => downloads.Values.Any(download => download.Completed);
-    private void OpenConfiguration() => NavigationManager.NavigateTo("backends"); private void OpenChat() => NavigationManager.NavigateTo("chats");
     private static string FormatSize(long bytes) => bytes switch { > 1024 * 1024 * 1024 => $"{bytes / 1024d / 1024d / 1024d:F2} GiB", > 1024 * 1024 => $"{bytes / 1024d / 1024d:F1} MiB", _ => $"{bytes / 1024d:F0} KiB" };
     private async Task HandleSearchKeyDown(KeyboardEventArgs args) { if (args.Key == "Enter") await SearchAsync(); }
     private bool HasActiveFilters => fitVramBudgetGiB is > 0 || baseOnly || inferenceAvailable || FilterValues(searchLibrary).Count > 0 || FilterValues(searchTask).Count > 0 || FilterValues(searchParameterRange).Count > 0 || FilterValues(searchLanguage).Count > 0 || FilterValues(searchLicense).Count > 0 || FilterValues(searchHardware).Count > 0 || FilterValues(searchFilters).Count > 0 || searchApps.Count > 0 || FilterValues(searchInferenceProvider).Count > 0;

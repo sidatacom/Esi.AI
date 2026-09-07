@@ -6,7 +6,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const provider = new EsiAiStudioProvider(context);
   const configurationView = new EsiAiStudioConfigurationViewProvider(provider);
   const languageModelProvider = vscode.lm.registerLanguageModelChatProvider("esi-ai-studio", provider);
-  provider.startAutomaticRefresh();
   context.subscriptions.push(
     provider,
     vscode.window.registerWebviewViewProvider(EsiAiStudioConfigurationViewProvider.viewId, configurationView),

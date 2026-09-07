@@ -4,21 +4,18 @@ using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using System.Net.Http.Headers;
-using System.Text.Json;
-using Esi.AI.Studio.Client.Pages;
 using Esi.AI.Studio.Components;
 using Esi.AI.Studio.Components.Account;
 using Esi.AI.Studio.Data;
 using Esi.AI.Studio.Hubs;
 using Esi.AI.Studio.Services;
+using Esi.AI.Studio.Client.Services;
 using Esi.AI.Studio.Contracts;
 using Esi.AI.Core.ModelLoading;
-using Esi.AI.Core.Chat;
 using Esi.AI.Models;
-using Esi.AI.Studio;
-
-EnsureStudioWatchdogIsRunning();
-StudioProcessIsolation.Configure();
+using Microsoft.FluentUI.AspNetCore.Components;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseStaticWebAssets();
@@ -28,6 +25,8 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents()
     .AddInteractiveWebAssemblyComponents()
     .AddAuthenticationStateSerialization();
+builder.Services.AddFluentUIComponents();
+builder.Services.AddScoped<IClientStateStore, ClientStateStore>();
 builder.Services.AddControllers();
 builder.Services.AddSignalR(options =>
 {
@@ -101,6 +100,7 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
     .AddDefaultTokenProviders();
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
+builder.Services.AddSingleton<OpenVinoLoadGate>();
 builder.Services.AddSingleton<OpenVinoDiagnosticsService>();
 builder.Services.AddSingleton<OpenVinoDriverInstaller>();
 builder.Services.AddSingleton<IBackendDiagnosticsService, BackendDiagnosticsService>();
@@ -118,14 +118,21 @@ builder.Services.AddSingleton<BackendPrerequisiteProvisioner>();
 builder.Services.AddSingleton<BackendRequirementMonitor>();
 builder.Services.AddHostedService(services => services.GetRequiredService<BackendRequirementMonitor>());
 builder.Services.AddSingleton<IBackendRequirementState>(services => services.GetRequiredService<BackendRequirementMonitor>());
-builder.Services.AddHostedService<StudioWatchdogLease>();
 builder.Services.AddSingleton<IModelRuntimeStatusPublisher, SignalRModelRuntimeStatusPublisher>();
 builder.Services.AddSingleton<IBackendRuntimeStatusPublisher, SignalRBackendRuntimeStatusPublisher>();
 builder.Services.AddSingleton<ModelRuntime>();
+builder.Services.AddSingleton<IModelRuntimeShutdown>(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddHostedService(services => services.GetRequiredService<ModelRuntime>());
+builder.Services.AddSingleton<IInferenceFailureCoordinator, InferenceFailureCoordinator>();
+builder.Services.Configure<InferenceTimeoutOptions>(builder.Configuration.GetSection("InferenceTimeout"));
+builder.Services.AddSingleton<ApplicationSettingsService>();
+builder.Services.AddSingleton<InferenceTimeoutPolicy>();
 builder.Services.AddScoped<IModelDownloadEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IModelRuntimeEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IBackendRequirementEvents, ServerModelDownloadEvents>();
+builder.Services.AddScoped<IApplicationSettingsEvents, ServerModelDownloadEvents>();
+builder.Services.AddSingleton<ProviderTraceStore>();
+builder.Services.AddScoped<IProviderTraceEvents, ServerProviderTraceEvents>();
 builder.Services.AddHttpClient("HuggingFace", client =>
 {
     client.BaseAddress = new Uri("https://huggingface.co/");
@@ -158,6 +165,7 @@ builder.Services.AddSingleton<IModelDirectoryCatalog>(services => services.GetRe
 builder.Services.AddSingleton<IHuggingFaceCatalog>(services => services.GetRequiredService<ModelLibraryService>());
 builder.Services.AddSingleton<IModelDownloadManager>(services => services.GetRequiredService<ModelLibraryService>());
 builder.Services.AddScoped<IInferenceScheduler, InferenceScheduler>();
+builder.Services.AddScoped<OpenAiCompatibleBackendMiddleware>();
 builder.Services.AddScoped<IInferenceService, InferenceService>();
 builder.Services.AddScoped<DataService>();
     builder.Services.AddScoped<IDataService>(services => services.GetRequiredService<DataService>());
@@ -209,15 +217,14 @@ app.MapHub<DataHub>("/hubs/data");
 // Add additional endpoints required by the Identity /Account Razor components.
 app.MapAdditionalIdentityEndpoints();
 
-app.Run();
-
-static void EnsureStudioWatchdogIsRunning()
+var applicationLifetime = app.Services.GetRequiredService<IHostApplicationLifetime>();
+applicationLifetime.ApplicationStarted.Register(() =>
 {
-    var pidFile = Environment.GetEnvironmentVariable("ESI_AI_STUDIO_WATCHDOG_PID_FILE");
-    if (string.IsNullOrWhiteSpace(pidFile) || !File.Exists(pidFile))
-        throw new InvalidOperationException("Esi.AI Studio refuses to start without the project watchdog.");
+    var addresses = app.Services.GetRequiredService<IServer>()
+        .Features.Get<IServerAddressesFeature>()?.Addresses ?? app.Urls;
+    var urls = string.Join(';', addresses);
+    Console.WriteLine($"Now ready on: {urls}");
+});
 
-    if (!StudioProcessIsolation.IsWatchdogAlive(pidFile))
-        throw new InvalidOperationException("Esi.AI Studio refuses to start because the watchdog is not running.");
-}
+app.Run();
 

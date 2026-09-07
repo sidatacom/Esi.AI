@@ -1,8 +1,10 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using Esi.AI.Core.Chat;
 using Esi.AI.Models;
 using OpenVinoSharp;
 using OpenVinoSharp.GenAI;
@@ -122,10 +124,15 @@ public sealed class OpenVinoModelLoader : IDisposable
 
         cancellationToken.ThrowIfCancellationRequested();
         await loadLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var generationLockHeld = false;
         var operation = "GenAI.Initialize";
         try
         {
+            await generationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            generationLockHeld = true;
             ClearLoadLog();
+            DisposePipelines();
+            ClearLoadedModelState();
             AppendLoadLog($"Starting OpenVINO model load on {device}.");
             cancellationToken.ThrowIfCancellationRequested();
             var runtimeDirectory = InitializeRuntime();
@@ -164,7 +171,6 @@ public sealed class OpenVinoModelLoader : IDisposable
                     ConfigureGenerationConfig(generationConfig, generationOptions);
                     loadedPipeline.SetGenerationConfig(generationConfig);
 
-                    DisposePipelines();
                     vlmPipeline = loadedPipeline;
                     loadedModelPath = fullModelPath;
                     loadedDevice = device;
@@ -186,7 +192,6 @@ public sealed class OpenVinoModelLoader : IDisposable
                     ConfigureGenerationConfig(generationConfig, generationOptions);
                     loadedPipeline.SetGenerationConfig(generationConfig);
 
-                    DisposePipelines();
                     llmPipeline = loadedPipeline;
                     loadedModelPath = fullModelPath;
                     loadedDevice = device;
@@ -198,7 +203,7 @@ public sealed class OpenVinoModelLoader : IDisposable
                 }
             }
 
-            vramUsageMiB = TryGetVramUsageMiB(device);
+            vramUsageMiB = null;
         }
         catch (OperationCanceledException)
         {
@@ -217,6 +222,8 @@ public sealed class OpenVinoModelLoader : IDisposable
         }
         finally
         {
+            if (generationLockHeld)
+                generationLock.Release();
             loadLock.Release();
         }
     }
@@ -242,15 +249,18 @@ public sealed class OpenVinoModelLoader : IDisposable
     public async Task UnloadAsync(CancellationToken cancellationToken = default)
     {
         await loadLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        var generationLockHeld = false;
         try
         {
+            await generationLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            generationLockHeld = true;
             DisposePipelines();
-            loadedModelPath = null;
-            loadedDevice = null;
-            vramUsageMiB = null;
+            ClearLoadedModelState();
         }
         finally
         {
+            if (generationLockHeld)
+                generationLock.Release();
             loadLock.Release();
         }
     }
@@ -282,55 +292,6 @@ public sealed class OpenVinoModelLoader : IDisposable
             loadLog.TryDequeue(out _);
     }
 
-    private double? TryGetVramUsageMiB(string device)
-    {
-        try
-        {
-            using var core = new OpenVinoSharp.Core();
-            var devices = device.StartsWith("MULTI:", StringComparison.OrdinalIgnoreCase)
-                ? device["MULTI:".Length..].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                : [device];
-            var memoryBytes = devices
-                .SelectMany(selectedDevice => ParseMemoryStatistics(core.GetProperty(selectedDevice, "GPU_MEMORY_STATISTICS")))
-                .Sum();
-            if (memoryBytes <= 0)
-            {
-                AppendLoadLog($"[INFO] OpenVINO VRAM statistics are unavailable for {device}.");
-                return null;
-            }
-
-            var memoryMiB = memoryBytes / 1024d / 1024d;
-            AppendLoadLog($"[INFO] OpenVINO VRAM allocated on {device}: {memoryMiB:F2} MiB.");
-            return memoryMiB;
-        }
-        catch (Exception exception)
-        {
-            AppendLoadLog($"[DEBUG] OpenVINO VRAM statistics unavailable for {device}: {exception.Message}");
-            return null;
-        }
-    }
-
-    private static IEnumerable<long> ParseMemoryStatistics(string statistics)
-    {
-        var entries = Regex.Matches(
-                statistics,
-                @"(?<key>[A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*(?<value>\d+(?:\.\d+)?)\s*(?<unit>GiB|MiB|KiB|B)?",
-                RegexOptions.IgnoreCase)
-            .Select(match =>
-            {
-                var value = double.Parse(match.Groups["value"].Value, System.Globalization.CultureInfo.InvariantCulture);
-                var unit = match.Groups["unit"].Value;
-                var multiplier = unit.Equals("GiB", StringComparison.OrdinalIgnoreCase) ? 1024d * 1024d * 1024d :
-                    unit.Equals("MiB", StringComparison.OrdinalIgnoreCase) ? 1024d * 1024d :
-                    unit.Equals("KiB", StringComparison.OrdinalIgnoreCase) ? 1024d : 1d;
-                return value * multiplier;
-            })
-            .Select(value => checked((long)value));
-
-        return entries.Any() ? entries :
-            long.TryParse(statistics.Trim(), out var value) ? [value] : [];
-    }
-
     private void ClearLoadLog()
     {
         while (loadLog.TryDequeue(out _))
@@ -355,6 +316,13 @@ public sealed class OpenVinoModelLoader : IDisposable
         llmPipeline = null;
         vlmPipeline?.Dispose();
         vlmPipeline = null;
+    }
+
+    private void ClearLoadedModelState()
+    {
+        loadedModelPath = null;
+        loadedDevice = null;
+        vramUsageMiB = null;
     }
 
     private static void ValidateNpuOptions(OpenVinoNpuOptions options)
@@ -667,9 +635,9 @@ public sealed class OpenVinoChatSession : IDisposable
         try
         {
             using var generationConfig = GetGenerationConfig(generationOptions);
-            using var history = CreateChatHistory(messages, tools, generationOptions?.ReasoningEffort, images is { Length: > 0 });
             if (llmPipeline is not null)
             {
+                using var history = CreateChatHistory(messages, tools, generationOptions?.ReasoningEffort, images is { Length: > 0 });
                 using var results = streamer is null
                     ? llmPipeline.GenerateWithHistory(history, generationConfig)
                     : llmPipeline.GenerateWithHistory(history, generationConfig, text =>
@@ -682,6 +650,27 @@ public sealed class OpenVinoChatSession : IDisposable
 
             if (vlmPipeline is not null)
             {
+                if (images is not { Length: > 0 } && tools is not { Count: > 0 })
+                {
+                    using var textHistory = CreateChatHistory(messages, null, generationOptions?.ReasoningEffort, false);
+                    if (messages.All(message => string.IsNullOrWhiteSpace(GetPlainHistoryContent(message.Content))))
+                        throw new ArgumentException("At least one non-empty text chat message is required.", nameof(messages));
+
+                    if (streamer is null)
+                    {
+                        using var historyResults = vlmPipeline.GenerateWithHistory(textHistory, null, generationConfig);
+                        return CreateGenerationResult(historyResults.GetText(), historyResults.GetPerformanceMetrics());
+                    }
+
+                    using var streamedHistoryResults = vlmPipeline.GenerateWithHistory(textHistory, null, generationConfig, text =>
+                    {
+                        streamer(text);
+                        return StreamingStatus.Running;
+                    });
+                    return CreateGenerationResult(streamedHistoryResults.GetText(), streamedHistoryResults.GetPerformanceMetrics());
+                }
+
+                using var history = CreateChatHistory(messages, tools, generationOptions?.ReasoningEffort, images is { Length: > 0 });
                 if (streamer is null)
                 {
                     using var nonStreamingResults = vlmPipeline.GenerateWithHistory(history, images, generationConfig);
@@ -719,7 +708,7 @@ public sealed class OpenVinoChatSession : IDisposable
                 history.PushBackJson(SerializeChatMessageForHistory(message));
         }
 
-        var templateContext = CreateChatTemplateContext(reasoningEffort);
+        var templateContext = CreateChatTemplateContext(reasoningEffort ?? "high");
         if (templateContext is not null)
         {
             using var context = JsonContainer.FromJsonString(templateContext);
@@ -733,6 +722,24 @@ public sealed class OpenVinoChatSession : IDisposable
         }
 
         return history;
+    }
+
+    private static string CreateDirectTextPrompt(IReadOnlyList<OpenAiChatMessage> messages)
+    {
+        var prompt = new StringBuilder();
+        foreach (var message in messages)
+        {
+            var content = GetPlainHistoryContent(message.Content);
+            if (string.IsNullOrWhiteSpace(content))
+                continue;
+
+            if (prompt.Length > 0)
+                prompt.AppendLine().AppendLine();
+
+            prompt.Append(message.Role).Append(": ").Append(content);
+        }
+
+        return prompt.ToString();
     }
 
     private static string GetPlainHistoryContent(object? content)
@@ -819,92 +826,9 @@ public sealed class OpenVinoChatSession : IDisposable
 
     internal static OpenVinoToolCallParseResult ParseToolCalls(string text)
     {
-        if (string.IsNullOrWhiteSpace(text))
-            return new OpenVinoToolCallParseResult(string.Empty, []);
-
-        var toolCalls = new List<OpenAiToolCall>();
-        var visibleText = new System.Text.StringBuilder(text.Length);
-        var position = 0;
-        foreach (Match block in ToolCallBlockRegex.Matches(text))
-        {
-            visibleText.Append(text, position, block.Index - position);
-            var parsedCalls = ParseToolCallBlock(block.Groups["body"].Value, toolCalls.Count);
-            if (parsedCalls.Count == 0)
-                visibleText.Append(block.Value);
-            else
-                toolCalls.AddRange(parsedCalls);
-            position = block.Index + block.Length;
-        }
-
-        visibleText.Append(text, position, text.Length - position);
-        return new OpenVinoToolCallParseResult(visibleText.ToString().Trim(), toolCalls);
+        var parsed = OpenAiToolCallParser.Parse(text);
+        return new OpenVinoToolCallParseResult(parsed.Text, parsed.ToolCalls);
     }
-
-    private static IReadOnlyList<OpenAiToolCall> ParseToolCallBlock(string body, int index)
-    {
-        var functionMatch = FunctionCallRegex.Match(body);
-        if (functionMatch.Success)
-        {
-            var arguments = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
-            foreach (Match parameter in ParameterRegex.Matches(functionMatch.Groups["body"].Value))
-            {
-                var value = parameter.Groups["value"].Value.Trim();
-                arguments[parameter.Groups["name"].Value] = ParseToolParameter(value);
-            }
-
-            return [new OpenAiToolCall(
-                $"call_{Guid.NewGuid():N}",
-                "function",
-                new OpenAiToolCallFunction(
-                    functionMatch.Groups["name"].Value,
-                    JsonSerializer.Serialize(arguments, ChatJsonOptions)))];
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(body.Trim());
-            var root = document.RootElement;
-            if (!root.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String ||
-                !root.TryGetProperty("arguments", out var arguments))
-                return [];
-
-            var argumentsText = arguments.ValueKind == JsonValueKind.String
-                ? arguments.GetString() ?? "{}"
-                : arguments.GetRawText();
-            return [new OpenAiToolCall(
-                $"call_{Guid.NewGuid():N}",
-                "function",
-                new OpenAiToolCallFunction(name.GetString()!, argumentsText))];
-        }
-        catch (JsonException)
-        {
-            return [];
-        }
-    }
-
-    private static JsonElement ParseToolParameter(string value)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(value);
-            return document.RootElement.Clone();
-        }
-        catch (JsonException)
-        {
-            using var document = JsonDocument.Parse(JsonSerializer.Serialize(value, ChatJsonOptions));
-            return document.RootElement.Clone();
-        }
-    }
-
-    private static readonly Regex ToolCallBlockRegex = new(
-        @"<tool_call>(?<body>.*?)</tool_call>",
-        RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase);
-    private static readonly Regex FunctionCallRegex = new(
-        @"<function=(?<name>[^>\s]+)>(?<body>.*?)</function>",
-        RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase);
-    private static readonly Regex ParameterRegex = new(
-        @"<parameter=(?<name>[^>\s]+)>(?<value>.*?)</parameter>",
-        RegexOptions.Compiled | RegexOptions.Singleline | RegexOptions.IgnoreCase);
 
     private GenerationConfig GetGenerationConfig(OpenVinoGenerationOptions? options)
     {

@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { log } from "../utils/logger.js";
 
 const MAX_VARIABLES = 100;
 const SECRET_NAME = /(password|passwd|secret|token|api[_-]?key|connectionstring|authorization|credential|private[_-]?key)/i;
@@ -10,6 +11,7 @@ type Scope = "local" | "global" | "all";
 type DapVariable = { name: string; value?: string; evaluateName?: string; variablesReference?: number };
 type DapResponse = { scopes?: Array<{ name?: string; variablesReference?: number }>; variables?: DapVariable[]; result?: unknown; value?: unknown; body?: { exceptionId?: string; description?: string; breakMode?: string } };
 type DapBreakpoint = { id?: number; verified?: boolean; line?: number; column?: number; message?: string };
+type DebugStackItemDetails = { source?: { uri?: vscode.Uri }; range?: { start?: { line?: number } } };
 export type DebugStartLifecycle = { onAcceptedStart?: () => void; onEnd?: () => void };
 export type DebugEvent = {
   id: number;
@@ -24,6 +26,7 @@ export type DebugEvent = {
   line?: number;
 };
 type DebugEventListener = (event: DebugEvent) => void;
+type DebugOutputListener = (session: vscode.DebugSession, output: string) => void;
 type BreakpointStatus = {
   fileFullPath: string;
   line: number;
@@ -38,9 +41,11 @@ type BreakpointStatus = {
 
 export class DebugManager {
   private readonly debugDisposables: vscode.Disposable[] = [];
+  private readonly debugAdapterTrackers = new Map<string, vscode.DebugAdapterTracker>();
   private readonly debugEvents: DebugEvent[] = [];
   private readonly eventWaiters: Array<{ type?: DebugEvent["type"]; resolve: (event: DebugEvent | null) => void; timer: ReturnType<typeof setTimeout> }> = [];
   private readonly eventListeners = new Set<DebugEventListener>();
+  private readonly debugOutputListeners = new Set<DebugOutputListener>();
   private nextEventId = 1;
   private pausedStateKey: string | null = null;
   private debugStartInProgress = false;
@@ -49,7 +54,23 @@ export class DebugManager {
     this.debugDisposables.push(vscode.debug.onDidChangeActiveStackItem(() => { void this.observeDebugState(); }));
     this.debugDisposables.push(vscode.debug.onDidTerminateDebugSession((session) => {
       if (this.pausedStateKey?.startsWith(`${session.id}:`)) this.pausedStateKey = null;
+      this.debugAdapterTrackers.delete(session.id);
       this.publishDebugEvent({ type: "terminated", sessionId: session.id, sessionName: session.name, timestamp: new Date().toISOString() });
+    }));
+    this.debugDisposables.push(vscode.debug.registerDebugAdapterTrackerFactory("*", {
+      createDebugAdapterTracker: (session) => {
+        log(`Debug adapter tracker attached: session=${session.id}, name=${session.name}`);
+        const tracker: vscode.DebugAdapterTracker = {
+          onDidSendMessage: (message) => {
+            if (message.type !== "event" || message.event !== "output") return;
+            const output = message.body?.output;
+            if (typeof output !== "string") return;
+            for (const listener of this.debugOutputListeners) listener(session, output);
+          },
+        };
+        this.debugAdapterTrackers.set(session.id, tracker);
+        return tracker;
+      },
     }));
   }
 
@@ -61,11 +82,18 @@ export class DebugManager {
       waiter.resolve(null);
     }
     this.eventListeners.clear();
+    this.debugOutputListeners.clear();
+    this.debugAdapterTrackers.clear();
   }
 
   onDebugEvent(listener: DebugEventListener): vscode.Disposable {
     this.eventListeners.add(listener);
     return { dispose: () => this.eventListeners.delete(listener) };
+  }
+
+  onDebugOutput(listener: DebugOutputListener): vscode.Disposable {
+    this.debugOutputListeners.add(listener);
+    return { dispose: () => this.debugOutputListeners.delete(listener) };
   }
 
   async waitForDebugEvent(timeoutMs: number, type?: DebugEvent["type"]): Promise<DebugEvent | null> {
@@ -85,6 +113,10 @@ export class DebugManager {
 
   getActiveSessionId(): string | null {
     return vscode.debug.activeDebugSession?.id ?? null;
+  }
+
+  hasDebugAdapterTracker(sessionId: string): boolean {
+    return this.debugAdapterTrackers.has(sessionId);
   }
 
   getSetting(setting: string): { setting: string; value: unknown } {
@@ -177,8 +209,7 @@ export class DebugManager {
     if (stateKey === this.pausedStateKey) return;
     this.pausedStateKey = stateKey;
 
-    const source = "source" in stackItem ? stackItem.source : undefined;
-    const range = "range" in stackItem ? stackItem.range : undefined;
+    const details = stackItem as unknown as DebugStackItemDetails;
     const exception = await this.getExceptionInfo(session, stackItem);
     this.publishDebugEvent({
       type: "paused",
@@ -188,8 +219,8 @@ export class DebugManager {
       reason: exception ? "exception" : "unknown",
       exceptionType: exception?.exceptionType,
       exceptionMessage: exception?.exceptionMessage,
-      fileFullPath: source?.uri.fsPath,
-      line: range ? range.start.line + 1 : undefined,
+      fileFullPath: details.source?.uri?.fsPath,
+      line: typeof details.range?.start?.line === "number" ? details.range.start.line + 1 : undefined,
     });
   }
 
@@ -197,9 +228,12 @@ export class DebugManager {
     if (!("threadId" in stackItem) || typeof stackItem.threadId !== "number") return undefined;
     try {
       const response = await this.dapRequest(session, "exceptionInfo", { threadId: stackItem.threadId });
-      const body = response.body ?? response;
-      if (!body.exceptionId && !body.description) return undefined;
-      return { exceptionType: body.exceptionId, exceptionMessage: typeof body.description === "string" ? this.redact(body.description) as string : undefined };
+      const body = (response.body ?? response) as { exceptionId?: unknown; description?: unknown };
+      if (typeof body.exceptionId !== "string" && typeof body.description !== "string") return undefined;
+      return {
+        exceptionType: typeof body.exceptionId === "string" ? body.exceptionId : undefined,
+        exceptionMessage: typeof body.description === "string" ? this.redact(body.description) as string : undefined,
+      };
     } catch {
       return undefined;
     }
@@ -221,6 +255,7 @@ export class DebugManager {
 
   async stopDebugging(): Promise<void> {
     const session = this.requireSession();
+    log(`Stopping debug session: session=${session.id}, name=${session.name}`);
     const termination = this.waitForSessionTermination(session);
     try {
       await vscode.debug.stopDebugging(session);
@@ -249,10 +284,34 @@ export class DebugManager {
     await this.waitForState(() => vscode.debug.activeDebugSession === session && !!vscode.debug.activeStackItem, "debug session to pause");
   }
 
-  async restartDebugging(): Promise<void> {
-    const session = this.requireSession();
-    await vscode.commands.executeCommand("workbench.action.debug.restart");
-    await this.waitForState(() => vscode.debug.activeDebugSession === session || vscode.debug.activeDebugSession !== undefined, "debug session to restart");
+  async restartDebugging(rebuildTaskName?: string): Promise<boolean> {
+    const session = this.readActiveSession();
+    if (!session) return false;
+    log(`Restarting debug session: session=${session.id}, name=${session.name}`);
+    const termination = this.waitForSessionTermination(session);
+    try {
+      await vscode.debug.stopDebugging(session);
+      await termination.promise;
+      log(`Debug session stopped for restart: session=${session.id}, name=${session.name}`);
+
+      if (rebuildTaskName?.trim()) {
+        await this.runTaskByName(rebuildTaskName.trim());
+      }
+
+      const start = this.waitForNewSession(session);
+      const started = await vscode.debug.startDebugging(session.workspaceFolder, session.configuration);
+      if (!started) {
+        start.cancel();
+        throw new Error(`VS Code did not start debug session '${session.name}'`);
+      }
+      await start.promise;
+      log(`Debug session restart completed: previousSession=${session.id}, currentSession=${this.getActiveSessionId() ?? "none"}, name=${session.name}`);
+    } catch (error) {
+      log(`Debug session restart failed: session=${session.id}, name=${session.name}, error=${error instanceof Error ? error.message : String(error)}`);
+      termination.cancel();
+      throw error;
+    }
+    return true;
   }
 
   async addBreakpoint(fileFullPath: string, line: number, condition?: string, logMessage?: string): Promise<BreakpointStatus> {
@@ -424,6 +483,78 @@ export class DebugManager {
     return { promise, cancel: () => finish(new Error("Waiting for debug session termination was cancelled")) };
   }
 
+  private waitForNewSession(session: vscode.DebugSession): { promise: Promise<void>; cancel(error?: Error): void } {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let resolvePromise: () => void;
+    let rejectPromise: (error: Error) => void;
+    const disposables: vscode.Disposable[] = [];
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      disposables.forEach((disposable) => disposable.dispose());
+      error ? rejectPromise(error) : resolvePromise();
+    };
+    const matches = (candidate: vscode.DebugSession) => candidate.name === session.name || candidate.name.startsWith(`${session.name} `);
+    const promise = new Promise<void>((resolve, reject) => {
+      resolvePromise = resolve;
+      rejectPromise = reject;
+      timer = setTimeout(() => {
+        const error = new Error(`Timed out after ${this.getTimeoutMs("debugStateTimeoutMs", 30000)}ms waiting for debug session restart`);
+        log(`Debug session restart timed out waiting for a new session ID: previousSession=${session.id}, name=${session.name}`);
+        finish(error);
+      }, this.getTimeoutMs("debugStateTimeoutMs", 30000));
+    });
+
+    disposables.push(vscode.debug.onDidStartDebugSession((startedSession) => {
+      if (matches(startedSession) && startedSession.id !== session.id) {
+        log(`Debug session started during restart: previousSession=${session.id}, currentSession=${startedSession.id}, name=${startedSession.name}`);
+        finish();
+      } else if (matches(startedSession)) {
+        log(`Rejected recycled debug session ID during restart: session=${startedSession.id}, name=${startedSession.name}`);
+        finish(new Error(`VS Code recycled debug session ID '${startedSession.id}' during restart`));
+      }
+    }));
+
+    return { promise, cancel: (error = new Error("Waiting for debug session restart was cancelled")) => finish(error) };
+  }
+
+  private async runTaskByName(taskName: string): Promise<void> {
+    const task = (await vscode.tasks.fetchTasks()).find((candidate) => candidate.name === taskName);
+    if (!task) throw new Error(`Task '${taskName}' was not found in tasks.json`);
+
+    log(`Running rebuild task before debug restart: task=${taskName}`);
+    let settled = false;
+    let resolvePromise: () => void;
+    let rejectPromise: (error: Error) => void;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      disposables.forEach((disposable) => disposable.dispose());
+      error ? rejectPromise(error) : resolvePromise();
+    };
+    const disposables = [
+      vscode.tasks.onDidEndTaskProcess((event) => {
+        if (event.execution.task.name === task.name) {
+          if (event.exitCode && event.exitCode !== 0) finish(new Error(`Rebuild task '${taskName}' exited with code ${event.exitCode}`));
+          else finish();
+        }
+      }),
+      vscode.tasks.onDidEndTask((event) => {
+        if (event.execution.task.name === task.name) finish();
+      }),
+    ];
+    const completed = new Promise<void>((resolve, reject) => { resolvePromise = resolve; rejectPromise = reject; });
+    try {
+      await vscode.tasks.executeTask(task);
+      await completed;
+      log(`Rebuild task completed before debug restart: task=${taskName}`);
+    } finally {
+      disposables.forEach((disposable) => disposable.dispose());
+    }
+  }
+
   private waitForDebugSession(configurationName: string): { promise: Promise<void>; cancel(): void } {
     const existingSession = this.getDebugSession(configurationName);
     if (existingSession) return { promise: Promise.resolve(), cancel: () => undefined };
@@ -566,12 +697,16 @@ export class DebugManager {
   }
 
   private getDebugSession(configurationName?: string): vscode.DebugSession | undefined {
-    const activeSession = vscode.debug.activeDebugSession;
+    const activeSession = this.readActiveSession();
     if (!configurationName) return activeSession;
     if (!activeSession) return undefined;
     return activeSession.name === configurationName || activeSession.name.startsWith(`${configurationName} `)
       ? activeSession
       : undefined;
+  }
+
+  private readActiveSession(): vscode.DebugSession | undefined {
+    return vscode.debug.activeDebugSession;
   }
 
   private isSecretName(name: string): boolean { return SECRET_NAME.test(name); }

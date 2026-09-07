@@ -29,6 +29,7 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
     private readonly SemaphoreSlim fileDownloadSlots;
     private readonly ConcurrentDictionary<string, ModelMemoryProfile> modelMemoryProfiles = new(StringComparer.OrdinalIgnoreCase);
     private readonly Task queueWorker;
+    private int disposed;
 
     public ModelLibraryService(
         HttpClient httpClient,
@@ -477,6 +478,9 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
 
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref disposed, 1) != 0)
+            return;
+
         downloadQueue.Writer.TryComplete();
         foreach (var operation in downloadOperations.Values)
             operation.RequestPause();

@@ -1,0 +1,189 @@
+@page "/settings"
+@rendermode InteractiveAuto
+@implements IAsyncDisposable
+@using Esi.AI.Models
+@using Esi.AI.Studio.Contracts
+@inject IDataService DataService
+@inject IApplicationSettingsEvents ApplicationSettingsEvents
+
+<div class="settings-shell">
+    <header class="settings-header">
+        <div>
+            <p class="eyebrow">STUDIO / GENERAL</p>
+            <h1>General settings</h1>
+            <p class="lede">Globale Laufzeitregeln für alle lokalen Backends.</p>
+        </div>
+        <button class="primary-button" type="button" @onclick="SaveAsync" disabled="@isSaving">@(isSaving ? "Speichert ..." : "Settings speichern")</button>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <p class="settings-message" role="status">@message</p>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <p class="settings-message settings-message-error" role="alert">@errorMessage</p>
+    }
+
+    <section class="settings-panel" aria-labelledby="inference-timeout-heading">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">INFERENCE DEADLINE</p>
+                <h2 id="inference-timeout-heading">Tool- und Prefill-Zeitbudget</h2>
+            </div>
+        </div>
+        <p class="settings-note">Das vollständige Toolset bleibt erhalten. Diese Werte bestimmen nur, wie viel Zeit ein lokaler Backend-Aufruf für Vorbereitung und Prefill erhält.</p>
+        <div class="settings-backends">
+            @foreach (var timeout in form.Backends)
+            {
+                <div class="backend-timeout-row">
+                    <strong>@timeout.Backend</strong>
+                    <label class="field-group"><span>Basiszeit (s)</span><input type="number" min="0" step="1" @bind="timeout.BaseSeconds" /></label>
+                    <label class="field-group"><span>Pro Tool (s)</span><input type="number" min="0" step="0.1" @bind="timeout.SecondsPerTool" /></label>
+                    <label class="field-group"><span>Pro Prefill-Token (s)</span><input type="number" min="0" step="0.001" @bind="timeout.SecondsPerPrefillToken" /></label>
+                </div>
+            }
+        </div>
+    </section>
+
+    <section class="settings-panel" aria-labelledby="openvino-sources-heading">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">OPENVINO RUNTIME</p>
+                <h2 id="openvino-sources-heading">Paketquellen</h2>
+            </div>
+        </div>
+        <p class="settings-note">Die .NET-Pakete werden aus der versionierten Repository-Konfiguration wiederhergestellt. Das Ubuntu-26.04-Archiv ist die native OpenVINO-Quelle für eine manuelle Runtime-Installation.</p>
+        <div class="source-list">
+            <div class="source-row">
+                <strong>NuGet-Pakete</strong>
+                <a href="https://api.nuget.org/v3/index.json" target="_blank" rel="noopener noreferrer">nuget.org</a>
+                <span>OpenVINO.runtime.ubuntu.24-x86_64 und JYPPX.OpenVINO.GenAI.runtime.ubuntu.24-x86_64, Version 2026.3.1</span>
+            </div>
+            <div class="source-row">
+                <strong>Ubuntu-26.04-Archiv</strong>
+                <a href="https://storage.openvinotoolkit.org/repositories/openvino/packages/2026.3.1/linux/" target="_blank" rel="noopener noreferrer">OpenVINO 2026.3.1 Linux archives</a>
+                <span>Für den manuellen Download der x86_64-Binaries `openvino_toolkit_ubuntu26_2026.3.1...tgz`.</span>
+            </div>
+        </div>
+    </section>
+</div>
+
+<style>
+    .settings-shell { display: grid; gap: 1.25rem; max-width: 70rem; padding: 2rem 1.25rem 3rem; }
+    .settings-header { display: flex; align-items: end; justify-content: space-between; gap: 1rem; }
+    .settings-header h1 { margin: 0; }
+    .settings-panel { border: 1px solid #d9d4ca; background: #fff; padding: 1.25rem; }
+    .settings-note, .settings-message { color: #5e625f; }
+    .settings-message { margin: 0; padding: .75rem 1rem; background: #e8f3ed; color: #185b3a; }
+    .settings-message-error { background: #f9e7e3; color: #8b2f22; }
+    .settings-backends { display: grid; gap: .75rem; }
+    .source-list { display: grid; gap: .75rem; }
+    .source-row { display: grid; gap: .3rem; padding: .85rem 0; border-top: 1px solid #ebe7df; }
+    .source-row a { color: #176b5b; font-weight: 700; overflow-wrap: anywhere; }
+    .source-row span { color: #5e625f; font-size: .9rem; }
+    .backend-timeout-row { display: grid; grid-template-columns: 7rem repeat(3, minmax(0, 1fr)); align-items: end; gap: 1rem; padding: .85rem 0; border-top: 1px solid #ebe7df; }
+    .field-group { display: grid; gap: .4rem; color: #313633; font-weight: 700; }
+    .field-group input { width: 100%; border: 1px solid #c9c4bb; padding: .7rem; font: inherit; }
+    @@media (max-width: 760px) { .settings-header { align-items: stretch; flex-direction: column; } .backend-timeout-row { grid-template-columns: 1fr; } }
+</style>
+
+@code {
+    private readonly SettingsForm form = new();
+    private bool isSaving;
+    private string? message;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        ApplicationSettingsEvents.ApplicationSettings_Update += OnSettingsUpdatedAsync;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            Apply(await DataService.ApplicationSettings_ReadAsync());
+        }
+        catch (Exception exception)
+        {
+            errorMessage = exception.Message;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        isSaving = true;
+        message = null;
+        errorMessage = null;
+        try
+        {
+            Apply(await DataService.ApplicationSettings_UpdateAsync(form.ToContract()));
+            message = "Settings gespeichert.";
+        }
+        catch (Exception exception)
+        {
+            errorMessage = exception.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private Task OnSettingsUpdatedAsync(ApplicationSettings settings)
+    {
+        Apply(settings);
+        return InvokeAsync(StateHasChanged);
+    }
+
+    private void Apply(ApplicationSettings settings)
+    {
+        form.Apply(settings);
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        ApplicationSettingsEvents.ApplicationSettings_Update -= OnSettingsUpdatedAsync;
+        return ValueTask.CompletedTask;
+    }
+
+    private sealed class SettingsForm
+    {
+        public List<BackendSettingsForm> Backends { get; } = BackendNames
+            .Select(backend => new BackendSettingsForm(backend))
+            .ToList();
+
+        public ApplicationSettings ToContract() => new(Backends.Select(item => item.ToContract()).ToArray());
+
+        public void Apply(ApplicationSettings settings)
+        {
+            foreach (var backend in settings.InferenceTimeouts)
+            {
+                var form = Backends.FirstOrDefault(item => string.Equals(item.Backend, backend.Backend, StringComparison.OrdinalIgnoreCase));
+                form?.Apply(backend);
+            }
+        }
+    }
+
+    private static IReadOnlyList<string> BackendNames { get; } = ["Llama", "OpenVINO", "vLLM", "SGLang", "dotLLM"];
+
+    private sealed class BackendSettingsForm(string backend)
+    {
+        public string Backend { get; } = backend;
+        public double BaseSeconds { get; set; } = 120;
+        public double SecondsPerTool { get; set; } = 1;
+        public double SecondsPerPrefillToken { get; set; } = .01;
+
+        public void Apply(InferenceTimeoutSettings settings)
+        {
+            BaseSeconds = settings.BaseSeconds;
+            SecondsPerTool = settings.SecondsPerTool;
+            SecondsPerPrefillToken = settings.SecondsPerPrefillToken;
+        }
+
+        public InferenceTimeoutSettings ToContract() => new(Backend, BaseSeconds, SecondsPerTool, SecondsPerPrefillToken);
+    }
+}

@@ -135,7 +135,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
             try:
                 payload = {
                     "model": self._model_id,
-                    "messages": [{"role": message.role, "content": message.content} for message in request.messages],
+                    "messages": self._chat_messages(request.messages),
                     "max_tokens": request.max_tokens or 512,
                     "temperature": request.temperature,
                     "top_p": request.top_p,
@@ -145,8 +145,16 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                     "seed": request.seed or None,
                     "stop": list(request.stop_sequences) or None,
                 }
+                tools = self._tool_definitions(request.tools)
+                if tools:
+                    payload["tools"] = tools
+                tool_choice = self._tool_choice(request.tool_choice_json)
+                if tool_choice is not None:
+                    payload["tool_choice"] = tool_choice
                 response = await asyncio.to_thread(self._post_json, "/v1/chat/completions", payload)
-                content = response["choices"][0]["message"].get("content", "")
+                message = response["choices"][0]["message"]
+                content = message.get("content") or ""
+                tool_calls = message.get("tool_calls") or []
                 usage = response.get("usage") or {}
                 generated_tokens = int(usage.get("completion_tokens") or 0)
                 prompt_tokens = int(usage.get("prompt_tokens") or 0)
@@ -157,6 +165,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                     generated_tokens=generated_tokens,
                     prompt_tokens=prompt_tokens,
                     tokens_per_second=generated_tokens / elapsed if elapsed > 0 else 0,
+                    tool_calls_json=json.dumps(tool_calls, separators=(",", ":")),
                 )
             except Exception as exception:
                 yield inference_pb2.GenerateResponse(error=f"SGLang generation failed: {exception}")
@@ -166,7 +175,16 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
         started = time.monotonic()
         previous_text = ""
         try:
-            prompt = await self._format_prompt(request.messages)
+            tool_choice = self._tool_choice(request.tool_choice_json)
+            if request.tools and tool_choice != "none":
+                yield inference_pb2.GenerateResponse(
+                    error=(
+                        "Structured tool calls are not supported by the direct vLLM engine path. "
+                        "Use the SGLang/OpenAI-compatible path or a backend with a native tool parser."
+                    )
+                )
+                return
+            prompt = await self._format_prompt(request)
             from vllm import SamplingParams
 
             sampling_params = SamplingParams(
@@ -210,14 +228,56 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 error=f"vLLM generation failed: {exception}\n{traceback.format_exc()}"
             )
 
-    async def _format_prompt(self, messages) -> str:
+    async def _format_prompt(self, request) -> str:
         tokenizer = self._engine.get_tokenizer()
         if inspect.isawaitable(tokenizer):
             tokenizer = await tokenizer
-        chat_messages = [{"role": message.role, "content": message.content} for message in messages]
+        chat_messages = self._chat_messages(request.messages)
+        tools = self._tool_definitions(request.tools)
+        tool_choice = self._tool_choice(request.tool_choice_json)
+        if tool_choice == "none":
+            tools = []
         if hasattr(tokenizer, "apply_chat_template"):
-            return tokenizer.apply_chat_template(chat_messages, tokenize=False, add_generation_prompt=True)
+            template_options = {
+                "tokenize": False,
+                "add_generation_prompt": True,
+            }
+            if tools:
+                template_options["tools"] = tools
+            if tool_choice is not None and tool_choice != "none":
+                template_options["tool_choice"] = tool_choice
+            return tokenizer.apply_chat_template(chat_messages, **template_options)
         return "\n".join(f"{message['role']}: {message['content']}" for message in chat_messages) + "\nassistant:"
+
+    @staticmethod
+    def _chat_messages(messages):
+        result = []
+        for message in messages:
+            item = {"role": message.role, "content": message.content}
+            if message.tool_calls_json:
+                item["tool_calls"] = json.loads(message.tool_calls_json)
+            if message.tool_call_id:
+                item["tool_call_id"] = message.tool_call_id
+            result.append(item)
+        return result
+
+    @staticmethod
+    def _tool_definitions(tools):
+        result = []
+        for tool in tools:
+            function = {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": json.loads(tool.parameters_json or "{}"),
+            }
+            result.append({"type": tool.type or "function", "function": function})
+        return result
+
+    @staticmethod
+    def _tool_choice(value):
+        if not value:
+            return None
+        return json.loads(value)
 
     async def _abort(self, request_id: str) -> None:
         if self._engine is not None:

@@ -6,8 +6,31 @@ namespace Esi.AI.Core.ModelLoading;
 
 public sealed class OpenVinoDiagnosticsService
 {
+    private readonly OpenVinoLoadGate loadGate;
+    private OpenVinoDiagnostics? cachedDiagnostics;
+
+    public OpenVinoDiagnosticsService(OpenVinoLoadGate? loadGate = null)
+    {
+        this.loadGate = loadGate ?? new OpenVinoLoadGate();
+    }
+
     public OpenVinoDiagnostics Diagnose()
     {
+        if (loadGate.IsEntered)
+        {
+            return Volatile.Read(ref cachedDiagnostics) ?? new OpenVinoDiagnostics(
+                false,
+                false,
+                [],
+                [new OpenVinoDiagnosticCheck(
+                    "openvino-load-in-progress",
+                    "OpenVINO diagnostics",
+                    false,
+                    "Diagnostics are paused while an OpenVINO model load owns the accelerator.",
+                    false)],
+                null);
+        }
+
         var checks = new List<OpenVinoDiagnosticCheck>();
         AddLinuxDriverChecks(checks);
 
@@ -67,19 +90,25 @@ public sealed class OpenVinoDiagnosticsService
                     : $"OpenVINO did not detect an NPU device. Available devices: {FormatDeviceList(devices)}",
                 false));
 
-            return new OpenVinoDiagnostics(
+            return Cache(new OpenVinoDiagnostics(
                 gpuDevices.Any(device => device.IsCompatible),
                 npuDevices.Any(device => device.IsCompatible),
                 acceleratorDevices,
                 checks,
-                null);
+                null));
         }
         catch (Exception exception)
         {
             var detail = exception.ToString();
             checks.Add(new OpenVinoDiagnosticCheck("openvino-runtime", "OpenVINO runtime", false, detail, false));
-            return new OpenVinoDiagnostics(false, false, [], checks, detail);
+            return Cache(new OpenVinoDiagnostics(false, false, [], checks, detail));
         }
+    }
+
+    private OpenVinoDiagnostics Cache(OpenVinoDiagnostics diagnostics)
+    {
+        Volatile.Write(ref cachedDiagnostics, diagnostics);
+        return diagnostics;
     }
 
     private static string GetPropertyOrFallback(OpenVinoSharp.Core core, string device, string property, string fallback)

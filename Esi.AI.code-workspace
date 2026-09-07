@@ -5,11 +5,11 @@
 		}
 	],
 	"settings": {
-		"esimcp.debugConfigurationName": "Esi.AI Studio (Server Debug)",
 		"dotnet.projectLoad.exclude": [
 			"**/origins/**"
 		],
-		"esimcp.debugReadyString": "Now listening on:",
-		"git.ignoreLimitWarning": true
+		"git.ignoreLimitWarning": true,
+		"github.copilot.chat.virtualTools.threshold": 32,
+		"dotnet.preferVisualStudioCodeFileSystemWatcher": true
 	}
 }

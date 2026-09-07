@@ -16,13 +16,15 @@ MCP server that executes commands in **visible VSCode terminal tabs** with full 
 - VS Code 1.93+ (for Shell Integration API)
 - Node.js 20+
 
+The complete Esi.AI Studio debug lifecycle, including the virtual readiness,
+restart, and stop commands, is documented in
+[`docs/esimcp-debug-lifecycle.md`](../../../docs/esimcp-debug-lifecycle.md).
+
 ## How It Works
 
 EsiMCP is implemented as one direct HTTP MCP server per VS Code workspace inside the VS Code extension host. The extension starts the server on the configured loopback port and dispatches MCP requests directly to the terminal and debug tools.
 
 ## Getting Started
-
-### VS Code / Copilot
 
 Add to your `.vscode/mcp.json`:
 
@@ -40,61 +42,46 @@ Add to your `.vscode/mcp.json`:
 }
 ```
 
-### Your First Prompt
-
-After installation, try asking:
-
-> Run `ls -la` in the terminal
-
-You should see a new terminal tab open in VSCode with the command output.
-
-## Screenshots
-
-### Running a command with `run`
-
-![Run command output](docs/images/run_finished.png)
-
-### Permission dialog for `exec`
-
-![Exec permission dialog](docs/images/ask_exec_permission.png)
-
-### Exec result with clean output
-
-![Exec finished](docs/images/exec_finished.png)
+After installation, ask Copilot to run `ls -la` in the terminal.
 
 ## Tools
 
-### Quick Execution
+### VS Code Terminal Commands
 
 | Tool | Description |
 |------|-------------|
-| `run` | Create (or reuse) a terminal and execute a command in one step. Returns clean output with exit code. |
+| `vscode_terminal_list_commands` | List the available terminal commands. |
+| `vscode_terminal_execute_command` | Execute a terminal command by `commandId` and `arguments`. |
 
-### Session Management
+Available command IDs: `terminal.run`, `terminal.create`, `terminal.execute`, `terminal.read`, `terminal.list`, `terminal.close`, and `terminal.input`.
+Each entry returned by `vscode_terminal_list_commands` also includes `argumentsSchema` with required fields, types, defaults, and descriptions.
 
-| Tool | Description |
-|------|-------------|
-| `create` | Create a new visible terminal session. Returns a `sessionId`. |
-| `exec` | Execute a command in an existing session and capture output. |
-| `read` | Read output from a session with pagination. Supports incremental reads and tail mode (`offset: -N`). |
-| `input` | Send text to an interactive terminal (prompts, REPLs, confirmations). |
-| `list` | List active sessions. Optionally filter by `agentId`. |
-| `close` | Close a terminal session and its VSCode tab. |
-
-### Debug Controls
+### VS Code Debug Commands
 
 | Tool | Description |
 |------|-------------|
-| `debug_start` | Start the configured VS Code debug session and wait for the debugger to attach. This tool does not replace host-readiness observation. |
-| `debug_check_host_readyness` | Block until the configured readiness string is observed in live VS Code shell output or the readiness timeout expires. The default string is `Now ready on:`. |
-| `debug_settings` | Read a setting from the active VS Code workspace configuration. |
-| `debug_active_session` | Return the active VS Code debug session ID. |
-| `debug_wait_for_event` | Wait for a debugger pause, exception, continue, or termination event. |
-| `debug_stop` | Stop the active VS Code debug session. |
+| `vscode_debug_list_commands` | List the available debug commands. |
+| `vscode_debug_execute_command` | Execute a debug command by `commandId` and `arguments`. |
 
-For a new Esi.Web launch, dispatch `debug_start` and `debug_check_host_readyness` in the
-same parallel tool-call batch. The backend owns `debug_start`; the frontend must invoke
-`debug_check_host_readyness` immediately and keep the blocking call open until it returns.
+Available command IDs include `debug.start`, `debug.active.session`, `debug.stop`, `debug.restart`, and `debug.check.host.readyness`.
+
+`debug.restart` stops the active session and starts it again with a newly observed VS Code session ID. It accepts an optional `rebuildTaskName` that must exactly match a task from `tasks.json`, for example `{ "rebuildTaskName": "build" }`.
+Each entry returned by `vscode_debug_list_commands` also includes `argumentsSchema` with required fields, types, defaults, and descriptions.
+
+### C# Dev Kit
+
+| Tool | Description |
+|------|-------------|
+| `csharp_devkit_list_commands` | List the commands declared by the installed Microsoft C# Dev Kit, including ID, title, keyboard shortcuts, menu contexts, and registration status. |
+| `csharp_devkit_execute_command` | Execute one command from the installed C# Dev Kit command manifest. The `commandId` must be declared by `ms-dotnettools.csdevkit`; optional arguments are forwarded to VS Code. |
+
+The C# Dev Kit tools expose only commands declared by the installed extension. Arbitrary VS Code command IDs are rejected.
+The C# Dev Kit list includes `argumentsSchema` as a positional array. The extension manifest does not publish command-specific parameter metadata for declared commands, so those entries are intentionally generic; the virtual active-session, stop, and restart commands accept no arguments.
+
+For a new Esi.Web launch, dispatch `vscode_debug_execute_command` with `debug.start` and
+`debug.check.host.readyness` in the same parallel tool-call batch. The backend owns
+`debug.start`; the frontend must invoke `debug.check.host.readyness` immediately and keep
+the blocking call open until it returns.
 The readiness tool reads live shell execution output, not terminal scrollback. A result of
 `{ "ready": true }` confirms the readiness string was observed. `{ "ready": false }` means
 only that the timeout expired. `Canceled: Canceled` is external cancellation, not a timeout;
@@ -167,15 +154,15 @@ The extension reads configuration from VS Code settings under `esimcp.*`. Use di
 | `esimcp.maxOutputLines` | number | 10000 | Max lines kept in output buffer per session |
 | `esimcp.idleTimeoutMs` | number | 300000 | Close idle sessions after this many ms (0 = disabled) |
 | `esimcp.blockedCommands` | string[] | `["rm -rf /"]` | Commands that will be rejected |
-| `esimcp.debugConfigurationName` | string | empty | Default VS Code launch configuration used by `debug_start` |
-| `esimcp.debugReadyString` | string | `Now ready on:` | Text observed in live VS Code shell output by `debug_check_host_readyness` |
-| `esimcp.debugHostReadinessTimeoutSeconds` | number | 60 | Timeout for `debug_check_host_readyness` in seconds |
+| `esimcp.debugConfigurationName` | string | empty | Default VS Code launch configuration used by `debug.start` |
+| `esimcp.debugReadyString` | string | `Now ready on:` | Text observed in live VS Code shell output by `debug.check.host.readyness` |
+| `esimcp.debugHostReadinessTimeoutSeconds` | number | 60 | Timeout for `debug.check.host.readyness` in seconds |
 
-For debugging, an explicit `configurationName` supplied to `debug_start` takes precedence over this setting. If neither is supplied, `testName` is used when present; otherwise EsiMCP creates a debug configuration from `fileFullPath`. `debug_start` reports debugger attachment; use `debug_check_host_readyness` separately for host readiness.
+For debugging, an explicit `configurationName` supplied to `debug.start` takes precedence over this setting. If neither is supplied, `testName` is used when present; otherwise EsiMCP creates a debug configuration from `fileFullPath`. `debug.start` reports debugger attachment; use `debug.check.host.readyness` separately for host readiness.
 
-Use `debug_wait_for_event` to wait for debugger state changes. A paused exception event includes DAP-provided exception details when the adapter supports `exceptionInfo`; the agent must resume a paused host before starting browser or HTTP validation.
+Use `debug.wait.for.event` to wait for debugger state changes. A paused exception event includes DAP-provided exception details when the adapter supports `exceptionInfo`; the agent must resume a paused host before starting browser or HTTP validation.
 
-Use `debug_stop` to stop the active debug session.
+Use `debug.stop` to stop the active debug session.
 
 ## Recommended: Set as Preferred Tool
 
@@ -186,14 +173,14 @@ Use the following guidance in the project's Copilot instructions:
 ```markdown
 ## Terminal Execution
 
-Prefer the EsiMCP MCP tools (`mcp_esimcp_terminal_run`, `mcp_esimcp_terminal_exec`, `mcp_esimcp_terminal_read`, and related tools) over other command execution tools.
+Prefer `mcp_esimcp_vscode_terminal_execute_command` with the `terminal.*` command IDs over other command execution tools.
 EsiMCP runs commands in visible VSCode terminal tabs where the user can see output in real time.
 Use another command tool only for simple, non-interactive operations when EsiMCP is unavailable.
 
 For commands that may take longer than 30 seconds or produce large amounts of output (builds, test suites,
 deployments, installs), use the pull mode pattern:
-1. Call `run` with `waitForCompletion: false` to launch the command without blocking.
-2. Call `read` with `offset: -10` to check the last 10 lines of output.
+1. Call `mcp_esimcp_vscode_terminal_execute_command` with `commandId: "terminal.run"` and `arguments.waitForCompletion: false` to launch the command without blocking.
+2. Call `mcp_esimcp_vscode_terminal_execute_command` with `commandId: "terminal.read"` and `arguments.offset: -10` to check the last 10 lines of output.
 3. Repeat step 2 until you see the command has finished (look for exit messages, prompts, or "Done").
 4. Report the final result to the user.
 

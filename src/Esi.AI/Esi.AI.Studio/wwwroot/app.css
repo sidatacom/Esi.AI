@@ -1,5 +1,8 @@
 html, body {
     font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    height: auto !important;
+    min-height: 100%;
+    overflow: visible !important;
 }
 
 a, .btn-link {

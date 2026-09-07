@@ -38,6 +38,18 @@ public interface IBackendRuntimeEvents
     event Func<BackendRuntimeStatus, Task>? BackendRuntime_Delete;
 }
 
+/// <summary>Publishes changes to the global application settings snapshot.</summary>
+public interface IApplicationSettingsEvents
+{
+    event Func<ApplicationSettings, Task>? ApplicationSettings_Update;
+}
+
+/// <summary>Publishes transient provider communication entries to connected clients.</summary>
+public interface IProviderTraceEvents
+{
+    event Func<ProviderTraceEntry, Task>? ProviderTrace_Create;
+}
+
 /// <summary>Publishes backend runtime installation changes from the server application layer.</summary>
 public interface IBackendRuntimeStatusPublisher
 {

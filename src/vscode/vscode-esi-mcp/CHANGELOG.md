@@ -2,6 +2,90 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.29] - 2026-09-06
+
+### Fixed
+- Require a new VS Code debug session ID after restart instead of accepting recycled IDs
+- Support an optional named `tasks.json` rebuild task between stopping and starting the debug session
+
+## [1.0.28] - 2026-09-06
+
+### Fixed
+- Complete debug restarts when VS Code reuses the existing session ID
+- Add detailed restart lifecycle diagnostics
+
+## [1.0.27] - 2026-09-06
+
+### Added
+- Expose buffered Debug Console output for readiness diagnostics
+
+## [1.0.26] - 2026-09-06
+
+### Fixed
+- Match debug-host readiness strings split across Debug Console output chunks
+
+## [1.0.25] - 2026-09-06
+
+### Fixed
+- Log debug-host readiness state transitions for diagnostics
+
+## [1.0.24] - 2026-09-06
+
+### Fixed
+- Store debug host readiness independently for each VS Code debug session
+
+## [1.0.23] - 2026-09-06
+
+### Fixed
+- Capture readiness from Debug Adapter Protocol output and reset it when the debug session ends
+
+## [1.0.22] - 2026-09-06
+
+### Fixed
+- Capture Studio readiness from C# Dev Kit Debug Console DAP output
+
+## [1.0.21] - 2026-09-06
+
+### Fixed
+- Detect readiness already emitted by active `dotnet:` terminals before the readiness command is invoked
+- Ignore readiness output from exited terminals
+
+## [1.0.20] - 2026-09-06
+
+### Added
+- Add virtual C# Dev Kit commands for debug-session readiness, restart, and stop
+- Route C# Dev Kit lifecycle operations through the shared debug handlers
+
+## [1.0.19] - 2026-09-06
+
+### Added
+- Include per-command argument schemas in Debug, Terminal, and C# Dev Kit command listings
+
+## [1.0.18] - 2026-09-06
+
+### Changed
+- Restrict C# Dev Kit wrapper commands to project debug, no-debug launch, Hot Reload, Hot Reload diagnostics, and startup-project selection
+
+## [1.0.17] - 2026-09-06
+
+### Added
+- Add allowlist-based EsiMCP tools for listing and executing Microsoft C# Dev Kit commands
+
+## [1.0.16] - 2026-09-06
+
+### Fixed
+- Complete `debug_restart` after the old debug session terminates and the replacement session starts
+
+## [1.0.15] - 2026-09-06
+
+### Fixed
+- Read the active debug session directly from VS Code for every debug tool operation
+
+## [1.0.14] - 2026-09-06
+
+### Fixed
+- Return immediately from `debug_restart` when no active debug session exists
+
 ## [1.0.13] - 2026-09-02
 
 ### Fixed

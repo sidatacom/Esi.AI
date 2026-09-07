@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 
 namespace Esi.AI.Studio.Client.Services;
 
-public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents, IAsyncDisposable
+public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents, IApplicationSettingsEvents, IProviderTraceEvents, IAsyncDisposable
 {
     private readonly HubConnection connection;
     private readonly IClientStateStore stateStore;
@@ -21,6 +21,8 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     public event Func<BackendRuntimeStatus, Task>? BackendRuntime_Create;
     public event Func<BackendRuntimeStatus, Task>? BackendRuntime_Update;
     public event Func<BackendRuntimeStatus, Task>? BackendRuntime_Delete;
+    public event Func<ApplicationSettings, Task>? ApplicationSettings_Update;
+    public event Func<ProviderTraceEntry, Task>? ProviderTrace_Create;
 
     public SignalRDataService(NavigationManager navigationManager, IClientStateStore stateStore)
     {
@@ -101,6 +103,18 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
             if (handler is not null)
                 await handler(status);
         });
+            connection.On<ApplicationSettings>("ApplicationSettings_Update", async settings =>
+            {
+                var handler = ApplicationSettings_Update;
+                if (handler is not null)
+                await handler(settings);
+            });
+        connection.On<ProviderTraceEntry>("ProviderTrace_Create", async entry =>
+        {
+            var handler = ProviderTrace_Create;
+            if (handler is not null)
+                await handler(entry);
+        });
     }
 
     public async Task<IReadOnlyList<ModelSettings>> ModelSettings_ReadAsync(CancellationToken cancellationToken = default)
@@ -113,6 +127,25 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     {
         await EnsureConnectedAsync(cancellationToken);
         await connection.InvokeAsync("ModelSettings_Update", settings, cancellationToken);
+    }
+
+    public async Task<ApplicationSettings> ApplicationSettings_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<ApplicationSettings>("ApplicationSettings_Read", cancellationToken);
+    }
+
+    public async Task<ApplicationSettings> ApplicationSettings_UpdateAsync(ApplicationSettings settings, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("ApplicationSettings_Update", settings, cancellationToken);
+        return settings;
+    }
+
+    public async Task<IReadOnlyList<ProviderTraceEntry>> ProviderTrace_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<ProviderTraceEntry>>("ProviderTrace_Read", cancellationToken);
     }
 
     public async Task<IReadOnlyList<Model>> Model_ReadAsync(CancellationToken cancellationToken = default)
@@ -275,6 +308,12 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     {
         await EnsureConnectedAsync(cancellationToken);
         return await connection.InvokeAsync<OpenVinoLoadResultDto>("LoadOpenVinoModel", request, cancellationToken);
+    }
+
+    public async Task CancelOpenVinoLoadAsync()
+    {
+        await EnsureConnectedAsync(CancellationToken.None);
+        await connection.InvokeAsync("CancelOpenVinoLoad");
     }
 
     public async Task<OpenVinoModelStatusDto> GetOpenVinoModelStatusAsync(CancellationToken cancellationToken = default)

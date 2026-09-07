@@ -6,7 +6,7 @@ namespace Esi.AI.Studio.Data;
 /// <summary>Creates the application database context for Entity Framework design-time operations.</summary>
 public sealed class ApplicationDbContextFactory : IDesignTimeDbContextFactory<ApplicationDbContext>
 {
-    /// <summary>Creates a context without starting the watchdog-protected Studio host.</summary>
+    /// <summary>Creates a context without starting the Studio host.</summary>
     /// <param name="args">The command-line arguments supplied by Entity Framework.</param>
     /// <returns>An application database context configured for the Studio database.</returns>
     public ApplicationDbContext CreateDbContext(string[] args)

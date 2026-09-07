@@ -1,3 +1,248 @@
 ﻿@page "/"
+@rendermode InteractiveAuto
+@implements IAsyncDisposable
+@using Esi.AI.Models
+@inject IDataService DataService
+@inject IClientStateStore StateStore
+@inject NavigationManager NavigationManager
 
-Welcome to your new app.
+<div class="studio-dashboard">
+    <header class="dashboard-header">
+        <div>
+            <p class="dashboard-kicker">ESI.AI / RUNTIME CONTROL</p>
+            <h1>Studio overview</h1>
+            <p class="dashboard-lede">Ein kompakter Blick auf aktive Modelle, Laufzeiten und den lokalen API-Fluss.</p>
+        </div>
+        <button class="dashboard-refresh" type="button" @onclick="RefreshAsync" disabled="@isRefreshing">
+            <span aria-hidden="true">↻</span>
+            @(isRefreshing ? "Aktualisiere ..." : "Status aktualisieren")
+        </button>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <div class="dashboard-alert" role="alert">@errorMessage</div>
+    }
+
+    <section class="dashboard-metrics" aria-label="Studio status">
+        <div class="metric-tile metric-tile-primary">
+            <span class="metric-label">Aktive Modelle</span>
+            <strong>@LoadedModels.Count</strong>
+            <span>@(LoadedModels.Count == 1 ? "Ein Modell bereit" : "Modelle im Speicher")</span>
+        </div>
+        <div class="metric-tile">
+            <span class="metric-label">Runtimes</span>
+            <strong>@RuntimeCount</strong>
+            <span>@(RuntimeCount == 1 ? "Runtime verbunden" : "Runtimes verbunden")</span>
+        </div>
+        <div class="metric-tile">
+            <span class="metric-label">Backend</span>
+            <strong>@BackendCount</strong>
+            <span>@(BackendCount == 1 ? "Backend aktiv" : "Backends aktiv")</span>
+        </div>
+        <div class="metric-tile">
+            <span class="metric-label">API status</span>
+            <strong class="metric-status"><span class="status-dot @(IsConnected ? "status-dot-online" : "")" aria-hidden="true"></span>@(IsConnected ? "Online" : "Idle")</strong>
+            <span>OpenAI-kompatibler Endpoint</span>
+        </div>
+    </section>
+
+    <section class="dashboard-flow-panel" aria-labelledby="flow-heading">
+        <div class="panel-heading">
+            <div>
+                <p class="dashboard-kicker">SYSTEM FLOW</p>
+                <h2 id="flow-heading">Vom Client zum Modell</h2>
+            </div>
+            <span class="panel-meta">Live snapshot</span>
+        </div>
+        <div class="flow-diagram" role="img" aria-label="Client requests flow through the local API to active model runtimes">
+            <svg viewBox="0 0 920 220" aria-hidden="true" focusable="false">
+                <defs>
+                    <marker id="flow-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+                        <path d="M0,0 L10,5 L0,10 Z" />
+                    </marker>
+                </defs>
+                <path class="flow-line" d="M220 110 H330" marker-end="url(#flow-arrow)" />
+                <path class="flow-line" d="M590 110 H700" marker-end="url(#flow-arrow)" />
+                <rect class="flow-node flow-node-client" x="30" y="70" width="190" height="80" rx="4" />
+                <rect class="flow-node flow-node-api" x="330" y="55" width="260" height="110" rx="4" />
+                <rect class="flow-node flow-node-runtime" x="700" y="70" width="190" height="80" rx="4" />
+                <text class="flow-node-title" x="55" y="101">Clients</text>
+                <text class="flow-node-detail" x="55" y="127">VS Code · Browser · API</text>
+                <text class="flow-node-title" x="355" y="95">Esi.AI Studio API</text>
+                <text class="flow-node-detail" x="355" y="121">/v1 · SignalR · Port 7010</text>
+                <text class="flow-node-detail" x="355" y="143">@(IsConnected ? "requests can reach a model" : "waiting for a loaded model")</text>
+                <text class="flow-node-title" x="725" y="101">Runtimes</text>
+                <text class="flow-node-detail" x="725" y="127">@RuntimeSummary</text>
+            </svg>
+        </div>
+    </section>
+
+    <section class="dashboard-chart-grid" aria-label="Runtime analytics">
+        <div class="dashboard-panel">
+            <div class="panel-heading">
+                <div>
+                    <p class="dashboard-kicker">RUNTIME MIX</p>
+                    <h2>Modelle nach Runtime</h2>
+                </div>
+                <span class="panel-meta">@LoadedModels.Count total</span>
+            </div>
+            @if (RuntimeChartData.Count > 0)
+            {
+                <FluentDonutChart ChartData="@RuntimeChartData"
+                                  ValueInsideDonut="@LoadedModels.Count.ToString()"
+                                  ShowLabelsInPercent="true"
+                                  Height="280px"
+                                  HideTooltip="false" />
+            }
+            else
+            {
+                <div class="chart-empty"><strong>No runtime data yet</strong><span>Lade ein Modell unter Backends, um die Verteilung zu sehen.</span></div>
+            }
+        </div>
+
+        <div class="dashboard-panel">
+            <div class="panel-heading">
+                <div>
+                    <p class="dashboard-kicker">BACKEND LOAD</p>
+                    <h2>Modelle nach Backend</h2>
+                </div>
+                <span class="panel-meta">current state</span>
+            </div>
+            @if (BackendChartData.Count > 0)
+            {
+                <FluentHorizontalBarChart ChartData="@BackendChartData"
+                                          Height="280px"
+                                          HideRatio="true"
+                                          EnableGradient="true" />
+            }
+            else
+            {
+                <div class="chart-empty"><strong>No backend data yet</strong><span>Aktive Backend-Zuordnungen erscheinen hier.</span></div>
+            }
+        </div>
+    </section>
+
+    <section class="dashboard-model-panel" aria-labelledby="models-heading">
+        <div class="panel-heading">
+            <div>
+                <p class="dashboard-kicker">ACTIVE INVENTORY</p>
+                <h2 id="models-heading">Geladene Modelle</h2>
+            </div>
+            <button class="text-action" type="button" @onclick="OpenProvider">Provider öffnen <span aria-hidden="true">→</span></button>
+        </div>
+        @if (LoadedModels.Count == 0)
+        {
+            <div class="inventory-empty">Noch kein Modell geladen. <button class="text-action" type="button" @onclick="OpenBackends">Backends öffnen <span aria-hidden="true">→</span></button></div>
+        }
+        else
+        {
+            <div class="inventory-list">
+                @foreach (var model in LoadedModels)
+                {
+                    <div class="inventory-row">
+                        <div class="inventory-name"><span class="inventory-marker" aria-hidden="true"></span><strong>@GetModelName(model.ModelPath)</strong></div>
+                        <span>@model.Runtime</span>
+                        <span>@model.Backend</span>
+                        <span class="inventory-state @(model.IsLoading ? "inventory-state-loading" : "")">@(model.IsLoading ? "Loading" : "Ready")</span>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+</div>
+
+@code {
+    private static readonly DataVizPalette[] ChartPalette =
+    [
+        DataVizPalette.Color1,
+        DataVizPalette.Color5,
+        DataVizPalette.Color9,
+        DataVizPalette.Color13,
+        DataVizPalette.Color17,
+        DataVizPalette.Color21,
+    ];
+
+    private bool isRefreshing;
+    private string? errorMessage;
+
+    private IReadOnlyList<LoadedModelStatus> LoadedModels => StateStore.LoadedModels.LoadedModels;
+    private bool IsConnected => LoadedModels.Count > 0 || !string.IsNullOrWhiteSpace(StateStore.LoadedModels.Backend);
+    private int RuntimeCount => LoadedModels.Select(model => model.Runtime).Where(runtime => !string.IsNullOrWhiteSpace(runtime)).Distinct(StringComparer.OrdinalIgnoreCase).Count();
+    private int BackendCount => LoadedModels.Select(model => model.Backend).Distinct().Count();
+    private string RuntimeSummary => RuntimeCount == 0 ? "no active runtime" : string.Join(" · ", LoadedModels.Select(model => model.Runtime).Where(runtime => !string.IsNullOrWhiteSpace(runtime)).Distinct(StringComparer.OrdinalIgnoreCase));
+
+    private IReadOnlyList<DonutDataPoint> RuntimeChartData =>
+        LoadedModels
+            .GroupBy(model => string.IsNullOrWhiteSpace(model.Runtime) ? "Unknown" : model.Runtime, StringComparer.OrdinalIgnoreCase)
+            .Select((group, index) => new DonutDataPoint
+            {
+                Legend = group.Key,
+                Data = group.Count(),
+                Color = ChartPalette[index % ChartPalette.Length],
+                CalloutData = $"{group.Count()} {((group.Count() == 1) ? "model" : "models")}",
+            })
+            .ToArray();
+
+    private IReadOnlyList<HorizontalBarChartSeries> BackendChartData =>
+        LoadedModels.Count == 0
+            ? []
+            :
+            [
+                new HorizontalBarChartSeries
+                {
+                    ChartData = LoadedModels
+                        .GroupBy(model => model.Backend)
+                        .Select((group, index) => new HorizontalBarChartDataPoint
+                        {
+                            Legend = group.Key.ToString(),
+                            Data = group.Count(),
+                            Color = ChartPalette[index % ChartPalette.Length],
+                        })
+                        .ToArray(),
+                },
+            ];
+
+    protected override async Task OnInitializedAsync()
+    {
+        StateStore.Changed += HandleStateChanged;
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        isRefreshing = true;
+        errorMessage = null;
+        try
+        {
+            StateStore.ApplyLoadedModels(await DataService.LoadedModel_ReadAsync());
+        }
+        catch (Exception exception)
+        {
+            errorMessage = exception.Message;
+        }
+        finally
+        {
+            isRefreshing = false;
+        }
+    }
+
+    private void OpenBackends() => NavigationManager.NavigateTo("backends");
+
+    private void OpenProvider() => NavigationManager.NavigateTo("provider");
+
+    private void HandleStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public ValueTask DisposeAsync()
+    {
+        StateStore.Changed -= HandleStateChanged;
+        return ValueTask.CompletedTask;
+    }
+
+    private static string GetModelName(string modelPath)
+    {
+        var normalizedPath = modelPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var fileName = Path.GetFileName(normalizedPath);
+        return string.IsNullOrWhiteSpace(fileName) ? normalizedPath : Path.GetFileNameWithoutExtension(fileName);
+    }
+}

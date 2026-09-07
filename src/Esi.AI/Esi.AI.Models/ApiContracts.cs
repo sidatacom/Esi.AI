@@ -27,6 +27,16 @@ public sealed record ModelSettings(
     string ConfigurationJson,
     Guid? ConfigurationId = null);
 
+/// <summary>Stores application-wide runtime policies for every local backend.</summary>
+public sealed record ApplicationSettings(IReadOnlyList<InferenceTimeoutSettings> InferenceTimeouts);
+
+/// <summary>Configures the inference deadline formula for one backend family.</summary>
+public sealed record InferenceTimeoutSettings(
+    string Backend,
+    double BaseSeconds = 120,
+    double SecondsPerTool = 1,
+    double SecondsPerPrefillToken = .01);
+
 public sealed record Model(
     Guid Id,
     string Name,
@@ -45,7 +55,9 @@ public sealed record ModelConfiguration(
     string ConfigurationJson,
     DateTime CreatedAtUtc,
     DateTime UpdatedAtUtc,
-    ConfigurationBackend Backend = ConfigurationBackend.Llama);
+    ConfigurationBackend Backend = ConfigurationBackend.Llama,
+    InferenceTimeoutSettings? InferenceTimeout = null,
+    bool AutoLaunch = true);
 
 /// <summary>Describes the internal models and persisted configurations available to the application API.</summary>
 public sealed record ApplicationModelCatalog(
@@ -165,7 +177,9 @@ public sealed record ChatMessage(
     string Role,
     string Content,
     IReadOnlyList<ChatImage>? Images = null,
-    IReadOnlyList<ChatMessageContentPart>? ContentParts = null);
+    IReadOnlyList<ChatMessageContentPart>? ContentParts = null,
+    IReadOnlyList<OpenAiToolCall>? ToolCalls = null,
+    string? ToolCallId = null);
 
 /// <summary>Contains decoded image data attached to a chat message.</summary>
 public sealed record ChatImage(string MediaType, byte[] Data);
@@ -186,7 +200,9 @@ public sealed record ChatGenerationOptions(
     int PenaltyCount = 64,
     int? Seed = null,
     IReadOnlyList<string>? StopSequences = null,
-    string? ReasoningEffort = null);
+    string? ReasoningEffort = null,
+    IReadOnlyList<OpenAiToolDefinition>? Tools = null,
+    JsonElement? ToolChoice = null);
 
 public sealed record ChatResponse(string Content);
 
@@ -263,6 +279,17 @@ public sealed record OpenAiChatRequest(
     public Dictionary<string, JsonElement>? AdditionalProperties { get; init; }
 }
 
+/// <summary>Contains one normalized OpenAI chat request ready for a local backend adapter.</summary>
+public sealed record OpenAiBackendChatRequest(
+    string Backend,
+    string Model,
+    string? ModelPath,
+    IReadOnlyList<OpenAiChatMessage> StructuredMessages,
+    IReadOnlyList<ChatMessage> Messages,
+    IReadOnlyList<OpenAiToolDefinition>? Tools,
+    ChatGenerationOptions Options,
+    InferenceTimeoutSettings? InferenceTimeout = null);
+
 /// <summary>Configures the optional OmniRoute OpenAI-compatible upstream.</summary>
 public sealed class OmniRouteOptions
 {
@@ -325,7 +352,10 @@ public sealed record OpenAiModel(
     [property: JsonPropertyName("owned_by")] string OwnedBy,
     string? Name = null,
     ModelCapabilities? Capabilities = null,
-    bool Loaded = false);
+    bool Loaded = false,
+    Guid? ConfigurationId = null,
+    ConfigurationBackend? ConfigurationBackend = null,
+    bool AutoLaunch = true);
 
 public sealed record OpenAiChatCompletionResponse(
     string Id,

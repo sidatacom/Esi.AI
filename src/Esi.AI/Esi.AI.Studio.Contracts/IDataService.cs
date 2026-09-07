@@ -16,6 +16,12 @@ public interface IDataService
 
     Task<IReadOnlyList<ModelSettings>> ModelSettings_ReadAsync(CancellationToken cancellationToken = default);
 
+    Task<ApplicationSettings> ApplicationSettings_ReadAsync(CancellationToken cancellationToken = default);
+
+    Task<ApplicationSettings> ApplicationSettings_UpdateAsync(ApplicationSettings settings, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<ProviderTraceEntry>> ProviderTrace_ReadAsync(CancellationToken cancellationToken = default);
+
     Task ModelSettings_UpdateAsync(ModelSettings settings, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<Model>> Model_ReadAsync(CancellationToken cancellationToken = default);
@@ -74,5 +80,6 @@ public interface IDataService
     Task<BackendRuntimeStatus> BackendRuntime_UpdateAsync(string packageId, CancellationToken cancellationToken = default);
     Task BackendRuntime_DeleteAsync(string packageId, CancellationToken cancellationToken = default);
     Task<OpenVinoLoadResultDto> LoadModelAsync(OpenVinoLoadRequest request, CancellationToken cancellationToken = default);
+    Task CancelOpenVinoLoadAsync();
     Task<OpenVinoModelStatusDto> GetOpenVinoModelStatusAsync(CancellationToken cancellationToken = default);
 }

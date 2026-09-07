@@ -25,6 +25,17 @@ public sealed class DataHub(
 
     public Task<IReadOnlyList<ModelSettings>> ModelSettings_Read() => dataService.ModelSettings_ReadAsync(Context.ConnectionAborted);
 
+    public Task<ApplicationSettings> ApplicationSettings_Read() => dataService.ApplicationSettings_ReadAsync(Context.ConnectionAborted);
+
+    public Task<IReadOnlyList<ProviderTraceEntry>> ProviderTrace_Read() =>
+        dataService.ProviderTrace_ReadAsync(Context.ConnectionAborted);
+
+    public async Task ApplicationSettings_Update(ApplicationSettings settings)
+    {
+        var updated = await dataService.ApplicationSettings_UpdateAsync(settings, Context.ConnectionAborted);
+        await Clients.All.SendAsync("ApplicationSettings_Update", updated, Context.ConnectionAborted);
+    }
+
     public Task ModelSettings_Update(ModelSettings settings) => dataService.ModelSettings_UpdateAsync(settings, Context.ConnectionAborted);
 
     public Task<IReadOnlyList<Model>> Model_Read() => dataService.Model_ReadAsync(Context.ConnectionAborted);
@@ -141,6 +152,9 @@ public sealed class DataHub(
 
     public Task<OpenVinoLoadResultDto> LoadOpenVinoModel(OpenVinoLoadRequest request) =>
         dataService.LoadModelAsync(request, CancellationToken.None);
+
+    public Task CancelOpenVinoLoad() =>
+        dataService.CancelOpenVinoLoadAsync();
 
     public Task<OpenVinoModelStatusDto> GetOpenVinoModelStatus() =>
         dataService.GetOpenVinoModelStatusAsync(Context.ConnectionAborted);

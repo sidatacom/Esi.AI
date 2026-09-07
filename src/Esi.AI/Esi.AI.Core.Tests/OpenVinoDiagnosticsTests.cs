@@ -9,6 +9,20 @@ public sealed class OpenVinoDiagnosticsTests
     public TestContext TestContext { get; set; } = null!;
 
     [TestMethod]
+    public void Diagnose_WhenOpenVinoLoadIsActive_ReturnsDeferredDiagnosticsWithoutNativeAccess()
+    {
+        var gate = new OpenVinoLoadGate();
+        var diagnosticsService = new OpenVinoDiagnosticsService(gate);
+        Assert.IsTrue(gate.TryEnter());
+
+        var diagnostics = diagnosticsService.Diagnose();
+
+        Assert.IsFalse(diagnostics.IsGpuReady);
+        Assert.IsFalse(diagnostics.IsNpuReady);
+        Assert.AreEqual("openvino-load-in-progress", diagnostics.Checks.Single().Id);
+    }
+
+    [TestMethod]
     [TestCategory("OpenVINO.Integration")]
     public void Diagnose_WithNativeRuntime_EnumeratesDevices()
     {

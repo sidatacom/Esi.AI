@@ -17,6 +17,24 @@ namespace Esi.AI.Studio.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.11");
 
+            modelBuilder.Entity("Esi.AI.Studio.Data.ApplicationSettingsEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("InferenceTimeoutsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("ApplicationSettings");
+                });
+
             modelBuilder.Entity("Esi.AI.Studio.Data.ApplicationUser", b =>
                 {
                     b.Property<string>("Id")
@@ -99,7 +117,7 @@ namespace Esi.AI.Studio.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("ChatConversations", (string)null);
+                    b.ToTable("ChatConversations");
                 });
 
             modelBuilder.Entity("Esi.AI.Studio.Data.ChatMessageEntity", b =>
@@ -138,7 +156,7 @@ namespace Esi.AI.Studio.Migrations
 
                     b.HasIndex("ConversationId");
 
-                    b.ToTable("ChatMessages", (string)null);
+                    b.ToTable("ChatMessages");
                 });
 
             modelBuilder.Entity("Esi.AI.Studio.Data.ModelConfigurationEntity", b =>
@@ -154,10 +172,16 @@ namespace Esi.AI.Studio.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("AutoLaunch")
+                        .HasColumnType("INTEGER");
+
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Description")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InferenceTimeoutJson")
                         .HasColumnType("TEXT");
 
                     b.Property<bool>("IsDefault")
@@ -229,7 +253,7 @@ namespace Esi.AI.Studio.Migrations
 
                     b.HasKey("Id");
 
-                    b.ToTable("ModelDownloads", (string)null);
+                    b.ToTable("ModelDownloads");
                 });
 
             modelBuilder.Entity("Esi.AI.Studio.Data.ModelEntity", b =>
@@ -304,7 +328,7 @@ namespace Esi.AI.Studio.Migrations
                     b.HasIndex("ModelPath")
                         .IsUnique();
 
-                    b.ToTable("ModelMetadata", (string)null);
+                    b.ToTable("ModelMetadata");
                 });
 
             modelBuilder.Entity("Esi.AI.Studio.Data.ModelSettingsEntity", b =>
@@ -335,7 +359,7 @@ namespace Esi.AI.Studio.Migrations
                     b.HasIndex("Backend")
                         .IsUnique();
 
-                    b.ToTable("ModelSettings", (string)null);
+                    b.ToTable("ModelSettings");
                 });
 
             modelBuilder.Entity("Microsoft.AspNetCore.Identity.IdentityRole", b =>

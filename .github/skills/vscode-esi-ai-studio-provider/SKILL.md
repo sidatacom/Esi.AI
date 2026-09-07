@@ -42,4 +42,4 @@ For provider behavior changes:
 - Reload VS Code or restart the Extension Host before validating model registration.
 - Validate the complete path: Studio `/v1/models`, provider mapping, installed bundle, and VS Code model registration.
 
-For Studio changes, follow the watchdog and debug lifecycle in `.github/copilot-instructions.md`. Use the monitored VS Code debug session and do not run an unmonitored Studio process.
+For Studio changes, follow the standard Blazor server-debug lifecycle in `.github/copilot-instructions.md`. Use the VS Code C# debug session and do not leave an orphaned Studio process running after validation.

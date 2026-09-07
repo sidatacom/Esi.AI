@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Esi.AI.Core.Chat;
 using Esi.AI.Core.Grpc;
 using Esi.AI.Core.ModelLoading;
@@ -70,6 +71,33 @@ public sealed class PythonInferenceGrpcTests
     }
 
     [TestMethod]
+    public void ToGrpcRequest_GenerationOptions_PreservesToolsAndToolChoice()
+    {
+        using var toolChoiceDocument = JsonDocument.Parse("{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}}");
+        var request = PythonInferenceGrpcMapper.ToGrpcRequest(
+            [new ModelChatMessage("user", "Look this up.")],
+            "local-model",
+            new ChatGenerationOptions(
+                Tools:
+                [
+                    new OpenAiToolDefinition(
+                        "function",
+                        new OpenAiToolFunction(
+                            "lookup",
+                            "Looks up a value.",
+                            JsonDocument.Parse("{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}}}").RootElement.Clone()))
+                ],
+                ToolChoice: toolChoiceDocument.RootElement.Clone()));
+
+        var tool = request.Tools.Single();
+        Assert.AreEqual("function", tool.Type);
+        Assert.AreEqual("lookup", tool.Name);
+        Assert.AreEqual("Looks up a value.", tool.Description);
+        StringAssert.Contains(tool.ParametersJson, "\"query\"");
+        Assert.AreEqual(toolChoiceDocument.RootElement.GetRawText(), request.ToolChoiceJson);
+    }
+
+    [TestMethod]
     public async Task GenerateWithStatsAsync_FakeStream_ReturnsMappedTextAndStatistics()
     {
         GenerateRequest? capturedRequest = null;
@@ -109,6 +137,23 @@ public sealed class PythonInferenceGrpcTests
     }
 
     [TestMethod]
+    public async Task GenerateWithStatsAsync_StructuredToolResponse_ReturnsToolCalls()
+    {
+        using var session = new PythonInferenceChatSession(
+            (_, _) => StructuredToolResponseAsync(),
+            () => "SGLang",
+            () => "Qwen/test");
+
+        var result = await session.GenerateWithStatsAsync([new ModelChatMessage("user", "Look this up.")]);
+
+        Assert.AreEqual(string.Empty, result.Text);
+        Assert.AreEqual("tool_calls", result.FinishReason);
+        var toolCall = result.ToolCalls!.Single();
+        Assert.AreEqual("lookup", toolCall.Function.Name);
+        Assert.AreEqual("{\"query\":\"weather\"}", toolCall.Function.Arguments);
+    }
+
+    [TestMethod]
     public async Task GenerateWithStatsAsync_CancellationToken_CancelsFakeStream()
     {
         using var session = new PythonInferenceChatSession(
@@ -138,6 +183,16 @@ public sealed class PythonInferenceGrpcTests
     {
         await Task.Yield();
         yield return new GenerateResponse { Error = "backend unavailable" };
+    }
+
+    private static async IAsyncEnumerable<GenerateResponse> StructuredToolResponseAsync()
+    {
+        await Task.Yield();
+        yield return new GenerateResponse
+        {
+            Finished = true,
+            ToolCallsJson = "[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"query\\\":\\\"weather\\\"}\"}}]"
+        };
     }
 
     private static async IAsyncEnumerable<GenerateResponse> CancellationStreamAsync(

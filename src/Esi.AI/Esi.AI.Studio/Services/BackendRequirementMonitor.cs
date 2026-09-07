@@ -43,23 +43,15 @@ public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequi
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        while (!stoppingToken.IsCancellationRequested)
-        {
-            try
-            {
-                await RefreshAsync(stoppingToken).ConfigureAwait(false);
+        await RefreshAsync(stoppingToken).ConfigureAwait(false);
 
-                var interval = Task.Delay(TimeSpan.FromSeconds(15), stoppingToken);
-                var requested = refreshRequests.Reader.WaitToReadAsync(stoppingToken).AsTask();
-                await Task.WhenAny(interval, requested).ConfigureAwait(false);
-                while (refreshRequests.Reader.TryRead(out _))
-                {
-                }
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        while (await refreshRequests.Reader.WaitToReadAsync(stoppingToken).ConfigureAwait(false))
+        {
+            while (refreshRequests.Reader.TryRead(out _))
             {
-                return;
             }
+
+            await RefreshAsync(stoppingToken).ConfigureAwait(false);
         }
     }
 

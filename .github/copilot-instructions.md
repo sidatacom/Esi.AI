@@ -1,21 +1,49 @@
 # Copilot Instructions
 
+## Root-Cause-Regel
+
+- Probleme werden an ihrer Ursache gelöst, nicht durch symptomatische Patches, Workarounds oder zusätzliche Fallbacks.
+- Vor jeder Änderung muss der konkrete kontrollierende Codepfad identifiziert werden: Wer erzeugt den fehlerhaften Zustand, wer mutiert ihn und welche Abstraktion besitzt den Vertrag?
+- Eine Änderung ist erst ausreichend, wenn sie den ursprünglichen Fehler reproduzierbar verhindert und der betroffene Ablauf getestet wurde. Eine lediglich sichtbare Änderung oder ein unterdrückter Fehler gilt nicht als Lösung.
+- Bei widersprüchlichem Zustand müssen die Zustandsquelle und die Synchronisationsgrenze korrigiert werden; doppelte lokale Sonderlogik darf nicht als Ersatz für eine konsistente Quelle der Wahrheit eingeführt werden.
+- Keine stillen Fallbacks, keine alternativen Startwege und kein "funktioniert irgendwie"-Verhalten, wenn der eigentliche Pfad fehlerhaft ist. Wenn eine Annahme nicht belegt ist, muss sie durch den nächstliegenden Test oder eine gezielte Diagnose falsifiziert werden.
+- Nach der Ursachenänderung sind die ursprüngliche Fehlersituation, angrenzende Zustandsübergänge und die relevante Regression gezielt zu validieren.
+
 ## Esi.AI Studio Startregel
 
-- `Esi.AI.Studio` darf nur gestartet werden, wenn der projektweite Watchdog aktiv ist.
-- Verwende zum Starten ausschließlich die VS-Code-Debug-Konfiguration `Esi.AI Studio (Server Debug)` oder die Task-Kette `build-and-watch-esi-ai-studio`; diese startet den Watchdog vor dem Studio-Prozess und beendet ihn danach.
-- Starte `Esi.AI.Studio` niemals direkt mit `dotnet run`, der kompilierten Binärdatei, einer eigenen Terminal-Task oder einer neuen ad-hoc Debug-Konfiguration.
-- Prüfe vor jedem Start, dass kein alter Studio-Prozess, Watchdog oder Prozess den Port `7010` belegt. Beende verwaiste projektbezogene Prozesse kontrolliert, bevor genau eine neue überwachte Instanz gestartet wird.
-- Nach einem Debug- oder Testlauf muss `stop-esi-ai-studio-watchdog` ausgeführt werden; Watchdog- und Studio-Prozesse dürfen nicht unkontrolliert im Hintergrund verbleiben.
-- Diese Regeln allein erzwingen keinen Prozessstart. Das Studio prüft deshalb beim Start die von der überwachten VS-Code-Konfiguration gesetzte Watchdog-PID-Datei und beendet sich bei einem direkten Start ohne aktiven Watchdog sofort.
+- Starte `Esi.AI.Studio` mit C# Dev Kit über `csdevkit.debug.projectDebugLaunch` beziehungsweise **Start New Instance** im Solution Explorer.
+- C# Dev Kit verwendet dynamische, speicherinterne Debugkonfigurationen. Für den normalen Start dürfen keine `.vscode/launch.json` oder `.vscode/tasks.json` vorausgesetzt oder neu erzeugt werden.
+- Verwende `csdevkit.debug.hotReload` für Hot Reload und `csdevkit.debug.showHotReloadPanel` zur Diagnose.
+- Für clientseitige Breakpoints muss `Properties/launchSettings.json` die Microsoft-`inspectUri` enthalten und die Anwendung muss in Development `UseWebAssemblyDebugging()` aktivieren.
+- Prüfe vor jedem Start, dass kein alter Studio-Prozess den Port `7010` belegt. Beende verwaiste projektbezogene Prozesse kontrolliert, bevor eine neue Debugsession gestartet wird.
+- Ein separater Watchdog, eine PID-Datei und eine Startblockade im Anwendungscode gehören nicht zum Blazor-Debugging und dürfen nicht eingeführt werden.
+
+## Esi.AI Studio Hot Reload
+
+- Bei einer laufenden Studio-Debugsession ist für reine UI-Änderungen zuerst Hot Reload zu verwenden.
+- Als Hot-Reload-fähige UI-Änderungen gelten insbesondere Änderungen an `.razor`, `.razor.css`, CSS, Markup und anderem Client-Code, sofern VS Code und die laufende Anwendung die Änderung übernehmen können.
+- Für solche Änderungen darf die Debugsession nicht nur wegen einer anschließenden Browserprüfung oder eines unnötigen separaten Builds gestoppt werden. Die laufende Session bleibt aktiv, und die Änderung wird direkt im Browser validiert.
+- Ein kontrollierter Debug-Restart oder ein Stop vor einem Build ist erst erforderlich, wenn Hot Reload die Änderung nicht anwenden kann, ein vollständiger Build ausdrücklich nötig ist oder die Änderung Server-/Projektdateien betrifft, die einen Neustart verlangen.
+- Nach einem Hot-Reload-Lauf sind Host-Readiness, Browserzustand und gegebenenfalls die betroffene Route zu prüfen. Danach darf die Session für weitere Arbeit aktiv bleiben.
 
 ## Esi.AI Studio Build- und Debug-Lebenszyklus
 
 - Vor jedem Build, Rebuild oder Test des Studio-Projekts muss die aktive VS-Code-Debugsession geprüft werden.
-- Läuft eine Studio-Debugsession, muss sie vor einem separaten Build kontrolliert beendet werden. Ein Build darf niemals parallel zu einer laufenden Studio-Debugsession ausgeführt werden.
+- Läuft eine Studio-Debugsession und ist ein separater Build tatsächlich erforderlich, muss sie vor diesem Build kontrolliert beendet werden. Ein Build darf niemals parallel zu einer laufenden Studio-Debugsession ausgeführt werden. Für reine Hot-Reload-Änderungen gilt die Hot-Reload-Regel oben.
 - Wenn die Debugsession weiter benötigt wird, ist stattdessen ein kontrollierter Debug-Restart zu verwenden; dieser führt den notwendigen Rebuild aus. Danach muss die Host-Readiness erneut geprüft werden.
 - Nach dem Beenden der Debugsession ist zu verifizieren, dass keine alte Studio-Instanz den Port `7010` belegt, bevor ein separater Build oder ein neuer Start erfolgt.
-- Für Änderungen am Studio gilt daher verbindlich: aktive Debugsession prüfen, stoppen oder per Debug-Restart neu bauen, anschließend validieren und erst dann eine neue überwachte Instanz starten.
+- Für Änderungen am Studio gilt daher: aktive Debugsession prüfen, zunächst Hot Reload versuchen, anschließend die laufende UI validieren und nur bei Bedarf kontrolliert stoppen oder per Debug-Restart neu bauen. Nach einem Neustart muss die Host-Readiness erneut geprüft werden.
+
+## Long-Running Commands
+
+- Starte potenziell lang laufende Vorgänge von Anfang an asynchron im Hintergrund. Das gilt insbesondere für Modell-Ladevorgänge, Debug-Sessions, Server, Watcher sowie Builds und Tests, die voraussichtlich länger als einen kurzen Check laufen.
+- Verwende synchrone Ausführung nur für kurze, begrenzte Prüfungen. Lasse einen synchron gestarteten Vorgang nicht erst nach einem Timeout in den Hintergrund verschieben.
+- Lies den Output eines Hintergrundvorgangs erst nach Abschluss oder einer expliziten Benachrichtigung; starte keinen zweiten parallelen Vorgang auf derselben Ressource.
+
+## Build- und Testumfang
+
+- Kompiliere und teste ausschließlich Projekte unter `src/` im `Esi.*`-Namespace.
+- Alles unter `origins/` dient nur als Vorlage bzw. Referenz und wird nicht als Teil des Esi.AI-Builds oder der Esi.AI-Tests behandelt.
 
 ## Application Architecture
 

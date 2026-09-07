@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Runtime.CompilerServices;
@@ -24,18 +25,27 @@ public sealed class DataService(
     BackendRequirementMonitor? requirementMonitor = null,
     BackendRuntimeInstaller? backendRuntimeInstaller = null,
     IBackendRuntimeStatusPublisher? backendRuntimePublisher = null,
-    IInferenceService? inferenceService = null) : IDataService
+    IInferenceService? inferenceService = null,
+    ApplicationSettingsService? applicationSettingsService = null,
+    ProviderTraceStore? providerTraceStore = null) : IDataService
 {
     private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web)
     {
         Converters = { new JsonStringEnumConverter() }
     };
     private readonly IInferenceService effectiveInferenceService = inferenceService ?? new InferenceService(modelRuntime, new InferenceScheduler());
+    private readonly ApplicationSettingsService effectiveApplicationSettings = applicationSettingsService ?? new(dbContextFactory);
+    private readonly ConcurrentDictionary<Guid, Lazy<Task<ModelLoadStatus>>> configurationLoadTasks = new();
+    private readonly object openVinoLoadSync = new();
+    private CancellationTokenSource? openVinoLoadCancellation;
 
     #region BackendRequirements
 
     public Task<BackendRequirementState> GetBackendRequirementStateAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(requirementMonitor?.Current ?? new BackendRequirementState([], DateTimeOffset.MinValue));
+
+    public Task<IReadOnlyList<ProviderTraceEntry>> ProviderTrace_ReadAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(providerTraceStore?.Read() ?? (IReadOnlyList<ProviderTraceEntry>)[]);
 
     #endregion
 
@@ -316,6 +326,12 @@ public sealed class DataService(
 
     #region ModelSettings
 
+    public Task<ApplicationSettings> ApplicationSettings_ReadAsync(CancellationToken cancellationToken = default) =>
+        effectiveApplicationSettings.ReadAsync(cancellationToken);
+
+    public Task<ApplicationSettings> ApplicationSettings_UpdateAsync(ApplicationSettings settings, CancellationToken cancellationToken = default) =>
+        effectiveApplicationSettings.UpdateAsync(settings, cancellationToken);
+
     public async Task<IReadOnlyList<ModelSettings>> ModelSettings_ReadAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
@@ -361,7 +377,7 @@ public sealed class DataService(
     }
 
     /// <summary>Loads an internal model using the persisted configuration selected by its internal ID.</summary>
-    public async Task<ModelLoadStatus> LoadConfiguredModelAsync(
+    public Task<ModelLoadStatus> LoadConfiguredModelAsync(
         ApplicationModelLoadRequest request,
         CancellationToken cancellationToken = default)
     {
@@ -371,10 +387,17 @@ public sealed class DataService(
         if (request.ConfigurationId == Guid.Empty)
             throw new ArgumentException("ConfigurationId is required.", nameof(request));
 
-        var model = (await Model_UpdateAsync(cancellationToken))
-            .SingleOrDefault(item => item.Id == request.ModelId)
+        var newLoad = new Lazy<Task<ModelLoadStatus>>(
+            () => LoadConfiguredModelCoreAsync(request),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        return AwaitSharedConfigurationLoadAsync(request.ConfigurationId, newLoad, cancellationToken);
+    }
+
+    private async Task<ModelLoadStatus> LoadConfiguredModelCoreAsync(ApplicationModelLoadRequest request)
+    {
+        var model = (await Model_UpdateAsync(CancellationToken.None)).SingleOrDefault(item => item.Id == request.ModelId)
             ?? throw new KeyNotFoundException($"The model '{request.ModelId}' was not found.");
-        var configuration = await ModelConfiguration_ReadAsync(request.ConfigurationId, cancellationToken)
+        var configuration = await ModelConfiguration_ReadAsync(request.ConfigurationId, CancellationToken.None)
             ?? throw new KeyNotFoundException($"The model configuration '{request.ConfigurationId}' was not found.");
         if (!string.Equals(Path.GetFullPath(model.Path), Path.GetFullPath(configuration.ModelPath), StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The selected model configuration does not belong to the selected model.");
@@ -382,10 +405,10 @@ public sealed class DataService(
         switch (configuration.Backend)
         {
             case ConfigurationBackend.Llama:
-                await LoadModelAsync(DeserializeConfiguration<LoadModelRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, cancellationToken);
+                await LoadModelAsync(DeserializeConfiguration<LoadModelRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, CancellationToken.None);
                 break;
             case ConfigurationBackend.OpenVino:
-                await modelRuntime.LoadAsync(DeserializeConfiguration<OpenVinoLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, cancellationToken);
+                await modelRuntime.LoadAsync(DeserializeConfiguration<OpenVinoLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, CancellationToken.None);
                 break;
             case ConfigurationBackend.Vllm:
             case ConfigurationBackend.Sglang:
@@ -393,16 +416,89 @@ public sealed class DataService(
                 {
                     ModelPath = model.Path,
                     Backend = configuration.Backend
-                }, cancellationToken);
+                }, CancellationToken.None);
                 break;
             case ConfigurationBackend.DotLlm:
-                await LoadDotLlmModelAsync(DeserializeConfiguration<DotLlmLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, cancellationToken);
+                await LoadDotLlmModelAsync(DeserializeConfiguration<DotLlmLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, CancellationToken.None);
                 break;
             default:
                 throw new ArgumentException("The model configuration backend is not supported.", nameof(request));
         }
 
         return modelRuntime.LoadedModel_Read();
+    }
+
+    /// <summary>Resolves an OpenAI model identifier or configuration name to a persisted configuration.</summary>
+    public async Task<ModelConfiguration?> ResolveApiModelConfigurationAsync(
+        string? identifier,
+        CancellationToken cancellationToken = default)
+    {
+        var configurations = await ModelConfiguration_ReadAsync(cancellationToken);
+        if (Guid.TryParse(identifier, out var configurationId))
+            return configurations.FirstOrDefault(configuration => configuration.Id == configurationId);
+        if (!string.IsNullOrWhiteSpace(identifier))
+            return configurations.FirstOrDefault(configuration => string.Equals(configuration.Name, identifier.Trim(), StringComparison.OrdinalIgnoreCase));
+
+        return configurations.FirstOrDefault(configuration => configuration.IsDefault) ?? configurations.FirstOrDefault();
+    }
+
+    /// <summary>Loads the model belonging to one persisted configuration.</summary>
+    public Task<ModelLoadStatus> LoadModelConfigurationAsync(
+        Guid configurationId,
+        CancellationToken cancellationToken = default)
+    {
+        if (configurationId == Guid.Empty)
+            throw new ArgumentException("ConfigurationId is required.", nameof(configurationId));
+
+        var newLoad = new Lazy<Task<ModelLoadStatus>>(
+            () => LoadModelConfigurationCoreAsync(configurationId),
+            LazyThreadSafetyMode.ExecutionAndPublication);
+        return AwaitSharedConfigurationLoadAsync(configurationId, newLoad, cancellationToken);
+    }
+
+    private async Task<ModelLoadStatus> LoadModelConfigurationCoreAsync(Guid configurationId)
+    {
+        var configuration = await ModelConfiguration_ReadAsync(configurationId, CancellationToken.None).ConfigureAwait(false)
+            ?? throw new KeyNotFoundException($"The model configuration '{configurationId}' was not found.");
+        var currentStatus = modelRuntime.LoadedModel_Read();
+        if (currentStatus.LoadedModels.Any(model =>
+            !model.IsLoading &&
+            string.Equals(model.ModelPath, configuration.ModelPath, StringComparison.OrdinalIgnoreCase) &&
+            model.Backend == configuration.Backend))
+            return currentStatus;
+
+        var model = (await Model_UpdateAsync(CancellationToken.None)).SingleOrDefault(item =>
+            string.Equals(item.Path, configuration.ModelPath, StringComparison.OrdinalIgnoreCase))
+            ?? throw new KeyNotFoundException($"The model '{configuration.ModelPath}' was not found.");
+
+        return await LoadConfiguredModelCoreAsync(
+            new ApplicationModelLoadRequest(model.Id, configuration.Id)).ConfigureAwait(false);
+    }
+
+    private Task<ModelLoadStatus> AwaitSharedConfigurationLoadAsync(
+        Guid configurationId,
+        Lazy<Task<ModelLoadStatus>> newLoad,
+        CancellationToken cancellationToken)
+    {
+        var sharedLoad = configurationLoadTasks.GetOrAdd(configurationId, newLoad);
+        var loadTask = sharedLoad.Value;
+        _ = RemoveCompletedConfigurationLoadAsync(configurationId, sharedLoad, loadTask);
+        return loadTask.WaitAsync(cancellationToken);
+    }
+
+    private async Task RemoveCompletedConfigurationLoadAsync(
+        Guid configurationId,
+        Lazy<Task<ModelLoadStatus>> sharedLoad,
+        Task<ModelLoadStatus> loadTask)
+    {
+        try
+        {
+            await loadTask.ConfigureAwait(false);
+        }
+        catch
+        {
+        }
+        configurationLoadTasks.TryRemove(new KeyValuePair<Guid, Lazy<Task<ModelLoadStatus>>>(configurationId, sharedLoad));
     }
 
     public async Task<IReadOnlyList<BackendModel>> BackendModel_ReadAsync(ConfigurationBackend backend, CancellationToken cancellationToken = default)
@@ -539,8 +635,12 @@ public sealed class DataService(
         entity.ModelPath = configuration.ModelPath.Trim();
         entity.Backend = configuration.Backend;
         entity.IsDefault = configuration.IsDefault;
+        entity.AutoLaunch = configuration.AutoLaunch;
         entity.SchemaVersion = configuration.SchemaVersion < 1 ? 1 : configuration.SchemaVersion;
         entity.ConfigurationJson = configuration.ConfigurationJson;
+        entity.InferenceTimeoutJson = configuration.InferenceTimeout is null
+            ? null
+            : JsonSerializer.Serialize(configuration.InferenceTimeout, ConfigurationJsonOptions);
         entity.UpdatedAtUtc = now;
         if (entity.Id == Guid.Empty)
             entity.Id = Guid.NewGuid();
@@ -583,6 +683,25 @@ public sealed class DataService(
         entity.IsDefault = true;
         entity.UpdatedAtUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task<InferenceTimeoutSettings?> GetActiveInferenceTimeoutAsync(
+        string modelPath,
+        ConfigurationBackend backend,
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedPath = modelPath.Trim();
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var model = await db.Models.AsNoTracking().SingleOrDefaultAsync(item => item.Path == normalizedPath, cancellationToken);
+        if (model?.ConfigurationId is not Guid configurationId)
+            return null;
+
+        var configuration = await db.ModelConfigurations.AsNoTracking()
+            .SingleOrDefaultAsync(item => item.Id == configurationId && item.Backend == backend, cancellationToken);
+        if (string.IsNullOrWhiteSpace(configuration?.InferenceTimeoutJson))
+            return null;
+
+        return JsonSerializer.Deserialize<InferenceTimeoutSettings>(configuration.InferenceTimeoutJson, ConfigurationJsonOptions);
     }
 
     #endregion
@@ -841,15 +960,39 @@ public sealed class DataService(
 
     public async Task<OpenVinoLoadResultDto> LoadModelAsync(OpenVinoLoadRequest request, CancellationToken cancellationToken = default)
     {
+        using var loadCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        lock (openVinoLoadSync)
+            openVinoLoadCancellation = loadCancellation;
+
         try
         {
-            await modelRuntime.LoadAsync(request, cancellationToken);
+            await modelRuntime.LoadAsync(request, loadCancellation.Token);
             return new OpenVinoLoadResultDto(true, $"OpenVINO model loaded on {request.Device}.", request.Device);
+        }
+        catch (OperationCanceledException) when (loadCancellation.IsCancellationRequested)
+        {
+            return new OpenVinoLoadResultDto(false, "OpenVINO model loading was cancelled.", request.Device);
         }
         catch (Exception exception)
         {
             return new OpenVinoLoadResultDto(false, exception.ToString(), request.Device);
         }
+        finally
+        {
+            lock (openVinoLoadSync)
+            {
+                if (ReferenceEquals(openVinoLoadCancellation, loadCancellation))
+                    openVinoLoadCancellation = null;
+            }
+        }
+    }
+
+    public Task CancelOpenVinoLoadAsync()
+    {
+        lock (openVinoLoadSync)
+            openVinoLoadCancellation?.Cancel();
+
+        return Task.CompletedTask;
     }
 
     public Task<OpenVinoModelStatusDto> GetOpenVinoModelStatusAsync(CancellationToken cancellationToken = default)
@@ -960,7 +1103,13 @@ public sealed class DataService(
 
     private static ModelConfiguration ToConfiguration(ModelConfigurationEntity entity) =>
         new(entity.Id, entity.Name, entity.Description, entity.ModelPath, entity.IsDefault, entity.SchemaVersion,
-            entity.ConfigurationJson, entity.CreatedAtUtc, entity.UpdatedAtUtc, entity.Backend);
+            entity.ConfigurationJson, entity.CreatedAtUtc, entity.UpdatedAtUtc, entity.Backend,
+            DeserializeInferenceTimeout(entity.InferenceTimeoutJson), entity.AutoLaunch);
+
+    private static InferenceTimeoutSettings? DeserializeInferenceTimeout(string? json) =>
+        string.IsNullOrWhiteSpace(json)
+            ? null
+            : JsonSerializer.Deserialize<InferenceTimeoutSettings>(json, ConfigurationJsonOptions);
 
     private static T DeserializeConfiguration<T>(string configurationJson)
     {

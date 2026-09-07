@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
+using System.Text.Json;
 using GenerationResult = Esi.AI.Core.Chat.GenerationResult;
 using Esi.AI.Core.Grpc;
 using Esi.AI.Models;
@@ -439,6 +440,7 @@ public sealed class PythonInferenceServer : IDisposable
 /// <summary>Streams generation responses from the local Python gRPC bridge.</summary>
 public sealed class PythonInferenceChatSession : IDisposable
 {
+    private static readonly JsonSerializerOptions ToolCallJsonOptions = new(JsonSerializerDefaults.Web);
     private readonly Func<Grpc.GenerateRequest, CancellationToken, IAsyncEnumerable<GenerateResponse>> generate;
     private readonly Func<string> backendName;
     private readonly Func<string> modelId;
@@ -498,6 +500,7 @@ public sealed class PythonInferenceChatSession : IDisposable
         var tokenCount = 0;
         var promptTokenCount = 0;
         var tokensPerSecond = 0d;
+        IReadOnlyList<OpenAiToolCall>? toolCalls = null;
 
         await foreach (var response in generate(request, linkedCancellation.Token).WithCancellation(linkedCancellation.Token).ConfigureAwait(false))
         {
@@ -506,17 +509,26 @@ public sealed class PythonInferenceChatSession : IDisposable
             text.Append(response.Delta);
             if (!string.IsNullOrEmpty(response.Delta) && onDelta is not null)
                 await onDelta(response.Delta).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(response.ToolCallsJson))
+                toolCalls = JsonSerializer.Deserialize<OpenAiToolCall[]>(response.ToolCallsJson, ToolCallJsonOptions);
             tokenCount = Math.Max(tokenCount, (int)response.GeneratedTokens);
             promptTokenCount = Math.Max(promptTokenCount, (int)response.PromptTokens);
             if (response.TokensPerSecond > 0)
                 tokensPerSecond = response.TokensPerSecond;
         }
         started.Stop();
-        if (string.IsNullOrWhiteSpace(text.ToString()))
+        if (string.IsNullOrWhiteSpace(text.ToString()) && toolCalls is not { Count: > 0 })
             throw new InvalidOperationException($"{backendName()} returned an empty answer.");
         if (tokensPerSecond <= 0 && started.Elapsed.TotalSeconds > 0)
             tokensPerSecond = tokenCount / started.Elapsed.TotalSeconds;
-        return new GenerationResult(text.ToString(), tokenCount, started.Elapsed, tokensPerSecond, promptTokenCount);
+        return new GenerationResult(
+            text.ToString(),
+            tokenCount,
+            started.Elapsed,
+            tokensPerSecond,
+            promptTokenCount,
+            toolCalls is { Count: > 0 } ? "tool_calls" : "stop",
+            toolCalls);
     }
 
     /// <inheritdoc />

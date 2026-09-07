@@ -14,7 +14,7 @@ export async function handleTerminalExecute(
       content: [
         {
           type: "text",
-          text: `Error: Session "${input.sessionId}" not found. Use terminal_list to see active sessions.`,
+          text: `Error: Session "${input.sessionId}" not found. Use terminal.list to see active sessions.`,
         },
       ],
       isError: true,

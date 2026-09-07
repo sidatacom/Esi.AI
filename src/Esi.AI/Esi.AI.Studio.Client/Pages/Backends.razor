@@ -1,5 +1,5 @@
 @page "/backends"
-@rendermode InteractiveWebAssembly
+@rendermode InteractiveAuto
 @implements IAsyncDisposable
 
 @using System.Text.Json
@@ -8,13 +8,6 @@
 @inject IModelRuntimeEvents RuntimeEvents
 @inject IBackendRequirementEvents RequirementEvents
 
-<div class="page-header">
-    <div>
-        <p class="eyebrow">LOCAL INFERENCE / CONTROL ROOM</p>
-    </div>
-    <div class="backend-mark"><span></span> @ActiveBackendLabel</div>
-</div>
-
 <section class="loaded-models global-loaded-models" aria-labelledby="loaded-models-heading">
     <div class="loaded-models-heading">
         <div>
@@ -22,13 +15,6 @@
             <h2 id="loaded-models-heading">Loaded models</h2>
         </div>
         <div class="loaded-models-status">
-            <div class="runtime-status @GetRuntimeStatusClass()" role="status" aria-live="polite">
-                <span class="runtime-status-dot"></span>
-                <div>
-                    <strong>@GetRuntimeStatusLabel()</strong>
-                    <span>@GetRuntimeStatusDetail()</span>
-                </div>
-            </div>
             <span class="device-count">@GetLoadedModelsCountLabel()</span>
         </div>
     </div>
@@ -36,19 +22,29 @@
     {
         <p class="loaded-models-empty">Checking active runtimes...</p>
     }
-    else if (loadStatus?.LoadedModels.Count > 0)
+    else if (DisplayedLoadedModels.Count > 0)
     {
-        @foreach (var model in loadStatus.LoadedModels)
+        @foreach (var model in DisplayedLoadedModels)
         {
             <article class="loaded-model @(model.IsLoading ? "loaded-model-loading" : "")">
                 <div class="loaded-model-topline">
-                    <div>
+                    <div class="loaded-model-state @(model.IsLoading ? "loaded-model-state-loading" : "loaded-model-state-ready")" role="status" aria-label="@(model.IsLoading ? "Loading model" : "Model loaded")">
+                        <span class="loaded-model-state-dot"></span>
+                    </div>
+                    <div class="loaded-model-copy">
                         <strong>@Path.GetFileName(model.ModelPath)</strong>
                         <span>@(model.IsLoading ? $"Loading on {model.Runtime}..." : FormatLoadedModelSummary(model))</span>
                     </div>
                     @if (model.IsLoading)
                     {
-                        <span class="loading-model-status" role="status">Loading...</span>
+                        @if (model.Backend == ConfigurationBackend.OpenVino)
+                        {
+                            <button class="profile-button cancel-button" type="button" @onclick="CancelOpenVinoModelLoadAsync">Cancel loading</button>
+                        }
+                        else
+                        {
+                            <span class="loading-model-status" role="status">Loading...</span>
+                        }
                     }
                     else
                     {
@@ -78,11 +74,10 @@
     }
 </section>
 
-<details class="backend-support-matrix" open="@(!AreMatrixChecksReady)">
-    <summary class="section-heading backend-support-summary">
+<details class="backend-support-matrix" open="@isMatrixExpanded">
+    <summary class="section-heading backend-support-summary" aria-expanded="@isMatrixExpanded" @onclick="ToggleMatrixSupportMatrix" @onclick:preventDefault="true">
         <div>
             <p class="eyebrow">GPU COMPATIBILITY MATRIX</p>
-            <h2 id="backend-support-heading">Vendor and driver support</h2>
         </div>
     </summary>
     <div class="table-scroll">
@@ -232,6 +227,124 @@
 </nav>
 
 <div class="backend-sections">
+<section class="driver-validation-panel backend-prerequisites-panel @(isBackendRequirementsExpanded ? "is-expanded" : "is-collapsed")">
+    <details open="@isBackendRequirementsExpanded">
+        <summary class="section-heading driver-validation-summary" aria-expanded="@isBackendRequirementsExpanded" @onclick="ToggleBackendRequirements" @onclick:preventDefault="true">
+            <div>
+                <p class="eyebrow">BACKEND REQUIREMENTS</p>
+            </div>
+            <span class="validation-summary @(IsBackendRequirementsReady ? "validation-summary-ok" : "validation-summary-error")">
+                @(IsBackendRequirementsReady ? "Ready" : "Needs attention")
+            </span>
+        </summary>
+        <div class="driver-validation-content">
+            @if (activeBackend == BackendTab.OpenVino)
+            {
+                <button class="profile-button" type="button" @onclick="RefreshOpenVinoDiagnosticsAsync" disabled="@isCheckingOpenVino">
+                    @(isCheckingOpenVino ? "Checking..." : "Recheck")
+                </button>
+                @if (openVinoDiagnostics is null)
+                {
+                    <p class="empty-state">Checking the local Intel GPU and OpenVINO runtime...</p>
+                }
+                else
+                {
+                    <ol class="validation-steps">
+                        @for (var index = 0; index < openVinoDiagnostics.Checks.Count; index++)
+                        {
+                            var check = openVinoDiagnostics.Checks[index];
+                            <li class="validation-step @(check.IsAvailable ? "validation-step-ok" : "validation-step-error")">
+                                <span class="validation-step-number">@((index + 1).ToString("00"))</span>
+                                <span class="validation-step-indicator" aria-hidden="true">@(check.IsAvailable ? "OK" : "!")</span>
+                                <span class="validation-step-copy">
+                                    <strong>@check.Name</strong>
+                                    <small>@check.Detail</small>
+                                    @if (!check.IsAvailable && check.CanSolve)
+                                    {
+                                        <button class="validation-solve-button" type="button" @onclick="() => SolveOpenVinoCheckAsync(check.Id)" disabled="@(solvingCheckId is not null)">
+                                            @(solvingCheckId == check.Id ? "Installing..." : "Solve")
+                                        </button>
+                                    }
+                                </span>
+                            </li>
+                        }
+                    </ol>
+                    <p class="validation-summary @(IsOpenVinoValidationReady ? "validation-summary-ok" : "validation-summary-error")">
+                        @(IsOpenVinoValidationReady ? "OpenVINO accelerator backend ready." : "No compatible OpenVINO accelerator is ready. Model loading is disabled.")
+                    </p>
+                    @if (!string.IsNullOrWhiteSpace(openVinoDiagnostics.Error))
+                    {
+                        <details class="solve-output">
+                            <summary>OpenVINO error details</summary>
+                            <textarea class="form-control log-output" rows="10" readonly>@openVinoDiagnostics.Error</textarea>
+                        </details>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(openVinoInstallOutput))
+                    {
+                        <details class="solve-output" open>
+                            <summary>Driver installation output</summary>
+                            <textarea class="form-control log-output" rows="10" readonly>@openVinoInstallOutput</textarea>
+                        </details>
+                    }
+                    @if (solveRequiresLogin)
+                    {
+                        <p class="solve-auth-message">
+                            <a href="Account/Login?returnUrl=%2Fbackends">Sign in</a> to authorize driver installation, then run Solve again.
+                        </p>
+                    }
+                }
+            }
+            else if (backendPrerequisites is null)
+            {
+                <p class="empty-state">Checking backend requirements...</p>
+            }
+            else
+            {
+                <button class="profile-button" type="button" @onclick="RefreshBackendPrerequisitesAsync" disabled="@isCheckingPrerequisites">
+                    @(isCheckingPrerequisites ? "Checking..." : "Recheck")
+                </button>
+                <ol class="validation-steps">
+                    @for (var index = 0; index < backendPrerequisites.Checks.Count; index++)
+                    {
+                        var check = backendPrerequisites.Checks[index];
+                        <li class="validation-step @(check.IsAvailable ? "validation-step-ok" : check.IsOptional ? "validation-step-info" : "validation-step-error")">
+                            <span class="validation-step-number">@((index + 1).ToString("00"))</span>
+                            <span class="validation-step-indicator" aria-hidden="true">@(check.IsAvailable ? "OK" : check.IsOptional ? "i" : "!")</span>
+                            <span class="validation-step-copy">
+                                <strong>@check.Name</strong>
+                                <small>@check.Detail</small>
+                                @if (!check.IsAvailable && !check.IsOptional && check.CanSolve)
+                                {
+                                    <button class="validation-solve-button" type="button" @onclick="() => PrepareBackendPrerequisitesAsync(check.Id)" disabled="@isPreparingPrerequisites">
+                                        @(isPreparingPrerequisites ? (CurrentPrerequisiteBackend == ConfigurationBackend.Llama ? "Installing..." : "Preparing...") : CurrentPrerequisiteBackend == ConfigurationBackend.Llama ? "Install" : "Prepare")
+                                    </button>
+                                }
+                            </span>
+                        </li>
+                    }
+                </ol>
+                <p class="validation-summary @(IsBackendPrerequisitesReady ? "validation-summary-ok" : "validation-summary-error")">
+                    @(IsBackendPrerequisitesReady ? "Backend requirements are ready." : "Model loading is disabled until the required backend checks pass.")
+                </p>
+                @if (!string.IsNullOrWhiteSpace(backendPrerequisites.Error))
+                {
+                    <details class="solve-output" open>
+                        <summary>Diagnostic details</summary>
+                        <textarea class="form-control log-output" rows="8" readonly>@backendPrerequisites.Error</textarea>
+                    </details>
+                }
+                @if (!string.IsNullOrWhiteSpace(prerequisiteOutput))
+                {
+                    <details class="solve-output" open>
+                        <summary>Preparation output</summary>
+                        <textarea class="form-control log-output" rows="8" readonly>@prerequisiteOutput</textarea>
+                    </details>
+                }
+            }
+        </div>
+    </details>
+</section>
+
 <section class="config-panel shared-model-config">
     <div class="section-heading">
         <div><p class="eyebrow">SHARED MODEL CATALOG</p><h2>Model and configuration</h2></div>
@@ -240,15 +353,15 @@
     <div class="model-load-row">
         <div class="model-picker">
             <label class="form-label" for="shared-model-picker">Model for @GetBackendLabel(activeBackend)</label>
-            <select id="shared-model-picker" class="form-select" @bind="SharedModelPath" @bind:after="SelectSharedModelAsync">
+            <select @key="@($"{activeBackend}:{CurrentModelPath}")" id="shared-model-picker" class="form-select" value="@CurrentModelPath" @onchange="SelectSharedModelAsync">
                 <option value="">Select a model...</option>
                 @if (!string.IsNullOrWhiteSpace(CurrentModelPath) && !CurrentBackendModels.Any(model => string.Equals(model.Path, CurrentModelPath, StringComparison.OrdinalIgnoreCase)))
                 {
-                    <option value="@CurrentModelPath">@Path.GetFileName(CurrentModelPath) (saved path)</option>
+                    <option value="@CurrentModelPath" selected>@Path.GetFileName(CurrentModelPath) (saved path)</option>
                 }
                 @foreach (var model in CurrentBackendModels)
                 {
-                    <option value="@model.Path">@model.Name</option>
+                    <option value="@model.Path" selected="@string.Equals(model.Path, CurrentModelPath, StringComparison.OrdinalIgnoreCase)">@model.Name</option>
                 }
             </select>
             @if (CurrentBackendModels.Count == 0)
@@ -260,11 +373,23 @@
                 <span class="picker-note">Reference: @CurrentReferenceModel?.ModelId (@CurrentReferenceModel?.EnvironmentVariable)</span>
             }
         </div>
+        <div class="model-load-action">
+            @if (isOpenVinoLoading)
+            {
+                <button class="load-button cancel-button" type="button" @onclick="CancelOpenVinoModelLoadAsync">Cancel loading</button>
+            }
+            else
+            {
+                <button class="load-button" type="button" @onclick="LoadActiveBackendModelAsync" disabled="@IsCurrentModelLoadDisabled">@GetLoadButtonLabel()</button>
+            }
+        </div>
+    </div>
+    <div class="profile-toolbar">
         <div class="profile-select">
             <label class="form-label" for="shared-configuration-profile">Configuration set</label>
-            <select id="shared-configuration-profile" class="form-select" value="@selectedProfileId" @onchange="SelectProfileAsync" disabled="@string.IsNullOrWhiteSpace(CurrentModelPath)">
+            <select id="shared-configuration-profile" class="form-select" value="@selectedProfileId" @onchange="SelectProfileAsync" disabled="@(!BackendProfiles.Any())">
                 <option value="">Select a saved set...</option>
-                @foreach (var profile in MatchingProfiles)
+                @foreach (var profile in BackendProfiles.OrderBy(profile => profile.Name))
                 {
                     <option value="@profile.Id">@profile.Name</option>
                 }
@@ -274,9 +399,38 @@
             <button class="profile-button" type="button" @onclick="CreateProfileAsync" disabled="@string.IsNullOrWhiteSpace(CurrentModelPath)">Create</button>
             <button class="profile-button" type="button" @onclick="UpdateProfileAsync" disabled="@(!selectedProfileId.HasValue)">Update</button>
             <button class="profile-button" type="button" @onclick="OpenAssignProfileAsync" disabled="@(!BackendProfiles.Any())">Assign</button>
-            <button class="load-button" type="button" @onclick="LoadActiveBackendModelAsync" disabled="@IsCurrentModelLoadDisabled">@GetLoadButtonLabel()</button>
         </div>
     </div>
+
+    <div class="timeout-settings-link">
+        <div>
+            <p class="eyebrow">INFERENCE TIMEOUTS</p>
+            <strong>Backend-Zeitbudgets</strong>
+            <p>Die globalen Werte für Basiszeit, Tools und Prefill werden in den allgemeinen Einstellungen gepflegt.</p>
+        </div>
+        <a class="profile-button profile-button-primary" href="settings">Globale Timeouts öffnen</a>
+    </div>
+
+    @if (selectedProfileId.HasValue)
+    {
+        <div class="profile-identity-row">
+            <label class="profile-identity-field">Configuration name <InputText class="form-control" @bind-Value="selectedProfileName" /></label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="selectedProfileAutoLaunch" /> AutoLaunch bei API-Anfragen</label>
+        </div>
+        <div id="profile-timeout-settings" class="profile-timeout-row">
+            <div class="profile-timeout-copy">
+                <p class="eyebrow">CONFIGURATION OVERRIDE</p>
+                <label class="setting-toggle"><InputCheckbox @bind-Value="profileTimeoutEnabled" /> Timeout für diese Konfiguration überschreiben</label>
+                <small>Leer lassen, um die globalen Werte des Backends zu verwenden.</small>
+            </div>
+            @if (profileTimeoutEnabled)
+            {
+                <label class="profile-timeout-field">Basiszeit (s) <InputNumber class="form-control" @bind-Value="profileTimeoutBaseSeconds" /></label>
+                <label class="profile-timeout-field">Pro Tool (s) <InputNumber class="form-control" @bind-Value="profileTimeoutSecondsPerTool" /></label>
+                <label class="profile-timeout-field">Pro Prefill-Token (s) <InputNumber class="form-control" @bind-Value="profileTimeoutSecondsPerPrefillToken" /></label>
+            }
+        </div>
+    }
 
     @if (isAssigningProfile)
     {
@@ -287,7 +441,7 @@
                     <option value="">Select a configuration...</option>
                     @foreach (var profile in BackendProfiles.OrderBy(profile => profile.Name))
                     {
-                        <option value="@profile.Id">@profile.Name (@Path.GetFileName(profile.ModelPath))</option>
+                        <option value="@profile.Id">@profile.Name</option>
                     }
                 </select>
                 <label class="form-label" for="shared-assign-target-model">Target model</label>
@@ -421,72 +575,6 @@
         }
     </section>
 </section>
-
-@if (activeBackend != BackendTab.OpenVino)
-{
-    <section class="driver-validation-panel backend-prerequisites-panel">
-        <details open="@(!IsBackendPrerequisitesReady)">
-            <summary class="section-heading driver-validation-summary">
-                <div>
-                    <p class="eyebrow">BACKEND REQUIREMENTS</p>
-                    <h2>@(backendPrerequisites?.BackendName ?? GetBackendLabel(activeBackend))</h2>
-                </div>
-                <span class="validation-summary @(IsBackendPrerequisitesReady ? "validation-summary-ok" : "validation-summary-error")">
-                    @(IsBackendPrerequisitesReady ? "Ready" : "Needs attention")
-                </span>
-            </summary>
-            <div class="driver-validation-content">
-                <button class="profile-button" type="button" @onclick="RefreshBackendPrerequisitesAsync" disabled="@isCheckingPrerequisites">
-                    @(isCheckingPrerequisites ? "Checking..." : "Recheck")
-                </button>
-                @if (backendPrerequisites is null)
-                {
-                    <p class="empty-state">Checking backend requirements...</p>
-                }
-                else
-                {
-                    <ol class="validation-steps">
-                        @for (var index = 0; index < backendPrerequisites.Checks.Count; index++)
-                        {
-                            var check = backendPrerequisites.Checks[index];
-                            <li class="validation-step @(check.IsAvailable ? "validation-step-ok" : check.IsOptional ? "validation-step-info" : "validation-step-error")">
-                                <span class="validation-step-number">@((index + 1).ToString("00"))</span>
-                                <span class="validation-step-indicator" aria-hidden="true">@(check.IsAvailable ? "OK" : check.IsOptional ? "i" : "!")</span>
-                                <span class="validation-step-copy">
-                                    <strong>@check.Name</strong>
-                                    <small>@check.Detail</small>
-                                    @if (!check.IsAvailable && !check.IsOptional && check.CanSolve)
-                                    {
-                                        <button class="validation-solve-button" type="button" @onclick="() => PrepareBackendPrerequisitesAsync(check.Id)" disabled="@isPreparingPrerequisites">
-                                            @(isPreparingPrerequisites ? (CurrentPrerequisiteBackend == ConfigurationBackend.Llama ? "Installing..." : "Preparing...") : CurrentPrerequisiteBackend == ConfigurationBackend.Llama ? "Install" : "Prepare")
-                                        </button>
-                                    }
-                                </span>
-                            </li>
-                        }
-                    </ol>
-                    <p class="validation-summary @(IsBackendPrerequisitesReady ? "validation-summary-ok" : "validation-summary-error")">
-                        @(IsBackendPrerequisitesReady ? "Backend requirements are ready." : "Model loading is disabled until the required backend checks pass.")
-                    </p>
-                    @if (!string.IsNullOrWhiteSpace(backendPrerequisites.Error))
-                    {
-                        <details class="solve-output" open>
-                            <summary>Diagnostic details</summary>
-                            <textarea class="form-control log-output" rows="8" readonly>@backendPrerequisites.Error</textarea>
-                        </details>
-                    }
-                    @if (!string.IsNullOrWhiteSpace(prerequisiteOutput))
-                    {
-                        <details class="solve-output" open>
-                            <summary>Preparation output</summary>
-                            <textarea class="form-control log-output" rows="8" readonly>@prerequisiteOutput</textarea>
-                        </details>
-                    }
-                }
-            </div>
-        </details>
-    </section>
-}
 
 @if (activeBackend is BackendTab.Vllm or BackendTab.Sglang)
 {
@@ -737,79 +825,20 @@ else if (activeBackend == BackendTab.OpenVino)
 {
     <div class="llama-workspace openvino-workspace">
 
-        <details class="driver-validation-panel" open="@(!IsOpenVinoValidationReady)">
-            <summary class="section-heading driver-validation-summary">
-                <div>
-                    <p class="eyebrow">OPENVINO PREREQUISITES</p>
-                    <h2>Driver validation</h2>
-                </div>
-                <span class="validation-summary @(IsOpenVinoValidationReady ? "validation-summary-ok" : "validation-summary-error")">
-                    @(IsOpenVinoValidationReady ? "Ready" : "Needs attention")
-                </span>
-            </summary>
-            <div class="driver-validation-content">
-                <button class="profile-button" type="button" @onclick="RefreshOpenVinoDiagnosticsAsync" disabled="@isCheckingOpenVino">
-                    @(isCheckingOpenVino ? "Checking..." : "Recheck")
-                </button>
-            @if (openVinoDiagnostics is null)
-            {
-                <p class="empty-state">Checking the local Intel GPU and OpenVINO runtime...</p>
-            }
-            else
-            {
-                <ol class="validation-steps">
-                    @for (var index = 0; index < openVinoDiagnostics.Checks.Count; index++)
-                    {
-                        var check = openVinoDiagnostics.Checks[index];
-                        <li class="validation-step @(check.IsAvailable ? "validation-step-ok" : "validation-step-error")">
-                            <span class="validation-step-number">@((index + 1).ToString("00"))</span>
-                            <span class="validation-step-indicator" aria-hidden="true">@(check.IsAvailable ? "OK" : "!")</span>
-                            <span class="validation-step-copy">
-                                <strong>@check.Name</strong>
-                                <small>@check.Detail</small>
-                                @if (!check.IsAvailable && check.CanSolve)
-                                {
-                                    <button class="validation-solve-button" type="button" @onclick="() => SolveOpenVinoCheckAsync(check.Id)" disabled="@(solvingCheckId is not null)">
-                                        @(solvingCheckId == check.Id ? "Installing..." : "Solve")
-                                    </button>
-                                }
-                            </span>
-                        </li>
-                    }
-                </ol>
-                <p class="validation-summary @(openVinoDiagnostics.IsGpuReady || openVinoDiagnostics.IsNpuReady ? "validation-summary-ok" : "validation-summary-error")">
-                    @(openVinoDiagnostics.IsGpuReady || openVinoDiagnostics.IsNpuReady ? "OpenVINO accelerator backend ready." : "No compatible OpenVINO accelerator is ready. Model loading is disabled.")
-                </p>
-                @if (!string.IsNullOrWhiteSpace(openVinoDiagnostics.Error))
-                {
-                    <details class="solve-output">
-                        <summary>OpenVINO error details</summary>
-                        <textarea class="form-control log-output" rows="10" readonly>@openVinoDiagnostics.Error</textarea>
-                    </details>
-                }
-                @if (!string.IsNullOrWhiteSpace(openVinoInstallOutput))
-                {
-                    <details class="solve-output" open>
-                        <summary>Driver installation output</summary>
-                        <textarea class="form-control log-output" rows="10" readonly>@openVinoInstallOutput</textarea>
-                    </details>
-                }
-                @if (solveRequiresLogin)
-                {
-                    <p class="solve-auth-message">
-                        <a href="Account/Login?returnUrl=%2Fbackends">Sign in</a> to authorize driver installation, then run Solve again.
-                    </p>
-                }
-            }
-            </div>
-        </details>
-
         <section class="config-panel">
             <div class="section-heading">
                 <div>
                     <p class="eyebrow">OPENVINO RUNTIME</p>
                     <h2>Load configuration</h2>
                 </div>
+                @if (selectedProfileId.HasValue)
+                {
+                    <a class="profile-button" href="#profile-timeout-settings">Timeout für Variant bearbeiten</a>
+                }
+                else
+                {
+                    <a class="profile-button" href="settings">Globale Timeouts</a>
+                }
                 <span class="step-label">01</span>
             </div>
 
@@ -945,26 +974,42 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private bool isLoadingMatrixDialog;
     private string? matrixDialogStatus;
     private bool isMatrixActionRunning;
+    private bool isMatrixExpanded;
+    private bool isBackendRequirementsExpanded;
     private readonly Dictionary<(BackendTab Backend, string Vendor), bool> matrixRequirementActions = [];
+    private bool profileTimeoutEnabled;
+    private double profileTimeoutBaseSeconds = 120;
+    private double profileTimeoutSecondsPerTool = 1;
+    private double profileTimeoutSecondsPerPrefillToken = .01;
+    private readonly Dictionary<BackendTab, Guid> selectedProfileIds = [];
 
-    private string ActiveBackendLabel => activeBackend switch
-    {
-        BackendTab.Llama => $"LLama / {form.Backend}",
-        BackendTab.OpenVino => $"OpenVINO / {openVinoForm.Device}",
-        BackendTab.Vllm => "vLLM / Python",
-        BackendTab.Sglang => "SGLang / Python",
-        BackendTab.DotLlm => "dotLLM / Native .NET",
-        _ => $"{GetBackendLabel(activeBackend)} / Python"
-    };
     private bool IsOpenVinoValidationReady => openVinoDiagnostics?.IsGpuReady == true || openVinoDiagnostics?.IsNpuReady == true;
     private bool IsBackendPrerequisitesReady => backendPrerequisites?.IsReady == true;
+    private bool IsBackendRequirementsReady => activeBackend == BackendTab.OpenVino ? IsOpenVinoValidationReady : IsBackendPrerequisitesReady;
     private bool AreMatrixChecksReady => backendRequirementState is not null &&
         !backendRequirementState.IsRefreshing &&
         matrixRequirementActions.Count > 0 &&
         matrixRequirementActions.Values.All(actionRequired => !actionRequired);
-    private bool IsRuntimeLoading => isLoading || isOpenVinoLoading || isPythonLoading || isDotLlmLoading ||
-        loadStatus?.LoadedModels.Any(model => model.IsLoading) == true;
+
+    private void ToggleMatrixSupportMatrix() => isMatrixExpanded = !isMatrixExpanded;
+    private void ToggleBackendRequirements() => isBackendRequirementsExpanded = !isBackendRequirementsExpanded;
     private ConfigurationBackend CurrentPrerequisiteBackend => GetConfigurationBackend(activeBackend);
+    private IReadOnlyList<LoadedModelStatus> DisplayedLoadedModels
+    {
+        get
+        {
+            var models = loadStatus?.LoadedModels ?? [];
+            if (optimisticLoadingModel is null)
+            {
+                return models;
+            }
+
+            return [optimisticLoadingModel, .. models.Where(model =>
+                model.Backend != optimisticLoadingModel.Backend ||
+                !string.Equals(model.ModelPath, optimisticLoadingModel.ModelPath, StringComparison.OrdinalIgnoreCase))];
+        }
+    }
+
     private IReadOnlyList<Model> Models => databaseModels
         .Where(model => string.Equals(Path.GetExtension(model.Path), ".gguf", StringComparison.OrdinalIgnoreCase))
         .ToArray();
@@ -976,7 +1021,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private BackendReferenceModel? CurrentReferenceModel => BackendReferenceModels.All
         .FirstOrDefault(model => model.Backend == CurrentProfileBackend);
 
-    private bool IsCurrentModelLoadDisabled => string.IsNullOrWhiteSpace(CurrentModelPath) || activeBackend switch
+    private bool IsCurrentModelLoadDisabled => optimisticLoadingModel is not null || string.IsNullOrWhiteSpace(CurrentModelPath) || activeBackend switch
     {
         BackendTab.Llama => isLoading || !string.Equals(Path.GetExtension(CurrentModelPath), ".gguf", StringComparison.OrdinalIgnoreCase),
         BackendTab.OpenVino => isOpenVinoLoading || !IsOpenVinoValidationReady || string.IsNullOrWhiteSpace(openVinoForm.Device),
@@ -1124,6 +1169,13 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         {
             loadedModelStatusVersion++;
             loadStatus = status;
+            if (optimisticLoadingModel is not null && status.LoadedModels.Any(model =>
+                !model.IsLoading &&
+                model.Backend == optimisticLoadingModel.Backend &&
+                string.Equals(model.ModelPath, optimisticLoadingModel.ModelPath, StringComparison.OrdinalIgnoreCase)))
+            {
+                optimisticLoadingModel = null;
+            }
             if (status.Backend is "vLLM" or "SGLang" && !string.IsNullOrWhiteSpace(status.LoadLog))
                 backendLoadLogs[status.Backend == "SGLang" ? ConfigurationBackend.Sglang : ConfigurationBackend.Vllm] = status.LoadLog;
             StateHasChanged();
@@ -1271,7 +1323,6 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
         isOpenVinoLoading = true;
         openVinoStatus = null;
-        ShowPendingModel(openVinoForm.ModelPath, ConfigurationBackend.OpenVino, openVinoForm.Device);
         await InvokeAsync(StateHasChanged);
         try
         {
@@ -1294,14 +1345,12 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             var result = await loadTask;
             isOpenVinoModelLoaded = result.Succeeded;
             openVinoStatus = result.Message;
-            loadStatus = await DataService.LoadedModel_ReadAsync();
             statusMessage = result.Succeeded ? null : "The model could not be loaded.";
         }
         catch (Exception exception)
         {
             openVinoStatus = $"OpenVINO model load failed: {exception.Message}";
             statusMessage = "The model could not be loaded.";
-            loadStatus = await DataService.LoadedModel_ReadAsync();
         }
         finally
         {
@@ -1309,14 +1358,79 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         }
     }
 
-    private Task LoadActiveBackendModelAsync() => activeBackend switch
+    private async Task CancelOpenVinoModelLoadAsync()
     {
-        BackendTab.Llama => LoadModelAsync(),
-        BackendTab.OpenVino => LoadOpenVinoModelAsync(),
-        BackendTab.Vllm or BackendTab.Sglang => LoadPythonModelAsync(),
-        BackendTab.DotLlm => LoadDotLlmModelAsync(),
-        _ => Task.CompletedTask
-    };
+        await DataService.CancelOpenVinoLoadAsync();
+        openVinoStatus = "Cancelling model load...";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadActiveBackendModelAsync()
+    {
+        var pendingModel = CreatePendingModelStatus();
+        if (pendingModel is null)
+            return;
+
+        optimisticLoadingModel = pendingModel;
+        await InvokeAsync(StateHasChanged);
+        await LoadActiveBackendModelCoreAsync();
+    }
+
+    private async Task LoadActiveBackendModelCoreAsync()
+    {
+        try
+        {
+            await (activeBackend switch
+            {
+                BackendTab.Llama => LoadModelAsync(),
+                BackendTab.OpenVino => LoadOpenVinoModelAsync(),
+                BackendTab.Vllm or BackendTab.Sglang => LoadPythonModelAsync(),
+                BackendTab.DotLlm => LoadDotLlmModelAsync(),
+                _ => Task.CompletedTask
+            });
+        }
+        finally
+        {
+            try
+            {
+                loadStatus = await DataService.LoadedModel_ReadAsync();
+            }
+            catch (Exception exception)
+            {
+                statusMessage = exception.Message;
+            }
+
+            optimisticLoadingModel = null;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private LoadedModelStatus? CreatePendingModelStatus()
+    {
+        if (string.IsNullOrWhiteSpace(CurrentModelPath))
+            return null;
+
+        var runtime = activeBackend switch
+        {
+            BackendTab.Llama => form.Backend,
+            BackendTab.OpenVino => openVinoForm.Device,
+            BackendTab.Vllm => "vLLM",
+            BackendTab.Sglang => "SGLang",
+            BackendTab.DotLlm => "dotLLM / In-Process",
+            _ => GetBackendLabel(activeBackend)
+        };
+
+        return new LoadedModelStatus(
+            CurrentModelPath,
+            GetConfigurationBackend(activeBackend),
+            runtime,
+            0,
+            0,
+            0,
+            [],
+            null,
+            IsLoading: true);
+    }
 
     private async Task LoadPythonModelAsync()
     {
@@ -1324,25 +1438,22 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         var backendName = GetBackendLabel(activeBackend);
         isPythonLoading = true;
         pythonStatus = null;
-        ShowPendingModel(pythonForm.ModelPath, backend, backendName);
         await InvokeAsync(StateHasChanged);
         try
         {
-            var loadTask = DataService.LoadPythonModelAsync(pythonForm.ToRequest(backend));
-            loadStatus = await loadTask;
-            if (!string.IsNullOrWhiteSpace(loadStatus.LoadLog))
-                backendLoadLogs[backend] = loadStatus.LoadLog;
-            pythonStatus = loadStatus.IsModelLoaded
+            var result = await DataService.LoadPythonModelAsync(pythonForm.ToRequest(backend));
+            if (!string.IsNullOrWhiteSpace(result.LoadLog))
+                backendLoadLogs[backend] = result.LoadLog;
+            pythonStatus = result.IsModelLoaded
                 ? $"{backendName} is ready."
                 : $"{backendName} could not be loaded.";
-            statusMessage = loadStatus.IsModelLoaded ? null : pythonStatus;
+            statusMessage = result.IsModelLoaded ? null : pythonStatus;
         }
         catch (Exception exception)
         {
             pythonStatus = exception.Message;
             statusMessage = pythonStatus;
             backendLoadLogs[backend] = exception.ToString();
-            loadStatus = await DataService.LoadedModel_ReadAsync();
         }
         finally
         {
@@ -1354,19 +1465,16 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     {
         isDotLlmLoading = true;
         dotLlmStatus = null;
-        ShowPendingModel(dotLlmForm.ModelPath, ConfigurationBackend.DotLlm, dotLlmForm.Device);
         await InvokeAsync(StateHasChanged);
         try
         {
-            var loadTask = DataService.LoadDotLlmModelAsync(new DotLlmLoadRequest(
+            await DataService.LoadDotLlmModelAsync(new DotLlmLoadRequest(
                 dotLlmForm.ModelPath, dotLlmForm.Device, dotLlmForm.Threads));
-            loadStatus = await loadTask;
             dotLlmStatus = "dotLLM is ready.";
         }
         catch (Exception exception)
         {
             dotLlmStatus = exception.Message;
-            loadStatus = await DataService.LoadedModel_ReadAsync();
         }
         finally
         {
@@ -1377,7 +1485,6 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private async Task StopDotLlmModelAsync()
     {
         await DataService.UnloadModelAsync(loadStatus?.ModelPath ?? dotLlmForm.ModelPath, ConfigurationBackend.DotLlm);
-        loadStatus = await DataService.LoadedModel_ReadAsync();
         dotLlmStatus = "dotLLM stopped.";
     }
 
@@ -1537,8 +1644,12 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
     private async Task SelectBackendAsync(BackendTab backend)
     {
+        if (selectedProfileId.HasValue)
+            selectedProfileIds[activeBackend] = selectedProfileId.Value;
+
         activeBackend = backend;
         statusMessage = null;
+        isBackendRequirementsExpanded = false;
         backendPrerequisites = null;
         isAssigningProfile = false;
         isCreatingProfile = false;
@@ -1552,6 +1663,15 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             BackendTab.DotLlm => dotLlmForm.ModelPath,
             _ => pythonForm.ModelPath
         };
+        var configurationBackend = GetConfigurationBackend(backend);
+        var rememberedProfile = selectedProfileIds.TryGetValue(backend, out var rememberedProfileId)
+            ? profiles.FirstOrDefault(item => item.Id == rememberedProfileId && item.Backend == configurationBackend)
+            : null;
+        if (string.IsNullOrWhiteSpace(modelPath) && rememberedProfile is not null)
+        {
+            modelPath = rememberedProfile.ModelPath;
+            SetModelPath(backend, modelPath);
+        }
         if (string.IsNullOrWhiteSpace(modelPath))
         {
             modelPath = CurrentBackendModels.FirstOrDefault()?.Path ?? string.Empty;
@@ -1568,9 +1688,13 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             return;
         }
 
-        var profile = GetPreferredProfile(modelPath, GetConfigurationBackend(backend));
+        var profile = rememberedProfile ?? GetPreferredProfile(modelPath, configurationBackend);
         if (profile is not null)
+        {
             TryApplyProfile(profile);
+            SetModelPath(backend, profile.ModelPath);
+            selectedProfileIds[backend] = profile.Id;
+        }
         else
         {
             selectedProfileId = null;
@@ -1877,6 +2001,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private bool isInitializing = true;
     private string? statusMessage;
     private ModelLoadStatus? loadStatus;
+    private LoadedModelStatus? optimisticLoadingModel;
         private long loadedModelStatusVersion;
     private readonly AdvancedForm advanced = new();
     private IReadOnlyList<Model> databaseModels = [];
@@ -1888,6 +2013,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private bool isCreatingProfile;
     private bool isApplyingProfile;
     private string newProfileName = string.Empty;
+    private string selectedProfileName = string.Empty;
+    private bool selectedProfileAutoLaunch = true;
 
     protected override async Task OnInitializedAsync()
     {
@@ -1901,6 +2028,10 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     {
         try
         {
+            loadStatus = await DataService.LoadedModel_ReadAsync();
+            isInitializing = false;
+            await InvokeAsync(StateHasChanged);
+
             var savedSettingsTask = DataService.ModelSettings_ReadAsync();
             var savedSettings = (await savedSettingsTask)
                 .ToArray();
@@ -1959,6 +2090,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             RequirementEvents.BackendRequirementStateUpdated += HandleBackendRequirementStateUpdatedAsync;
             ApplyBackendRequirementState(await DataService.GetBackendRequirementStateAsync());
             await RefreshMatrixRequirementActionsAsync();
+            isMatrixExpanded = false;
+            isBackendRequirementsExpanded = !IsBackendRequirementsReady;
             var statusVersion = loadedModelStatusVersion;
             var currentLoadStatus = await DataService.LoadedModel_ReadAsync();
             if (statusVersion == loadedModelStatusVersion)
@@ -1982,7 +2115,6 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
         isLoading = true;
         statusMessage = null;
-        ShowPendingModel(form.ModelPath, ConfigurationBackend.Llama, form.Backend);
         await InvokeAsync(StateHasChanged);
 
         try
@@ -1996,8 +2128,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 advanced.ToSettings(),
                 form.MmprojPath);
             await SaveSettingsAsync();
-            var loadTask = DataService.LoadModelAsync(request);
-            loadStatus = await loadTask;
+            await DataService.LoadModelAsync(request);
             SyncEnabledDevices();
             statusMessage = $"Loaded: {form.ModelPath}";
         }
@@ -2016,7 +2147,6 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         catch (Exception)
         {
             statusMessage = "The model could not be loaded.";
-            loadStatus = await DataService.LoadedModel_ReadAsync();
         }
         finally
         {
@@ -2024,51 +2154,15 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         }
     }
 
-    private void ShowPendingModel(string modelPath, ConfigurationBackend backend, string runtime)
-    {
-        var current = loadStatus ?? new ModelLoadStatus(
-            null,
-            runtime,
-            0,
-            0,
-            0,
-            0,
-            [],
-            null,
-            string.Empty,
-            new Dictionary<string, float>(),
-            false,
-            []);
-        var pending = new LoadedModelStatus(
-            modelPath,
-            backend,
-            runtime,
-            0,
-            0,
-            0,
-            [],
-            null,
-            string.Empty,
-            true);
-        var loadedModels = current.LoadedModels
-            .Where(model => !string.Equals(model.ModelPath, modelPath, StringComparison.OrdinalIgnoreCase) || model.Backend != backend)
-            .Append(pending)
-            .ToArray();
-        loadStatus = current with
-        {
-            ModelPath = modelPath,
-            Backend = runtime,
-            IsModelLoaded = false,
-            LoadedModels = loadedModels
-        };
-    }
 
     private async Task UnloadModelAsync(LoadedModelStatus model)
     {
         try
         {
             loadStatus = await DataService.UnloadModelAsync(model.ModelPath, model.Backend);
+            optimisticLoadingModel = null;
             statusMessage = $"Unloaded: {Path.GetFileName(model.ModelPath)}";
+            await InvokeAsync(StateHasChanged);
         }
         catch (Exception)
         {
@@ -2150,16 +2244,11 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
     private async Task SelectProfileAsync(ChangeEventArgs args)
     {
-        if (string.IsNullOrWhiteSpace(CurrentModelPath))
-        {
-            selectedProfileId = null;
-            return;
-        }
-
         if (!Guid.TryParse(args.Value?.ToString(), out var profileId))
         {
             selectedProfileId = null;
-            await PersistSelectedProfileAsync(CurrentModelPath, null);
+            if (!string.IsNullOrWhiteSpace(CurrentModelPath))
+                await PersistSelectedProfileAsync(CurrentModelPath, null);
             return;
         }
 
@@ -2170,6 +2259,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         if (!TryApplyProfile(profile))
             return;
 
+        selectedProfileIds[activeBackend] = profile.Id;
         statusMessage = $"Selected: {profile.Name}";
         await PersistSelectedProfileAsync(profile.ModelPath, profile.Id);
         await SaveSettingsAsync();
@@ -2227,7 +2317,9 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             configurationJson,
             default,
             default,
-            profile.Backend));
+            profile.Backend,
+            profile.InferenceTimeout,
+            profile.AutoLaunch));
         profiles = profiles.Append(saved).ToArray();
         profileTargetModelPath = saved.ModelPath;
         assignSourceProfileId = saved.Id;
@@ -2310,9 +2402,12 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         try
         {
             var saved = await DataService.ModelConfiguration_CreateAsync(new ModelConfiguration(
-                Guid.Empty, newProfileName.Trim(), null, CurrentModelPath.Trim(), false, 1, SerializeCurrentSettings(), default, default, CurrentProfileBackend));
+                Guid.Empty, newProfileName.Trim(), null, CurrentModelPath.Trim(), false, 1, SerializeCurrentSettings(), default, default, CurrentProfileBackend,
+                CreateProfileTimeoutSettings(), true));
             profiles = profiles.Append(saved).OrderByDescending(profile => profile.IsDefault).ThenBy(profile => profile.Name).ToArray();
             selectedProfileId = saved.Id;
+            selectedProfileName = saved.Name;
+            selectedProfileAutoLaunch = saved.AutoLaunch;
             isCreatingProfile = false;
             await PersistSelectedProfileAsync(saved.ModelPath, saved.Id);
             statusMessage = $"Created: {saved.Name}";
@@ -2331,14 +2426,22 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         var profile = profiles.FirstOrDefault(item => item.Id == selectedProfileId.Value);
         if (profile is null)
             return;
+        if (string.IsNullOrWhiteSpace(selectedProfileName))
+        {
+            statusMessage = "Configuration name is required.";
+            return;
+        }
 
         try
         {
             var saved = await DataService.ModelConfiguration_UpdateAsync(profile with
             {
+                Name = selectedProfileName.Trim(),
                 ModelPath = CurrentModelPath.Trim(),
                 ConfigurationJson = SerializeCurrentSettings(),
-                Backend = CurrentProfileBackend
+                Backend = CurrentProfileBackend,
+                InferenceTimeout = CreateProfileTimeoutSettings(),
+                AutoLaunch = selectedProfileAutoLaunch
             });
             profiles = profiles.Select(item => item.Id == saved.Id ? saved : item).ToArray();
             await PersistSelectedProfileAsync(saved.ModelPath, saved.Id);
@@ -2396,9 +2499,6 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private IEnumerable<ModelConfiguration> BackendProfiles =>
         profiles.Where(profile => profile.Backend == CurrentProfileBackend);
 
-    private IEnumerable<ModelConfiguration> MatchingProfiles =>
-        BackendProfiles.Where(profile => string.Equals(profile.ModelPath.Trim(), CurrentModelPath.Trim(), StringComparison.OrdinalIgnoreCase));
-
     private ModelConfiguration? GetPreferredProfile(string modelPath, ConfigurationBackend backend)
     {
         var model = databaseModels.FirstOrDefault(item =>
@@ -2416,30 +2516,10 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             .FirstOrDefault();
     }
 
-    private string SharedModelPath
+    private async Task SelectSharedModelAsync(ChangeEventArgs args)
     {
-        get => CurrentModelPath;
-        set => SetModelPath(activeBackend, value);
-    }
-
-    private async Task SelectSharedModelAsync()
-    {
-        var modelPath = SharedModelPath;
-        switch (activeBackend)
-        {
-            case BackendTab.Llama:
-                form.ModelPath = modelPath;
-                break;
-            case BackendTab.OpenVino:
-                openVinoForm.ModelPath = modelPath;
-                break;
-            case BackendTab.DotLlm:
-                dotLlmForm.ModelPath = modelPath;
-                break;
-            default:
-                pythonForm.ModelPath = modelPath;
-                break;
-        }
+        var modelPath = args.Value?.ToString() ?? string.Empty;
+        SetModelPath(activeBackend, modelPath);
 
         var profile = GetPreferredProfile(modelPath, CurrentProfileBackend);
         if (profile is not null)
@@ -2500,6 +2580,9 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         {
             isApplyingProfile = true;
             selectedProfileId = profile.Id;
+            selectedProfileName = profile.Name;
+            selectedProfileAutoLaunch = profile.AutoLaunch;
+            ApplyProfileTimeout(profile.InferenceTimeout);
             profileTargetModelPath = profile.ModelPath;
             activeBackend = profile.Backend switch
             {
@@ -2526,6 +2609,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                     ApplySettings(JsonSerializer.Deserialize<LoadModelRequest>(profile.ConfigurationJson) ?? throw new JsonException());
                     break;
             }
+            SetModelPath(activeBackend, profile.ModelPath);
             return true;
         }
         catch (JsonException)
@@ -2568,9 +2652,12 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
         var saved = await DataService.ModelConfiguration_UpdateAsync(profile with
         {
+            Name = selectedProfileName.Trim(),
             ModelPath = CurrentModelPath.Trim(),
             ConfigurationJson = SerializeCurrentSettings(),
-            Backend = CurrentProfileBackend
+            Backend = CurrentProfileBackend,
+            InferenceTimeout = CreateProfileTimeoutSettings(),
+            AutoLaunch = selectedProfileAutoLaunch
         });
         profiles = profiles.Select(item => item.Id == saved.Id ? saved : item).ToArray();
     }
@@ -2659,6 +2746,22 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 ? JsonSerializer.Serialize(dotLlmForm.ToRequest())
                 : JsonSerializer.Serialize(pythonForm.ToRequest(CurrentProfileBackend));
 
+    private InferenceTimeoutSettings? CreateProfileTimeoutSettings() => profileTimeoutEnabled
+        ? new InferenceTimeoutSettings(
+            CurrentProfileBackend == ConfigurationBackend.Llama ? "Llama" : GetBackendLabel(CurrentProfileBackend),
+            profileTimeoutBaseSeconds,
+            profileTimeoutSecondsPerTool,
+            profileTimeoutSecondsPerPrefillToken)
+        : null;
+
+    private void ApplyProfileTimeout(InferenceTimeoutSettings? settings)
+    {
+        profileTimeoutEnabled = settings is not null;
+        profileTimeoutBaseSeconds = settings?.BaseSeconds ?? 120;
+        profileTimeoutSecondsPerTool = settings?.SecondsPerTool ?? 1;
+        profileTimeoutSecondsPerPrefillToken = settings?.SecondsPerPrefillToken ?? .01;
+    }
+
     private void ApplySettings(LoadModelRequest settings)
     {
         form.ModelPath = settings.ModelPath;
@@ -2666,9 +2769,9 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         form.Backend = settings.Backend;
         form.GpuLayerCount = settings.GpuLayerCount;
         form.ContextSize = settings.ContextSize;
-        advanced.Load(settings.Advanced);
+        advanced.Load(settings.Advanced ?? new LlamaAdvancedSettings());
         form.VulkanDevices.Clear();
-        foreach (var device in settings.VulkanDeviceWeights)
+        foreach (var device in settings.VulkanDeviceWeights ?? new Dictionary<string, float>())
             form.VulkanDevices[device.Key] = new VulkanDeviceSetting(device.Value > 0, Math.Max(0, device.Value));
     }
 
@@ -2756,67 +2859,18 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         }
     }
 
-    private string GetRuntimeStatusClass() =>
-        isInitializing || IsRuntimeLoading ? "runtime-status-loading" :
-        loadStatus?.IsModelLoaded == true ? "runtime-status-loaded" :
-        IsLoadError() ? "runtime-status-error" : "runtime-status-idle";
-
-    private string GetRuntimeStatusLabel() =>
-        isInitializing ? "CHECKING RUNTIMES" :
-        IsRuntimeLoading ? "LOADING MODEL" :
-        loadStatus?.IsModelLoaded == true ? "MODEL LOADED" :
-        IsLoadError() ? "LOAD FAILED" : "NO MODEL LOADED";
-
-    private string GetRuntimeStatusDetail()
-    {
-        if (isInitializing)
-            return "Reading active model state...";
-
-        var loadingModel = loadStatus?.LoadedModels.FirstOrDefault(model => model.IsLoading);
-        if (loadingModel is not null)
-            return $"{Path.GetFileName(loadingModel.ModelPath)} | Loading on {loadingModel.Runtime}...";
-
-        if (IsRuntimeLoading)
-            return "Reading model tensors and preparing the context...";
-
-        if (loadStatus?.IsModelLoaded == true)
-        {
-            var loadedModel = loadStatus.LoadedModels.FirstOrDefault(model =>
-                string.Equals(model.ModelPath, loadStatus.ModelPath, StringComparison.OrdinalIgnoreCase));
-            return loadedModel is not null
-                ? $"{Path.GetFileName(loadStatus.ModelPath)} | {FormatLoadedModelSummary(loadedModel)}"
-                : $"{Path.GetFileName(loadStatus.ModelPath)} | {loadStatus.Backend}";
-        }
-
-        if (IsLoadError())
-            return string.IsNullOrWhiteSpace(statusMessage) ? "The model could not be loaded. Open the backend load log for details." : statusMessage;
-
-        return "Load a model to start inference.";
-    }
-
     private string? GetBackendLoadLog() => activeBackend is BackendTab.Vllm or BackendTab.Sglang &&
         backendLoadLogs.TryGetValue(GetConfigurationBackend(activeBackend), out var loadLog) &&
         !string.IsNullOrWhiteSpace(loadLog)
             ? loadLog
             : null;
 
-    private bool IsLoadError() =>
-        !string.IsNullOrWhiteSpace(statusMessage) &&
-        (statusMessage.Contains("could not", StringComparison.OrdinalIgnoreCase) ||
-         statusMessage.Contains("not found", StringComparison.OrdinalIgnoreCase) ||
-         statusMessage.Contains("valid", StringComparison.OrdinalIgnoreCase) ||
-         statusMessage.Contains("cancelled", StringComparison.OrdinalIgnoreCase) ||
-         statusMessage.Contains("failed", StringComparison.OrdinalIgnoreCase)) ||
-        loadStatus is { IsModelLoaded: false, ModelPath: not null } &&
-        loadStatus.LoadedModels.All(model => !model.IsLoading) &&
-        !string.IsNullOrWhiteSpace(loadStatus.LoadLog);
-
     private string GetLoadedModelsCountLabel()
     {
         if (isInitializing)
             return "...";
 
-        var models = loadStatus?.LoadedModels ?? [];
+        var models = DisplayedLoadedModels;
         var activeCount = models.Count(model => !model.IsLoading);
         var loadingCount = models.Count(model => model.IsLoading);
         return loadingCount == 0 ? $"{activeCount} active" : $"{activeCount} active, {loadingCount} loading";

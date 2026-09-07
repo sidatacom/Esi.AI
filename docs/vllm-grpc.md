@@ -57,3 +57,18 @@ needs a C/C++ compiler, Ninja, and a CUDA toolkit exposing `nvcc` through
 `CUDA_HOME` when vLLM builds runtime kernels.
 
 The fake gRPC transport tests do not require Python, vLLM, a GPU, or a model.
+
+## Structured tools
+
+The bridge preserves OpenAI-compatible `tools` and `tool_choice` as structured
+request fields. For vLLM, the tokenizer's chat template receives both values
+when it supports them; the bridge does not build a synthetic system prompt.
+For SGLang, the same values are forwarded to its OpenAI-compatible HTTP
+endpoint. Structured SGLang `message.tool_calls` are returned in
+`GenerateResponse.tool_calls_json` and mapped to the shared C# generation
+result. The direct vLLM `AsyncLLMEngine` path currently rejects active
+structured tool requests because it does not expose the OpenAI server's native
+tool parser; it accepts `tool_choice: "none"` as a text-only request instead.
+
+The `system_prompt` is independent model context. It may be included as a
+system message, but it is not the tool interface.
