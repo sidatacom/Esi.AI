@@ -1,0 +1,8 @@
+﻿bin/
+obj/
+.vs/
+.nuget/packages/
+*.log
+*.user
+*.suo
+.env

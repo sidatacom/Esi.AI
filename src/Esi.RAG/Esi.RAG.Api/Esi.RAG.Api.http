@@ -1,0 +1,36 @@
+@Esi.RAG.Api_HostAddress = http://localhost:5089
+
+GET {{Esi.RAG.Api_HostAddress}}/health
+Accept: application/json
+
+###
+
+POST {{Esi.RAG.Api_HostAddress}}/api/ingestion/index
+Content-Type: application/json
+
+{
+  "repositoryPath": "D:\\Git\\Esi.RAG"
+}
+
+###
+
+POST {{Esi.RAG.Api_HostAddress}}/api/search
+Content-Type: application/json
+
+{
+  "query": "Where is ingestion implemented?",
+  "limit": 5
+}
+
+###
+
+POST {{Esi.RAG.Api_HostAddress}}/api/ask
+Content-Type: application/json
+
+{
+  "query": "How does line-preserving extraction work?",
+  "maxRounds": 2,
+  "maxCitations": 8
+}
+
+###
