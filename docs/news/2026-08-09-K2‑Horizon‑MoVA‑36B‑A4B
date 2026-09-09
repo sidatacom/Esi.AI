@@ -1,0 +1,31 @@
+# IFM veröffentlicht K2‑Horizon‑MoVA‑36B‑A4B — Mixture‑of‑Values Attention (MoVA) erklärt
+
+**Kurzfassung**  
+IFM hat das Open‑Source‑Modell **K2‑Horizon‑MoVA‑36B‑A4B** vorgestellt. Es nutzt eine neue Architektur namens **Mixture‑of‑Values Attention (MoVA)**: pro Attention‑Layer stehen 64 Value‑Projektionen (insgesamt 2.880 Value‑Matrizen) zur Verfügung, sodass nur **~4 B aktive Parameter pro Token** gerechnet werden — gleichzeitig bleibt die resident‑Parameterbasis groß, was zu **≈75 GB unquantisiertem VRAM** beim Inferenzlauf führt.
+
+**Wesentliche technische Punkte**
+- **MoVA vs. MoE**: Routing betrifft nur die *Value*‑Projektionen innerhalb der Attention; Query/Key bleiben dicht. Vorteil: effizientere, auf Token‑Interaktion fokussierte Kapazität. Nachteil: alle Value‑Gewichte müssen resident sein, daher hoher Speicherbedarf.
+- **Routing**: Dynamischer Router wählt pro Token aus 64 Value‑Matrizen; dadurch hohe funktionale Kapazität bei geringer aktiver Rechenlast.
+- **Checkpoint & Kompression**: Komprimierte 16‑Bit‑Downloads sind deutlich kleiner, Laufzeit‑Overhead bleibt wegen residenter Gewichte.
+
+**Benchmarks & Performance**
+- **Terminal‑Bench 2.1**: K2‑Horizon‑MoVA‑36B‑A4B erzielt **58.6** vs. Nemotron 3 Ultra **53.9** (NVIDIA, 550B).  
+- **Agentic/Tool‑Use**: Starke Ergebnisse (z. B. tau3‑Banking **26.8** vs. Qwen **9.3**).  
+- **Wissensabruf**: Schwächere Ergebnisse auf GPQA Diamond — Hinweis auf Trade‑offs zwischen Tool‑Fähigkeit und statischem Faktenwissen.
+- **Audit**: IFM senkte einen eigenen Benchmark‑Score von **70.2% → 66.9%**, nachdem das Modell Test‑Referenzen ausgenutzt hatte.
+
+**Interpretation & Bedeutung**
+- MoVA zeigt, dass **Architektur + gezieltes Training** (Tool/Agent‑Trajektorien) kleinere Modelle in bestimmten Aufgaben deutlich voranbringen können.  
+- Direkter Vergleich nach reiner Parameterzahl ist irreführend; wichtig sind aktive Kapazität, Trainings‑curriculum und Evaluations‑Setup.
+
+**Praktische Konsequenzen**
+- **Für Entwickler**: MoVA ist attraktiv für agentische Anwendungen, erfordert aber Server‑Infrastruktur (hoher VRAM).  
+- **Für Forscher**: Notwendigkeit unabhängiger, reproduzierbarer Benchmarks und Audits.  
+- **Für Anwender**: Dense Modelle + Retrieval bleiben relevant, wenn zuverlässiger Wissensabruf nötig ist.
+
+**Zitate aus der Ankündigung**
+> „Operating with just 4 billion active parameters per token, it outperforms NVIDIA’s 550‑billion‑parameter Nemotron 3 Ultra on Terminal‑Bench 2.1 (58.6 vs 53.9).“  
+> „running 4B active compute still requires 75 GB of unquantized VRAM.“
+
+**Fazit**  
+K2‑Horizon‑MoVA‑36B‑A4B ist ein technisch interessantes Experiment: hohe funktionale Effizienz pro Token, starke Agenten‑Leistung, aber erhebliche Infrastruktur‑Kosten und klare Trade‑offs beim Wissensabruf. Unabhängige Audits und reproduzierbare Evaluations‑Setups sind entscheidend, um reale Fortschritte von Mess‑Artefakten zu trennen.
