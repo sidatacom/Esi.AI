@@ -51,7 +51,21 @@
                             <p>@display.Answer</p>
                         </article>
                     }
-                    @if (isSending) { <article class="chat-message assistant pending"><span class="message-role">Assistant</span><p>@(string.IsNullOrWhiteSpace(pendingAssistantContent) ? "Denke nach ..." : pendingAssistantContent)</p></article> }
+                    @if (isSending)
+                    {
+                        var pendingDisplay = ParseAssistantContent(pendingAssistantContent);
+                        <article class="chat-message assistant pending">
+                            <span class="message-role">Assistant</span>
+                            @if (!string.IsNullOrWhiteSpace(pendingDisplay.Thinking))
+                            {
+                                <details class="thinking-block">
+                                    <summary>Gedanken anzeigen</summary>
+                                    <p>@pendingDisplay.Thinking</p>
+                                </details>
+                            }
+                            <p>@(string.IsNullOrWhiteSpace(pendingDisplay.Answer) ? "Denke nach ..." : pendingDisplay.Answer)</p>
+                        </article>
+                    }
                 </div>
                 <div class="chat-composer">
                     <label for="chat-input">Nachricht</label>
@@ -131,7 +145,11 @@
         if (message.Role != "assistant")
             return new(null, message.Content);
 
-        var content = message.Content.Trim();
+        return ParseAssistantContent(message.Content);
+    }
+    private static MessageContent ParseAssistantContent(string rawContent)
+    {
+        var content = rawContent.Trim();
         if (content.StartsWith("Assistant:", StringComparison.OrdinalIgnoreCase))
             content = content["Assistant:".Length..].TrimStart();
         if (string.Equals(content, "User:", StringComparison.OrdinalIgnoreCase))
@@ -141,17 +159,15 @@
         const string thinkingEndTag = "</think>";
         var thinkingStart = content.IndexOf(thinkingStartTag, StringComparison.OrdinalIgnoreCase);
         var thinkingEnd = content.IndexOf(thinkingEndTag, StringComparison.OrdinalIgnoreCase);
-        if (thinkingEnd < 0)
+        if (thinkingStart < 0 && thinkingEnd < 0)
             return new(null, content);
 
-        var thinkingContentStart = thinkingStart >= 0
-            ? thinkingStart + thinkingStartTag.Length
-            : 0;
-        var thinking = content[thinkingContentStart..thinkingEnd].Trim();
+        var thinkingContentStart = thinkingStart >= 0 ? thinkingStart + thinkingStartTag.Length : 0;
+        var thinkingContentEnd = thinkingEnd >= 0 ? thinkingEnd : content.Length;
+        var thinking = content[thinkingContentStart..thinkingContentEnd].Trim();
         var answerPrefix = thinkingStart >= 0 ? content[..thinkingStart] : string.Empty;
-        var answer = string.Concat(
-            answerPrefix,
-            content[(thinkingEnd + thinkingEndTag.Length)..]).Trim();
+        var answerSuffix = thinkingEnd >= 0 ? content[(thinkingEnd + thinkingEndTag.Length)..] : string.Empty;
+        var answer = string.Concat(answerPrefix, answerSuffix).Trim();
         return new(thinking, answer);
     }
     private async Task LoadChatsAsync() { chatSummaries.Clear(); chatSummaries.AddRange(await DataService.Chat_ReadAsync()); }

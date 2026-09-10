@@ -101,6 +101,8 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
 builder.Services.AddSingleton<OpenVinoLoadGate>();
+builder.Services.AddSingleton<OpenVinoCoreProvider>();
+builder.Services.AddSingleton<OpenVinoModelLoader>();
 builder.Services.AddSingleton<OpenVinoDiagnosticsService>();
 builder.Services.AddSingleton<OpenVinoDriverInstaller>();
 builder.Services.AddSingleton<IBackendDiagnosticsService, BackendDiagnosticsService>();
@@ -120,7 +122,17 @@ builder.Services.AddHostedService(services => services.GetRequiredService<Backen
 builder.Services.AddSingleton<IBackendRequirementState>(services => services.GetRequiredService<BackendRequirementMonitor>());
 builder.Services.AddSingleton<IModelRuntimeStatusPublisher, SignalRModelRuntimeStatusPublisher>();
 builder.Services.AddSingleton<IBackendRuntimeStatusPublisher, SignalRBackendRuntimeStatusPublisher>();
-builder.Services.AddSingleton<ModelRuntime>();
+builder.Services.AddSingleton<ModelRuntime>(services =>
+    new ModelRuntime(
+        new LlamaModelLoader(),
+        services.GetRequiredService<OpenVinoModelLoader>(),
+        new PythonInferenceServer(),
+        new DotLlmInProcessRuntime(),
+        services.GetRequiredService<BackendPrerequisiteProvisioner>(),
+        services.GetRequiredService<IModelRuntimeStatusPublisher>(),
+        new ModelLifecycleCoordinator(),
+        services.GetRequiredService<ILogger<ModelRuntime>>(),
+        services.GetRequiredService<OpenVinoLoadGate>()));
 builder.Services.AddSingleton<IModelRuntimeShutdown>(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddHostedService(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddSingleton<IInferenceFailureCoordinator, InferenceFailureCoordinator>();

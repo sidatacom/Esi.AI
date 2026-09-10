@@ -7,11 +7,13 @@ namespace Esi.AI.Core.ModelLoading;
 public sealed class OpenVinoDiagnosticsService
 {
     private readonly OpenVinoLoadGate loadGate;
+    private readonly OpenVinoCoreProvider coreProvider;
     private OpenVinoDiagnostics? cachedDiagnostics;
 
-    public OpenVinoDiagnosticsService(OpenVinoLoadGate? loadGate = null)
+    public OpenVinoDiagnosticsService(OpenVinoLoadGate? loadGate = null, OpenVinoCoreProvider? coreProvider = null)
     {
         this.loadGate = loadGate ?? new OpenVinoLoadGate();
+        this.coreProvider = coreProvider ?? new OpenVinoCoreProvider();
     }
 
     public OpenVinoDiagnostics Diagnose()
@@ -36,8 +38,7 @@ public sealed class OpenVinoDiagnosticsService
 
         try
         {
-            OpenVinoModelLoader.InitializeRuntime();
-            using var core = new OpenVinoSharp.Core();
+            var core = coreProvider.Core;
             var devices = core.GetAvailableDevices();
             var acceleratorDevices = devices
                 .Where(device => IsOpenVinoGpuDevice(device) || IsOpenVinoNpuDevice(device))
