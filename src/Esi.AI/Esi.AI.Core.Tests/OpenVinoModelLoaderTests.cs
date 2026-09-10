@@ -138,6 +138,24 @@ public sealed class OpenVinoModelLoaderTests
     }
 
     [TestMethod]
+    public void CalculateModelFootprintBytes_WhenDirectoryContainsModelFiles_ReturnsAllFileBytes()
+    {
+        var modelPath = Path.Combine(Path.GetTempPath(), $"esi-ai-footprint-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(modelPath);
+        File.WriteAllBytes(Path.Combine(modelPath, "weights.bin"), new byte[17]);
+        File.WriteAllBytes(Path.Combine(modelPath, "config.json"), new byte[5]);
+
+        try
+        {
+            Assert.AreEqual(22, OpenVinoModelLoader.CalculateModelFootprintBytes(modelPath));
+        }
+        finally
+        {
+            Directory.Delete(modelPath, true);
+        }
+    }
+
+    [TestMethod]
     public void OpenVinoImageTensorFactory_WhenBmpImageIsProvided_ReturnsRgbNhwcTensor()
     {
         OpenVinoModelLoader.InitializeRuntime();

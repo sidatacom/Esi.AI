@@ -17,6 +17,19 @@ using Microsoft.FluentUI.AspNetCore.Components;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 
+using var singleInstanceMutex = new Mutex(false, "Esi.AI.Studio");
+try
+{
+    if (!singleInstanceMutex.WaitOne(TimeSpan.Zero))
+    {
+        Console.Error.WriteLine("Esi.AI Studio is already running.");
+        return;
+    }
+}
+catch (AbandonedMutexException)
+{
+}
+
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseStaticWebAssets();
 
@@ -101,7 +114,6 @@ builder.Services.AddIdentityCore<ApplicationUser>(options =>
 
 builder.Services.AddSingleton<IEmailSender<ApplicationUser>, IdentityNoOpEmailSender>();
 builder.Services.AddSingleton<OpenVinoLoadGate>();
-builder.Services.AddSingleton<OpenVinoCoreProvider>();
 builder.Services.AddSingleton<OpenVinoModelLoader>();
 builder.Services.AddSingleton<OpenVinoDiagnosticsService>();
 builder.Services.AddSingleton<OpenVinoDriverInstaller>();

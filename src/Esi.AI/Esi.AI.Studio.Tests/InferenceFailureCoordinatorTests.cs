@@ -44,13 +44,33 @@ public sealed class InferenceFailureCoordinatorTests
         Assert.AreEqual(1, lifetime.StopApplicationCount);
     }
 
-    private sealed class TestRuntime(Exception? failure = null) : IModelRuntimeShutdown
+    [TestMethod]
+    public async Task FailAsync_WhenRuntimeCleanupBlocks_RequestsShutdownBeforeCleanupCompletes()
+    {
+        var runtime = new TestRuntime(block: true);
+        var lifetime = new TestApplicationLifetime();
+        using var loggerFactory = LoggerFactory.Create(_ => { });
+        var coordinator = new InferenceFailureCoordinator(
+            runtime,
+            lifetime,
+            loggerFactory.CreateLogger<InferenceFailureCoordinator>());
+
+        await coordinator.FailAsync(new InvalidOperationException("backend failure"));
+
+        Assert.AreEqual(1, lifetime.StopApplicationCount);
+        Assert.AreEqual(1, runtime.StopCount);
+    }
+
+    private sealed class TestRuntime(Exception? failure = null, bool block = false) : IModelRuntimeShutdown
     {
         public int StopCount { get; private set; }
 
         public Task StopAsync(CancellationToken cancellationToken = default)
         {
             StopCount++;
+            if (block)
+                return Task.Delay(Timeout.InfiniteTimeSpan, CancellationToken.None);
+
             return failure is null ? Task.CompletedTask : Task.FromException(failure);
         }
     }

@@ -1,0 +1,2011 @@
+<?xml version="1.0"?>
+<doc>
+    <assembly>
+        <name>Microsoft.FluentUI.AspNetCore.Components.Charts</name>
+    </assembly>
+    <members>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentAreaChart">
+            <summary>
+            FluentAreaChart displays data in an area chart format, allowing users to visualize trends over time or categories.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentAreaChart.#ctor(Microsoft.FluentUI.AspNetCore.Components.LibraryConfiguration)">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentAreaChart.ClassValue">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentAreaChart.ChartData">
+            <summary>
+            Gets or sets the data for the area chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentAreaChart.EnableGradient">
+            <summary>
+            Gets or sets a value indicating whether a gradient fill is applied to the bars, arcs or areas.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentAreaChart.Mode">
+            <summary>
+            Gets or sets the mode of the area chart, which determines how the areas are stacked or displayed.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentAreaChart.SecondaryYAxisTitle">
+            <summary>
+            Gets or sets a value indicating whether to display the title for the secondary Y-axis.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentAreaChart.SecondaryYAxisTickLabelMaxWidth">
+            <summary>
+            Gets or sets the maximum width for the tick labels on the secondary Y-axis.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentDonutChart">
+            <summary>
+            FluentDonutChart displays data in a donut chart format.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentDonutChart.#ctor(Microsoft.FluentUI.AspNetCore.Components.LibraryConfiguration)">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentDonutChart.ClassValue">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentDonutChart.ChartData">
+            <summary>
+            Gets or sets the data for the donut chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentDonutChart.ShowLabelsInPercent">
+            <summary>
+            Gets or sets whether label values should be displayed as percentages of the total rather than raw values.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentDonutChart.InnerRadius">
+            <summary>
+            Gets or sets the inner radius of the component, in pixels.
+            </summary>
+            <remarks>If <see langword="null"/>, a default inner radius is used. The value must be non-negative.
+            This property is typically used to control the thickness of ring-shaped visual elements.</remarks>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentDonutChart.ValueInsideDonut">
+            <summary>
+            Gets or sets the value displayed inside the donut hole. This is typically used to show a summary
+            or total value related to the data represented by the chart.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase">
+            <summary>
+            Abstract base class for FluentUI chart components that use Cartesian axes (x/y).
+            Extends <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase"/> with axis-specific parameters for titles,
+            tick formatting, domain clamping, and label layout.
+            Only Cartesian charts (e.g. <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChartWithAxis"/>) should
+            inherit from this class; non-axis charts (DonutChart, FunnelChart, HorizontalBarChart)
+            extend <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase"/> directly.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.#ctor(Microsoft.FluentUI.AspNetCore.Components.LibraryConfiguration)">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.CartesianTooltipTemplate">
+            <summary>
+            Gets or sets a custom tooltip template rendered when the user hovers over a chart element.
+            Use this in preference to the base <c>TooltipTemplate</c> for Cartesian charts to receive
+            a <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.CartesianTooltipContext"/> that exposes <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.CartesianTooltipContext.XStart"/>
+            and <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.CartesianTooltipContext.XEnd"/> in addition to the base properties.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.HasTooltipTemplate">
+            <inheritdoc />
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.BuildTooltipContext(System.String,System.String,System.String,System.String,System.String,System.String,System.String)">
+            <inheritdoc />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.XAxisTitle">
+            <summary>
+            Gets or sets the label rendered beneath the x-axis.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.YAxisTitle">
+            <summary>
+            Gets or sets the label rendered beside the y-axis.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.XAxisTickFormat">
+            <summary>
+            Gets or sets a d3 format string (e.g. <c>'.2f'</c>, <c>'+,.0f'</c>) used to format
+            x-axis number tick labels. Has no effect on date-type axes.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.YAxisTickFormat">
+            <summary>
+            Gets or sets a d3 format string (e.g. <c>'.2f'</c>, <c>'+,.0f'</c>) used to format
+            y-axis number tick labels.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.TickPadding">
+            <summary>
+            Gets or sets the gap in pixels between axis tick lines and their text labels.
+            Defaults to 6.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.WrapXAxisLabels">
+            <summary>
+            Gets or sets a value indicating whether long x-axis text labels are wrapped onto
+            multiple lines instead of being truncated.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.RotateXAxisLabels">
+            <summary>
+            Gets or sets a value indicating whether x-axis text labels are rotated 45° to reduce overlap.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.SupportNegativeData">
+            <summary>
+            Gets or sets a value indicating whether the value axis is allowed to extend below zero
+            when data contains negative values.
+            When <see langword="false"/> (default), the domain is clamped to a minimum of 0.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.RoundedTicks">
+            <summary>
+            Gets or sets a value indicating whether the auto-generated axis domain is rounded to
+            "nice" values (equivalent to calling d3's <c>.nice()</c> on the tick scale).
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.XMinValue">
+            <summary>
+            Gets or sets the minimum value of the X axis domain.
+            When not set, the domain minimum is derived from the data.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.XMaxValue">
+            <summary>
+            Gets or sets the maximum value of the X axis domain.
+            When not set, the domain maximum is derived from the data.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.YMinValue">
+            <summary>
+            Gets or sets the minimum value of the Y axis domain (numeric axis only).
+            When not set, the domain minimum is derived from the data.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.YMaxValue">
+            <summary>
+            Gets or sets the maximum value of the Y axis domain (numeric axis only).
+            When not set, the domain maximum is derived from the data.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.TickValues">
+            <summary>
+            Gets or sets the explicit set of x-axis tick values to render.
+            When set, only the specified values appear as tick marks instead of the auto-generated ones.
+            Use <c>double[]</c> for numeric axes. For date axes on <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart"/>,
+            use <c>DateTickValues</c> instead.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.TickFormat">
+            <summary>
+            Gets or sets a d3-time-format specifier string (e.g. <c>"%m/%d"</c>, <c>"%Y-%m"</c>) for date x-axis tick labels.
+            Only applicable when the x-axis uses a date/time scale (e.g. in <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart"/>).
+            When set, this overrides the locale-aware <c>DateLocalizeOptions</c> / <c>Culture</c> fallback.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.HideTickOverlap">
+            <summary>
+            Gets or sets a value indicating whether to hide overlapping ticks on the chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.StrokeWidth">
+            <summary>
+            Gets or sets the pixel width of the stroke (outline) drawn on each bar.
+            When not set, no stroke is applied.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.ShowXAxisLabelsTooltip">
+            <summary>
+            Gets or sets a value indicating whether a tooltip is shown on x-axis labels when they are
+            truncated. Truncation occurs when a label exceeds the maximum display length.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.ShowYAxisLabels">
+            <summary>
+            Gets or sets a value indicating whether the full Y-axis labels are shown.
+            When <see langword="false"/> (default), long labels are truncated.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.ShowYAxisLabelsTooltip">
+            <summary>
+            Gets or sets a value indicating whether a tooltip is shown on Y-axis labels when they are truncated.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.YAxisCategoryOrder">
+            <summary>
+            Gets or sets the sort order applied to categorical Y-axis groups.
+            Defaults to <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.Default"/>.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.XAxisTickCount">
+            <summary>
+            Gets or sets the number of tick marks on the X axis.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.YAxisTickCount">
+            <summary>
+            Gets or sets the number of tick marks on the Y axis (numeric axis only).
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.YAxisPadding">
+            <summary>
+            Gets or sets the fractional padding (0–1) between bars on the categorical Y axis.
+            Defaults to 0.5.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.DateLocalizeOptions">
+            <summary>
+            Gets or sets the <c>Intl.DateTimeFormatOptions</c>-equivalent formatting options applied
+            to date x-axis tick labels. Keys and values correspond to the JavaScript
+            <a href="https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Intl/DateTimeFormat/DateTimeFormat">
+            <c>Intl.DateTimeFormat</c></a> options object (e.g. <c>{ "year", "numeric" }, { "month", "short" }</c>).
+            When not set, the component auto-selects an appropriate format based on the visible date range.
+            Only applicable when the x-axis uses a date/time scale.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.TickValuesJson">
+            <summary>
+            Serializes <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.TickValues"/> to a JSON array string for the web component attribute.
+            Overridden by <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart"/> to also handle date tick values.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.DateLocalizeOptionsJson">
+            <summary>
+            Serializes <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentCartesianChartBase.DateLocalizeOptions"/> to a JSON object string for the web component attribute.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJsonSerializerContext.Double">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJsonSerializerContext.DoubleArray">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJsonSerializerContext.DictionaryStringString">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJsonSerializerContext.IDictionaryStringString">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJsonSerializerContext.IEnumerableDouble">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJsonSerializerContext.ListDouble">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJsonSerializerContext.String">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJsonSerializerContext.Default">
+            <summary>
+            The default <see cref="T:System.Text.Json.Serialization.JsonSerializerContext"/> associated with a default <see cref="T:System.Text.Json.JsonSerializerOptions"/> instance.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJsonSerializerContext.GeneratedSerializerOptions">
+            <summary>
+            The source-generated options associated with this context.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJsonSerializerContext.#ctor">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJsonSerializerContext.#ctor(System.Text.Json.JsonSerializerOptions)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJsonSerializerContext.GetTypeInfo(System.Type)">
+            <inheritdoc/>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase">
+            <summary>
+            Abstract base class for FluentUI chart components.
+            Provides parameters that are common across all chart types.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase._tooltipPortalId">
+            <summary>The stable DOM id of the hidden tooltip portal div rendered by each chart.</summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase._tooltipContext">
+            <summary>The current tooltip context passed to <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.TooltipTemplate"/>.</summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.JSRuntime">
+            <summary />
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.#ctor(Microsoft.FluentUI.AspNetCore.Components.LibraryConfiguration)">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.ChartTitle">
+            <summary>
+            Gets or sets the title text displayed on the chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.HideLegends">
+            <summary>
+            Gets or sets a value indicating whether legends are hidden in the component output.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.HideTooltip">
+            <summary>
+            Gets or sets a value indicating whether the tooltip is hidden.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.HideLabels">
+            <summary>
+            Gets or sets a value indicating whether bar or arc labels are hidden.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.LegendListLabel">
+            <summary>
+            Gets or sets the label displayed for the legend list.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.RoundedCorners">
+            <summary>
+            Gets or sets a value indicating whether bars, arcs or legend indicators are rendered with rounded corners.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.Width">
+            <summary>
+            Gets or sets the width of the chart. Accepts any valid CSS size value (e.g. <c>"400px"</c>, <c>"100%"</c>).
+            When <see langword="null"/>, the chart sizes itself automatically.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.Height">
+            <summary>
+            Gets or sets the height of the chart. Accepts any valid CSS size value (e.g. <c>"300px"</c>, <c>"50vh"</c>).
+            When <see langword="null"/>, the chart sizes itself automatically.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.StyleValue">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.AllowMultipleLegendSelection">
+            <summary>
+            Gets or sets a value indicating whether multiple legend items can be selected simultaneously.
+            When <see langword="true"/>, clicking a legend item adds it to the active selection rather than replacing the current selection.
+            When <see langword="false"/> (default), only a single legend item can be selected at a time.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.Culture">
+            <summary>
+            Gets or sets the culture used for locale-aware number formatting of values in the chart.
+            Defaults to <see cref="P:System.Globalization.CultureInfo.CurrentCulture"/> to display using the OS culture.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.TooltipTemplate">
+            <summary>
+            Gets or sets a custom tooltip template rendered when the user hovers over a chart element.
+            When set, the Blazor-rendered content of this template is injected into the chart's tooltip
+            via a JavaScript bridge, replacing the default tooltip body.
+            The <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext"/> argument contains the data for the hovered element.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.HasTooltipTemplate">
+            <summary>
+            Returns <see langword="true"/> when a tooltip template is set on this component.
+            Override in subclasses that expose additional template parameters.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.OnAfterRenderAsync(System.Boolean)">
+            <inheritdoc />
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.UpdateTooltipContextAsync(System.String,System.String,System.String,System.String,System.String,System.String,System.String)">
+            <summary>
+            Called from JavaScript when the tooltip data changes so that Blazor can update
+            <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase._tooltipContext"/> and re-render the portal div with the new content.
+            </summary>
+            <param name="legend">Legend label of the hovered element.</param>
+            <param name="yValue">Y-axis / value string of the hovered element.</param>
+            <param name="xValue">X-axis / range string (axis charts only).</param>
+            <param name="color">CSS color string of the hovered element.</param>
+            <param name="rawJson">Full data-point JSON for chart-specific access.</param>
+            <param name="xStart">Start of the x-axis range as an ISO 8601 string (GanttChart only).</param>
+            <param name="xEnd">End of the x-axis range as an ISO 8601 string (GanttChart only).</param>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.BuildTooltipContext(System.String,System.String,System.String,System.String,System.String,System.String,System.String)">
+            <summary>
+            Builds the <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext"/> (or a subclass) from the JavaScript callback arguments.
+            Override in subclasses to return a richer context type.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentChartBase.DisposeAsync">
+            <inheritdoc />
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentFunnelChart">
+            <summary>
+            FluentFunnelChart shows how quantities change through sequential steps, such as conversion or engagement stages.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentFunnelChart.#ctor(Microsoft.FluentUI.AspNetCore.Components.LibraryConfiguration)">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentFunnelChart.ClassValue">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentFunnelChart.ChartData">
+            <summary>
+            Gets or sets the data for the funnel chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentFunnelChart.Orientation">
+            <summary>
+            Gets or sets the orientation of the funnel chart.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart">
+            <summary>
+            A FluentGanttChart is a component that displays data in a Gantt chart format, which is a type of horizontal bar chart
+            that illustrates a project schedule.
+            Each bar represents a task or activity, with the length of the bar corresponding to the duration of the task.
+            The x-axis typically represents time, while the y-axis lists the tasks or activities.
+            This component is useful for visualizing project timelines, task dependencies, and overall progress.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart.#ctor(Microsoft.FluentUI.AspNetCore.Components.LibraryConfiguration)">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart.ClassValue">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart.ChartData">
+            <summary>
+            Gets or sets the data for the Gantt chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart.EnableGradient">
+            <summary>
+            Gets or sets a value indicating whether a gradient fill is applied to the bars, arcs or areas.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart.UseSingleColor">
+            <summary>
+            Gets or sets whether to use a single color for all bars in the chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart.BarHeight">
+            <summary>
+            Gets or sets the fixed height of each individual bar in pixels.
+            When not set, the bar height is calculated automatically.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart.DateTickValues">
+            <summary>
+            Gets or sets the explicit set of x-axis tick values to render when the chart uses a
+            <b>date</b> x-axis. When set, only the specified dates appear as tick marks instead of
+            the auto-generated ones.
+            For numeric axes, use the base-class <c>TickValues</c> property instead.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart.TickValuesJson">
+            <inheritdoc />
+            <remarks>
+            When <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart.DateTickValues"/> is set, dates are converted to Unix millisecond timestamps
+            before serialisation so the web component receives the expected numeric format.
+            </remarks>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChart">
+            <summary>
+            A FluentHorizontalBarChart is a component that displays data in a horizontal bar chart format.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChart.#ctor(Microsoft.FluentUI.AspNetCore.Components.LibraryConfiguration)">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChart.ClassValue">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChart.ChartData">
+            <summary>
+            Gets or sets the data for the horizontal bar chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChart.EnableGradient">
+            <summary>
+            Gets or sets a value indicating whether a gradient fill is applied to the bars, arcs or areas.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChart.Variant">
+            <summary>
+            Gets or sets the visual <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartVariant"/> variant to use for rendering
+            the horizontal bar chart.
+            </summary>
+            <remarks>
+            Specify this property to control the appearance or style of the chart.
+            If not set, the default variant is used.
+            </remarks>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChart.HideRatio">
+            <summary>
+            Gets or sets a value indicating whether the ratio is hidden in the component output.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChart.ChartDataMode">
+            <summary>
+            Gets or sets the chart data mode. Accepted values are <c>"default"</c>, <c>"fraction"</c>, and <c>"percentage"</c>.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChart.HasRenderableData">
+            <summary>
+            Gets a value indicating whether the component has data that can be rendered safely.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChartWithAxis">
+            <summary>
+            A FluentHorizontalBarChartWithAxis is a component that displays data in a horizontal bar chart format with an axis.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChartWithAxis.#ctor(Microsoft.FluentUI.AspNetCore.Components.LibraryConfiguration)">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChartWithAxis.ClassValue">
+            <summary />
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChartWithAxis.ChartData">
+            <summary>
+            Gets or sets the data for the horizontal bar chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChartWithAxis.EnableGradient">
+            <summary>
+            Gets or sets a value indicating whether a gradient fill is applied to the bars, arcs or areas.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChartWithAxis.UseSingleColor">
+            <summary>
+            Gets or sets whether to use a single color for all bars in the chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChartWithAxis.BarHeight">
+            <summary>
+            Gets or sets the fixed height of each individual bar in pixels.
+            When not set, the bar height is calculated automatically.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartMode">
+            <summary>
+            Controls how the area fill is computed.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartMode.Tonexty">
+            <summary>
+            Stacked — each area fills from the top of the previous series' line up to its own line.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartMode.Tozeroy">
+            <summary>
+            Non-stacked — each area fills independently from y = 0 to its own line.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder">
+            <summary>
+            Specifies the sort order applied to categorical axis groups in chart components.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.Default">
+            <summary>
+            Use the default category order, which is typically the order in which
+            categories appear in the data source.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.Data">
+            <summary>
+            Use the data order, which is the order of categories as they are
+            provided in the data payload. This may differ from the default order if
+            the component applies any internal sorting or grouping logic.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.CategoryAscending">
+            <summary>
+            Sort categories alphabetically from A to Z (or in ascending order for
+            non-alphabetic labels).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.CategoryDescending">
+            <summary>
+            Sort categories alphabetically from Z to A (or in descending order for
+            non-alphabetic labels).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.TotalAscending">
+            <summary>
+            Sort categories based on the total value of their associated data points
+            in ascending order (from smallest to largest total).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.TotalDescending">
+            <summary>
+            Sort categories based on the total value of their associated data points
+            in descending order (from largest to smallest total).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.MinAscending">
+            <summary>
+            Sort categories based on the minimum value of their associated data
+            points in ascending order (from smallest to largest minimum).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.MinDescending">
+            <summary>
+            Sort categories based on the minimum value of their associated data
+            points in descending order (from largest to smallest minimum).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.MaxAscending">
+            <summary>
+            Sort categories based on the maximum value of their associated data
+            points in ascending order (from smallest to largest maximum).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.MaxDescending">
+            <summary>
+            Sort categories based on the maximum value of their associated data
+            points in descending order (from largest to smallest maximum).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.SumAscending">
+            <summary>
+            Sort categories based on the sum of their associated data points in
+            ascending order (from smallest to largest sum).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.SumDescending">
+            <summary>
+            Sort categories based on the sum of their associated data points in
+            descending order (from largest to smallest sum).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.MeanAscending">
+            <summary>
+            Sort categories based on the mean (average) value of their associated
+            data points in ascending order (from smallest to largest mean).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.MeanDescending">
+            <summary>
+            Sort categories based on the mean (average) value of their associated
+            data points in descending order (from largest to smallest mean).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.MedianAscending">
+            <summary>
+            Sort categories based on the median value of their associated data
+            points in ascending order (from smallest to largest median).
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartCategoryOrder.MedianDescending">
+            <summary>
+            Sort categories based on the median value of their associated data
+            points in descending order (from largest to smallest median).
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette">
+            <summary>
+            Contains the data visualization palette tokens that map to the underlying color values.
+            Serialize a value using <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPaletteJsonConverter"/>, which writes the
+            token string (e.g. <c>"color5"</c>) recognized by the chart web components.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color1">
+            <summary>
+            Color slot 1.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color2">
+            <summary>
+            Color slot 2.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color3">
+            <summary>
+            Color slot 3.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color4">
+            <summary>
+            Color slot 4.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color5">
+            <summary>
+            Color slot 5.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color6">
+            <summary>
+            Color slot 6.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color7">
+            <summary>
+            Color slot 7.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color8">
+            <summary>
+            Color slot 8.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color9">
+            <summary>
+            Color slot 9.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color10">
+            <summary>
+            Color slot 10.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color11">
+            <summary>
+            Color slot 11.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color12">
+            <summary>
+            Color slot 12.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color13">
+            <summary>
+            Color slot 13.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color14">
+            <summary>
+            Color slot 14.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color15">
+            <summary>
+            Color slot 15.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color16">
+            <summary>
+            Color slot 16.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color17">
+            <summary>
+            Color slot 17.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color18">
+            <summary>
+            Color slot 18.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color19">
+            <summary>
+            Color slot 19.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color20">
+            <summary>
+            Color slot 20.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color21">
+            <summary>
+            Color slot 21.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color22">
+            <summary>
+            Color slot 22.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color23">
+            <summary>
+            Color slot 23.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color24">
+            <summary>
+            Color slot 24.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color25">
+            <summary>
+            Color slot 25.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color26">
+            <summary>
+            Color slot 26.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color27">
+            <summary>
+            Color slot 27.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color28">
+            <summary>
+            Color slot 28.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color29">
+            <summary>
+            Color slot 29.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color30">
+            <summary>
+            Color slot 30.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color31">
+            <summary>
+            Color slot 31.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color32">
+            <summary>
+            Color slot 32.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color33">
+            <summary>
+            Color slot 33.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color34">
+            <summary>
+            Color slot 34.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color35">
+            <summary>
+            Color slot 35.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color36">
+            <summary>
+            Color slot 36.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color37">
+            <summary>
+            Color slot 37.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color38">
+            <summary>
+            Color slot 38.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color39">
+            <summary>
+            Color slot 39.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Color40">
+            <summary>
+            Color slot 40.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Info">
+            <summary>
+            Semantic color for informational states.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Disabled">
+            <summary>
+            Semantic color for disabled states.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.HighError">
+            <summary>
+            Semantic color for high-severity error states.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Error">
+            <summary>
+            Semantic color for error states.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Warning">
+            <summary>
+            Semantic color for warning states.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Success">
+            <summary>
+            Semantic color for success states.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.HighSuccess">
+            <summary>
+            Semantic color for high-severity success states.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom">
+            <summary>
+            Use a custom color specified by the <c>CustomColor</c> property on the data point.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartVariant">
+            <summary>
+            Specifies which visual variant the<c> HorizontalBarChart</c> uses.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartVariant.PartToWhole">
+            <summary>
+            Specifies that the data represents a part-to-whole relationship, where each value is a component of a total.
+            </summary>
+            <remarks>Use this value when visualizing or analyzing data in which individual elements contribute to
+            a collective whole, such as in pie charts or stacked bar charts.</remarks>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartVariant.AbsoluteScale">
+            <summary>
+            Specifies that bar lengths are based on the raw data values using a
+            shared absolute scale. Choose this variant when comparing magnitudes
+            across bars, rather than showing each bar as part of a total as in
+            <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartVariant.PartToWhole"/>, or rendering a standalone value as in
+            <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartVariant.SingleBar"/>.
+            </summary>
+        </member>
+        <member name="F:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartVariant.SingleBar">
+            <summary>
+            Represents a single bar element, typically used in charting or data visualization scenarios.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPaletteExtensions">
+            <summary>
+            Extension methods for <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette"/>.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPaletteExtensions.ToDataVizPaletteHex(System.String,System.Boolean)">
+            <summary>
+            Resolves a color token string (e.g. <c>"color5"</c>, <c>"info"</c>) to its hex color,
+            using the static palette table. Non-token strings (e.g. custom hex values) are returned
+            unchanged; <see langword="null"/> returns an empty string.
+            </summary>
+            <param name="token">
+            A <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette"/> token string, a custom hex/CSS color, or <see langword="null"/>.
+            </param>
+            <param name="isDarkTheme">
+            <see langword="true"/> to return the dark-theme variant; <see langword="false"/> (default)
+            for the light-theme variant.
+            </param>
+            <returns>A hex color string, or the original value if it is not a recognized token.</returns>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPaletteExtensions.TryGetDataVizPaletteFromToken(System.String)">
+            <summary>
+            Parses a token string (e.g. <c>"color5"</c>, <c>"info"</c>) back to its
+            <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette"/> enum value, or <see langword="null"/> if the
+            string is not a recognized token (e.g. it is a custom hex color).
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPaletteExtensions.ToDataVizPaletteHex(Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette,System.Boolean)">
+            <summary>
+            Returns the hex color string for this palette value using the static palette table.
+            </summary>
+            <param name="palette">The palette value to resolve.</param>
+            <param name="isDarkTheme">
+            <see langword="true"/> to return the dark-theme variant; <see langword="false"/> (default)
+            for the light-theme variant. When no dark variant exists, the light color is returned.
+            </param>
+            <returns>A hex color string such as <c>#637cef</c>, or an empty string for <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>.</returns>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPaletteExtensions.ToDataVizPaletteHex(System.Nullable{Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette},System.Boolean)">
+            <summary>
+            Returns the hex color string for this nullable palette value, or an empty string when <see langword="null"/>.
+            </summary>
+            <param name="palette">The nullable palette value to resolve.</param>
+            <param name="isDarkTheme">
+            <see langword="true"/> to return the dark-theme variant; <see langword="false"/> (default)
+            for the light-theme variant.
+            </param>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPaletteExtensions.ToDataVizPaletteHex(System.Nullable{Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette},System.String,System.Boolean)">
+            <summary>
+            Returns the hex color string for this nullable palette value, falling back to
+            <paramref name="fallback"/> when the value is <see langword="null"/> (i.e. a custom color).
+            </summary>
+            <param name="palette">The nullable palette value to resolve.</param>
+            <param name="fallback">The raw CSS color string to return when <paramref name="palette"/> is <see langword="null"/>.</param>
+            <param name="isDarkTheme">
+            <see langword="true"/> to return the dark-theme variant; <see langword="false"/> (default)
+            for the light-theme variant.
+            </param>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJson">
+            <summary>
+            Provides shared source-generated JSON serialization helpers for chart payloads.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJson.Serialize(System.Collections.Generic.IReadOnlyList{Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartSeries})">
+            <summary>
+            Serializes area chart data using the area chart serializer context.
+            </summary>
+            <param name="value">The area chart data payload.</param>
+            <returns>A JSON string suitable for the <c>fluent-area-chart</c> component.</returns>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJson.Serialize(System.Collections.Generic.IReadOnlyList{Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint})">
+            <summary>
+            Serializes donut chart data using the donut chart serializer context.
+            </summary>
+            <param name="value">The donut chart data payload.</param>
+            <returns>A JSON string suitable for the <c>fluent-donut-chart</c> component.</returns>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJson.Serialize(System.Collections.Generic.IReadOnlyList{Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartSeries})">
+            <summary>
+            Serializes horizontal bar chart data using the horizontal bar chart serializer context.
+            </summary>
+            <param name="value">The horizontal bar chart series collection.</param>
+            <returns>A JSON string suitable for the <c>fluent-horizontal-bar-chart</c> component.</returns>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJson.Serialize(System.Collections.Generic.IReadOnlyList{Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint})">
+            <summary>
+            Serializes horizontal bar chart data with using the horizontal bar chart
+            serializer context.
+            </summary>
+            <param name="value">The horizontal bar chart series collection.</param>
+            <returns>
+            A JSON string suitable for the <c> fluent-horizontal-bar-chart</c>
+            component.
+            </returns>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJson.Serialize(System.Collections.Generic.IReadOnlyList{Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelDataPoint})">
+            <summary>
+            Serializes funnel chart data using the funnel chart serializer context.
+            </summary>
+            <param name="value">The funnel chart data payload.</param>
+            <returns>A JSON string suitable for the <c>fluent-funnel-chart</c> component.</returns>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartJson.Serialize(System.Collections.Generic.IReadOnlyList{Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint})">
+            <summary>
+            Serializes Gantt chart data using the Gantt chart serializer context.
+            </summary>
+            <param name="value">The Gantt chart data payload.</param>
+            <returns>A JSON string suitable for the <c>fluent-gantt-chart</c> component.</returns>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataPoint">
+            <summary>
+            Represents a single data point in an area chart series.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataPoint.X">
+            <summary>
+            Gets the x-axis value rendered for this point.
+            Accepts either a numeric value or a date/time value.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataPoint.Y">
+            <summary>
+            Gets the y-axis numeric value rendered for this point.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataPoint.XAxisCalloutAccessibilityData">
+            <summary>
+            Gets optional accessibility data for the x-axis callout item.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataPoint.CallOutAccessibilityData">
+            <summary>
+            Gets optional accessibility data for the series callout item.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartSeries">
+            <summary>
+            Represents one area chart series in the data payload.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartSeries.Legend">
+            <summary>
+            Gets the legend text shown for the series.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartSeries.ChartData">
+            <summary>
+            Gets the collection of data points rendered within the series.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartSeries.Color">
+            <summary>
+            Gets the solid color used to render the series.
+            Use <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/> and set <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartSeries.CustomColor"/> to supply
+            an exact hex or CSS color string. If not provided, the component falls back to its
+            default palette.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartSeries.CustomColor">
+            <summary>
+            Custom color value used when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartSeries.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>.
+            Accepts an HTML hex color string (e.g. <c>#0099BC</c>) or a CSS variable.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartSeries.SerializedColor">
+            <summary>
+            Gets the serialized color value sent to the web component.
+            Returns <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartSeries.CustomColor"/> when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartSeries.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>,
+            otherwise the palette token string, or <see langword="null"/> when no color is set.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartSeries.UseSecondaryYScale">
+            <summary>
+            Gets whether this series uses the secondary (right) y-axis scale.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.CalloutAccessibilityData">
+            <summary>
+            Accessibility data attached to a chart tooltip callout element.
+            Maps to the web component's <c>AccessibilityData</c> interface.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.CalloutAccessibilityData.AriaLabel">
+            <summary>
+            Gets the accessible label announced by screen readers for the callout element.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.CartesianTooltipContext">
+            <summary>
+            Extends <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext"/> with axis-range properties for Cartesian charts
+            (<see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart"/> and <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChartWithAxis"/>).
+            </summary>
+            <remarks>
+            <para>
+            For <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart"/>, <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.CartesianTooltipContext.XStart"/> and <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.CartesianTooltipContext.XEnd"/> contain
+            the ISO 8601 representation of the bar's start and end dates (or numeric strings for
+            numeric axes). These can be parsed with <see cref="M:System.DateTime.Parse(System.String)"/> or
+            <see cref="M:System.Double.Parse(System.String)"/> as appropriate.
+            </para>
+            <para>
+            For <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentHorizontalBarChartWithAxis"/>, <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.CartesianTooltipContext.XStart"/> and
+            <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.CartesianTooltipContext.XEnd"/> are empty; the x-axis value is carried in <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext.XValue"/>.
+            </para>
+            </remarks>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.CartesianTooltipContext.XStart">
+            <summary>
+            Gets the start of the x-axis range for the hovered data element.
+            For <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart"/> this is an ISO 8601 date string (e.g.
+            <c>"2009-01-01T00:00:00.000Z"</c>).  Empty for other chart types.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.CartesianTooltipContext.XEnd">
+            <summary>
+            Gets the end of the x-axis range for the hovered data element.
+            For <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FluentGanttChart"/> this is an ISO 8601 date string (e.g.
+            <c>"2009-02-28T00:00:00.000Z"</c>).  Empty for other chart types.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue">
+            <summary>
+            Represents a value that can be plotted on any axis of any chart type.
+            Holds either a numeric value (e.g. a Unix timestamp in milliseconds or an
+            arbitrary scalar) or a <see cref="T:System.DateTimeOffset"/> that is serialized as an
+            ISO 8601 string so chart web components can consume it directly.
+            </summary>
+            <remarks>
+            Use the implicit conversions from <see cref="T:System.Double"/>, <see cref="T:System.DateTime"/>,
+            or <see cref="T:System.DateTimeOffset"/> to create an instance:
+            <code>
+            ChartAxisValue numeric = 42.0;
+            ChartAxisValue date    = new DateTime(2024, 1, 1);
+            ChartAxisValue offset  = DateTimeOffset.UtcNow;
+            </code>
+            </remarks>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue.op_Implicit(System.Double)~Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue">
+            <summary>Creates a <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue"/> from a numeric value.</summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue.op_Implicit(System.DateTime)~Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue">
+            <summary>
+            Creates a <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue"/> from a <see cref="T:System.DateTime"/>.
+            Unspecified <see cref="T:System.DateTimeKind"/> is treated as UTC.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue.op_Implicit(System.DateTimeOffset)~Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue">
+            <summary>Creates a <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue"/> from a <see cref="T:System.DateTimeOffset"/>.</summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue.Equals(Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue)">
+            <summary>Determines whether this instance equals another <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue"/>.</summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue.Equals(System.Object)">
+            <summary>Determines whether this instance equals another object.</summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue.GetHashCode">
+            <summary>Returns the hash code for this instance.</summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue.op_Equality(Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue,Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue)">
+            <summary>Returns <see langword="true"/> when both values are equal.</summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue.op_Inequality(Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue,Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue)">
+            <summary>Returns <see langword="true"/> when the values are not equal.</summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValueJsonConverter">
+            <summary>
+            Serializes and deserializes a <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue"/> as either a JSON
+            number or an ISO 8601 string, matching the format expected by the chart web components.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValueJsonConverter.Read(System.Text.Json.Utf8JsonReader@,System.Type,System.Text.Json.JsonSerializerOptions)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValueJsonConverter.Write(System.Text.Json.Utf8JsonWriter,Microsoft.FluentUI.AspNetCore.Components.Charts.ChartAxisValue,System.Text.Json.JsonSerializerOptions)">
+            <inheritdoc/>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint">
+            <summary>
+            Represents a single data point in a donut chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint.Legend">
+            <summary>
+            Gets the legend text shown for the donut segment.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint.Data">
+            <summary>
+            Gets the numeric value of the donut segment.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint.Color">
+            <summary>
+            Gets the color used to render the donut segment and legend.
+            Use <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/> and set <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint.CustomColor"/> to supply
+            an exact hex or CSS color string. If not provided, the web component falls back to
+            its default palette.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint.CustomColor">
+            <summary>
+            Custom color value used when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>.
+            Accepts an HTML hex color string (e.g. <c>#0099BC</c>) or a CSS variable.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint.SerializedColor">
+            <summary>
+            Gets the serialized color value sent to the web component.
+            Returns <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint.CustomColor"/> when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>,
+            otherwise the palette token string, or <see langword="null"/> when no color is set.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint.CalloutData">
+            <summary>
+            Gets the data shown in the donut hole (center label) when this segment is highlighted.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint.XAxisCalloutData">
+            <summary>
+            Gets optional callout data for the x-axis portion of the tooltip.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutDataPoint.YAxisCalloutData">
+            <summary>
+            Gets optional callout data for the y-axis portion of the tooltip.
+            If not provided, the component may fall back to the numeric data value.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelDataPoint">
+            <summary>
+            Represents a single data point in a funnel chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelDataPoint.Stage">
+            <summary>
+            Gets the legend text shown for the funnel segment.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelDataPoint.Value">
+            <summary>
+            Gets the numeric value of the funnel segment.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelDataPoint.Color">
+            <summary>
+            Gets the color used to render the funnel segment and legend.
+            Use <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/> and set <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelDataPoint.CustomColor"/> to supply
+            an exact hex or CSS color string. If not provided, the web component falls back to
+            its default palette.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelDataPoint.CustomColor">
+            <summary>
+            Custom color value used when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelDataPoint.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>.
+            Accepts an HTML hex color string (e.g. <c>#0099BC</c>) or a CSS variable.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelDataPoint.SerializedColor">
+            <summary>
+            Gets the serialized color value sent to the web component.
+            Returns <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelDataPoint.CustomColor"/> when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelDataPoint.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>,
+            otherwise the palette token string, or <see langword="null"/> when no color is set.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelDataPoint.SubValues">
+            <summary>
+            Gets the sub-values for a stacked funnel stage.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelSubValue">
+            <summary>
+            Represents a single sub value within a stacked funnel stage
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelSubValue.Category">
+            <summary>
+            Category name for the sub value
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelSubValue.Value">
+            <summary>
+            Numeric value for the sub value
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelSubValue.Color">
+            <summary>
+            Fill color palette token for the sub value. Use <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>
+            and set <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelSubValue.CustomColor"/> to supply an exact hex or CSS color string.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelSubValue.CustomColor">
+            <summary>
+            Custom color value used when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelSubValue.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>.
+            Accepts an HTML hex color string (e.g. <c>#0099BC</c>) or a CSS variable.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelSubValue.SerializedColor">
+            <summary>
+            Gets the serialized color value sent to the web component.
+            Returns <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelSubValue.CustomColor"/> when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelSubValue.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>,
+            otherwise the palette token string, or <see langword="null"/> when no color is set.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint">
+            <summary>
+            Represents a single data point in a Gantt chart.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.X">
+            <summary>
+            Gets the numeric range rendered along the x-axis, representing the start and end
+            of the bar segment.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.Y">
+            <summary>
+            Gets the category or label of the bar segment, which determines its position
+            along the y-axis. The chart distributes string values evenly along the axis.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.Legend">
+            <summary>
+            Gets the legend text shown for the bar segment.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.Color">
+            <summary>
+            Gets the solid color used to render the bar segment.
+            Use <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/> and set <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.CustomColor"/> to supply
+            an exact hex or CSS color string. If not provided, the component falls back to its
+            default palette.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.CustomColor">
+            <summary>
+            Custom color value used when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>.
+            Accepts an HTML hex color string (e.g. <c>#0099BC</c>) or a CSS variable.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.SerializedColor">
+            <summary>
+            Gets the serialized color value sent to the web component.
+            Returns <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.CustomColor"/> when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>,
+            otherwise the palette token string, or <see langword="null"/> when no color is set.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.Gradient">
+            <summary>
+            Gets the optional two-color gradient used to render the bar segment.
+            The array must contain exactly two color values: start color and end color.
+            Overrides <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.Color"/> when the chart's <c>EnableGradient</c> parameter is <see langword="true"/>.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.XAxisCalloutData">
+            <summary>
+            Gets optional callout data for the x-axis portion of the tooltip.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.YAxisCalloutData">
+            <summary>
+            Gets optional callout data for the y-axis portion of the tooltip.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint.CallOutAccessibilityData">
+            <summary>
+            Gets the optional accessibility data for the tooltip callout.
+            When set, <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.CalloutAccessibilityData.AriaLabel"/> is used as the accessible
+            label for the bar's callout element.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartXRange">
+            <summary>
+            Represents the x-axis range of a <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataPoint"/>.
+            Both <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartXRange.Start"/> and <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartXRange.End"/> accept numeric values
+            (e.g. Unix timestamps in milliseconds) as well as <see cref="T:System.DateTime"/> or
+            <see cref="T:System.DateTimeOffset"/> values that are serialized as ISO 8601 strings.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartXRange.Start">
+            <summary>
+            Gets the start value of the range along the x-axis.
+            Assign a <see cref="T:System.Double"/>, <see cref="T:System.DateTime"/>, or <see cref="T:System.DateTimeOffset"/>.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartXRange.End">
+            <summary>
+            Gets the end value of the range along the x-axis.
+            Assign a <see cref="T:System.Double"/>, <see cref="T:System.DateTime"/>, or <see cref="T:System.DateTimeOffset"/>.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataPoint">
+            <summary>
+            Represents a single data point in a horizontal bar chart series.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataPoint.Legend">
+            <summary>
+            Gets the legend text shown for the bar segment.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataPoint.Data">
+            <summary>
+            Gets the numeric value represented by the bar segment.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataPoint.Total">
+            <summary>
+            Gets the optional total bar length used for ratio-style rendering.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataPoint.Color">
+            <summary>
+            Gets the solid color used to render the bar segment.
+            Use <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/> and set <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataPoint.CustomColor"/> to supply
+            an exact hex or CSS color string. If not provided, the component falls back to its
+            default palette.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataPoint.CustomColor">
+            <summary>
+            Custom color value used when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataPoint.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>.
+            Accepts an HTML hex color string (e.g. <c>#0099BC</c>) or a CSS variable.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataPoint.SerializedColor">
+            <summary>
+            Gets the serialized color value sent to the web component.
+            Returns <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataPoint.CustomColor"/> when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataPoint.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>,
+            otherwise the palette token string, or <see langword="null"/> when no color is set.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataPoint.Gradient">
+            <summary>
+            Gets the optional two-color gradient used to render the bar segment.
+            The array should contain exactly two color values: start and end.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartSeries">
+            <summary>
+            Represents one horizontal bar chart series in the data payload.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartSeries.ChartSeriesTitle">
+            <summary>
+            Gets the optional title shown for the data series.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartSeries.ChartData">
+            <summary>
+            Gets the collection of data points rendered within the series.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartSeries.BenchmarkData">
+            <summary>
+            Gets the optional benchmark value used to render the benchmark indicator.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartSeries.ChartDataText">
+            <summary>
+            Gets optional text displayed alongside the chart data for the series.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint">
+            <summary>
+            Represents a single data point in a horizontal bar chart series.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.X">
+            <summary>
+            Gets the numeric value of the bar segment, which determines its length along the x-axis.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.Y">
+            <summary>
+            Gets the category or label of the bar segment, which determines its position along the y-axis.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.Legend">
+            <summary>
+            Gets the legend text shown for the bar segment.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.Color">
+            <summary>
+            Gets the solid color used to render the bar segment.
+            Use <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/> and set <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.CustomColor"/> to supply
+            an exact hex or CSS color string. If not provided, the component falls back to its
+            default palette.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.CustomColor">
+            <summary>
+            Custom color value used when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>.
+            Accepts an HTML hex color string (e.g. <c>#0099BC</c>) or a CSS variable.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.SerializedColor">
+            <summary>
+            Gets the serialized color value sent to the web component.
+            Returns <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.CustomColor"/> when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.Color"/> is <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>,
+            otherwise the palette token string, or <see langword="null"/> when no color is set.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.Gradient">
+            <summary>
+            Gets the optional two-color gradient used to render the bar segment.
+            The array should contain exactly two color values: start and end.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.CallOutAccessibilityData">
+            <summary>
+            Gets the optional accessibility data for the tooltip callout.
+            When set, <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.CalloutAccessibilityData.AriaLabel"/> is used as the accessible label
+            for the bar's callout element.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.XAxisCalloutData">
+            <summary>
+            Gets optional callout data for the x-axis portion of the tooltip.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataPoint.YAxisCalloutData">
+            <summary>
+            Gets optional callout data for the y-axis portion of the tooltip.
+            If not provided, the component may fall back to the numeric data value.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext">
+            <summary>
+            Represents the data available to a custom tooltip template.
+            The properties mirror the data point object passed by the JavaScript
+            <c>tooltipRenderer</c> callback and are chart-type agnostic so that a single
+            <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext"/> can be used across all five chart types.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext.Legend">
+            <summary>
+            Gets the legend label associated with the hovered data element.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext.YValue">
+            <summary>
+            Gets the primary Y-axis (or value) formatted string for the hovered data element.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext.XValue">
+            <summary>
+            Gets the secondary X-axis (or range) formatted string for the hovered data element.
+            Only populated for axis-based charts (Gantt, HorizontalBarChartWithAxis).
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext.Color">
+            <summary>
+            Gets the <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette"/> color associated with the hovered data element,
+            or <see langword="null"/> when the data point uses a custom color.
+            Use <see cref="M:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPaletteExtensions.ToDataVizPaletteHex(System.Nullable{Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette},System.String,System.Boolean)"/> with
+            <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext.CustomColor"/> as the fallback to resolve the displayed color in both cases.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext.CustomColor">
+            <summary>
+            Gets the raw CSS color string (e.g. <c>#ff0000</c>) when the data point uses
+            <see cref="F:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette.Custom"/>. <see langword="null"/> when <see cref="P:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext.Color"/> is set.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.TooltipContext.RawJson">
+            <summary>
+            Gets the raw JSON object serialized from the JavaScript data point.
+            Use this when you need to access chart-specific properties not covered
+            by the typed members above.
+            </summary>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext">
+            <summary>
+            Provides source-generated JSON serialization metadata for area chart payloads.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.Boolean">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.NullableBoolean">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.Double">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.AreaChartDataPoint">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.AreaChartSeries">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.CalloutAccessibilityData">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.ChartAxisValue">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.IReadOnlyListAreaChartDataPoint">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.IReadOnlyListAreaChartSeries">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.String">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.Default">
+            <summary>
+            The default <see cref="T:System.Text.Json.Serialization.JsonSerializerContext"/> associated with a default <see cref="T:System.Text.Json.JsonSerializerOptions"/> instance.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.GeneratedSerializerOptions">
+            <summary>
+            The source-generated options associated with this context.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.#ctor">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.#ctor(System.Text.Json.JsonSerializerOptions)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.AreaChartDataJsonSerializerContext.GetTypeInfo(System.Type)">
+            <inheritdoc/>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPaletteJsonConverter">
+            <summary>
+            Serializes a <see cref="T:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette"/> value as its token string
+            (e.g. <c>"color5"</c>, <c>"info"</c>) so the chart web components can
+            resolve it to an actual hex color at runtime.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPaletteJsonConverter.Read(System.Text.Json.Utf8JsonReader@,System.Type,System.Text.Json.JsonSerializerOptions)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPaletteJsonConverter.Write(System.Text.Json.Utf8JsonWriter,Microsoft.FluentUI.AspNetCore.Components.Charts.DataVizPalette,System.Text.Json.JsonSerializerOptions)">
+            <inheritdoc/>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutChartDataJsonSerializerContext">
+            <summary>
+            Provides source-generated JSON serialization metadata for donut chart payloads.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutChartDataJsonSerializerContext.Double">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutChartDataJsonSerializerContext.DonutDataPoint">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutChartDataJsonSerializerContext.IReadOnlyListDonutDataPoint">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutChartDataJsonSerializerContext.String">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutChartDataJsonSerializerContext.Default">
+            <summary>
+            The default <see cref="T:System.Text.Json.Serialization.JsonSerializerContext"/> associated with a default <see cref="T:System.Text.Json.JsonSerializerOptions"/> instance.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutChartDataJsonSerializerContext.GeneratedSerializerOptions">
+            <summary>
+            The source-generated options associated with this context.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutChartDataJsonSerializerContext.#ctor">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutChartDataJsonSerializerContext.#ctor(System.Text.Json.JsonSerializerOptions)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.DonutChartDataJsonSerializerContext.GetTypeInfo(System.Type)">
+            <inheritdoc/>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelChartDataJsonSerializerContext">
+            <summary>
+            Provides source-generated JSON serialization metadata for funnel chart payloads.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelChartDataJsonSerializerContext.Double">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelChartDataJsonSerializerContext.FunnelDataPoint">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelChartDataJsonSerializerContext.FunnelSubValue">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelChartDataJsonSerializerContext.IReadOnlyListFunnelDataPoint">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelChartDataJsonSerializerContext.IReadOnlyListFunnelSubValue">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelChartDataJsonSerializerContext.String">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelChartDataJsonSerializerContext.Default">
+            <summary>
+            The default <see cref="T:System.Text.Json.Serialization.JsonSerializerContext"/> associated with a default <see cref="T:System.Text.Json.JsonSerializerOptions"/> instance.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelChartDataJsonSerializerContext.GeneratedSerializerOptions">
+            <summary>
+            The source-generated options associated with this context.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelChartDataJsonSerializerContext.#ctor">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelChartDataJsonSerializerContext.#ctor(System.Text.Json.JsonSerializerOptions)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.FunnelChartDataJsonSerializerContext.GetTypeInfo(System.Type)">
+            <inheritdoc/>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext">
+            <summary>
+            Provides source-generated JSON serialization metadata for Gantt chart payloads.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext.CalloutAccessibilityData">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext.ChartAxisValue">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext.GanttChartDataPoint">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext.GanttChartXRange">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext.IReadOnlyListGanttChartDataPoint">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext.String">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext.StringArray">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext.Default">
+            <summary>
+            The default <see cref="T:System.Text.Json.Serialization.JsonSerializerContext"/> associated with a default <see cref="T:System.Text.Json.JsonSerializerOptions"/> instance.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext.GeneratedSerializerOptions">
+            <summary>
+            The source-generated options associated with this context.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext.#ctor">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext.#ctor(System.Text.Json.JsonSerializerOptions)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.GanttChartDataJsonSerializerContext.GetTypeInfo(System.Type)">
+            <inheritdoc/>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext">
+            <summary>
+            Provides source-generated JSON serialization metadata for horizontal bar chart payloads.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.Double">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.NullableDouble">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.HorizontalBarChartDataPoint">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.HorizontalBarChartSeries">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.IReadOnlyListHorizontalBarChartDataPoint">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.IReadOnlyListHorizontalBarChartSeries">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.String">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.StringArray">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.Default">
+            <summary>
+            The default <see cref="T:System.Text.Json.Serialization.JsonSerializerContext"/> associated with a default <see cref="T:System.Text.Json.JsonSerializerOptions"/> instance.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.GeneratedSerializerOptions">
+            <summary>
+            The source-generated options associated with this context.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.#ctor">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.#ctor(System.Text.Json.JsonSerializerOptions)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartDataJsonSerializerContext.GetTypeInfo(System.Type)">
+            <inheritdoc/>
+        </member>
+        <member name="T:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataJsonSerializerContext">
+            <summary>
+            Provides source-generated JSON serialization metadata for horizontal bar chart payloads.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataJsonSerializerContext.Double">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataJsonSerializerContext.CalloutAccessibilityData">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataJsonSerializerContext.HorizontalBarChartWithAxisDataPoint">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataJsonSerializerContext.IReadOnlyListHorizontalBarChartWithAxisDataPoint">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataJsonSerializerContext.String">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataJsonSerializerContext.StringArray">
+            <summary>
+            Defines the source generated JSON serialization contract metadata for a given type.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataJsonSerializerContext.Default">
+            <summary>
+            The default <see cref="T:System.Text.Json.Serialization.JsonSerializerContext"/> associated with a default <see cref="T:System.Text.Json.JsonSerializerOptions"/> instance.
+            </summary>
+        </member>
+        <member name="P:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataJsonSerializerContext.GeneratedSerializerOptions">
+            <summary>
+            The source-generated options associated with this context.
+            </summary>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataJsonSerializerContext.#ctor">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataJsonSerializerContext.#ctor(System.Text.Json.JsonSerializerOptions)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Microsoft.FluentUI.AspNetCore.Components.Charts.HorizontalBarChartWithAxisDataJsonSerializerContext.GetTypeInfo(System.Type)">
+            <inheritdoc/>
+        </member>
+    </members>
+</doc>

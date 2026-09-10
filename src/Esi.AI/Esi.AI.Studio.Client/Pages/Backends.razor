@@ -384,6 +384,10 @@
             }
         </div>
     </div>
+    @if (activeBackend == BackendTab.OpenVino && !IsOpenVinoValidationReady && openVinoDiagnostics is not null)
+    {
+        <p class="mt-3" role="alert">OpenVINO model loading is disabled: @GetOpenVinoValidationMessage()</p>
+    }
     <div class="profile-toolbar">
         <div class="profile-select">
             <label class="form-label" for="shared-configuration-profile">Configuration set</label>
@@ -984,6 +988,9 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private readonly Dictionary<BackendTab, Guid> selectedProfileIds = [];
 
     private bool IsOpenVinoValidationReady => openVinoDiagnostics?.IsGpuReady == true || openVinoDiagnostics?.IsNpuReady == true;
+    private string GetOpenVinoValidationMessage() => openVinoDiagnostics?.Error ?? string.Join(" ", openVinoDiagnostics?.Checks
+        .Where(check => !check.IsAvailable)
+        .Select(check => $"{check.Name}: {check.Detail}") ?? []);
     private bool IsBackendPrerequisitesReady => backendPrerequisites?.IsReady == true;
     private bool IsBackendRequirementsReady => activeBackend == BackendTab.OpenVino ? IsOpenVinoValidationReady : IsBackendPrerequisitesReady;
     private bool AreMatrixChecksReady => backendRequirementState is not null &&
@@ -1313,12 +1320,13 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             .SelectMany(entry => entry.Diagnostics.Checks)
             .Any(check => !check.IsAvailable && check.CanSolve) == true;
 
-    private async Task LoadOpenVinoModelAsync()
+    private async Task<bool> LoadOpenVinoModelAsync()
     {
         if (openVinoDiagnostics?.IsGpuReady != true && openVinoDiagnostics?.IsNpuReady != true)
         {
             openVinoStatus = "No supported OpenVINO accelerator is available.";
-            return;
+            statusMessage = openVinoStatus;
+            return false;
         }
 
         isOpenVinoLoading = true;
@@ -1345,12 +1353,14 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             var result = await loadTask;
             isOpenVinoModelLoaded = result.Succeeded;
             openVinoStatus = result.Message;
-            statusMessage = result.Succeeded ? null : "The model could not be loaded.";
+            statusMessage = result.Succeeded ? null : result.Message;
+            return result.Succeeded;
         }
         catch (Exception exception)
         {
             openVinoStatus = $"OpenVINO model load failed: {exception.Message}";
-            statusMessage = "The model could not be loaded.";
+            statusMessage = openVinoStatus;
+            return false;
         }
         finally
         {
@@ -1371,22 +1381,24 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         if (pendingModel is null)
             return;
 
+        var loadingVersion = ++optimisticLoadingVersion;
         optimisticLoadingModel = pendingModel;
         await InvokeAsync(StateHasChanged);
-        await LoadActiveBackendModelCoreAsync();
+        await LoadActiveBackendModelCoreAsync(loadingVersion);
     }
 
-    private async Task LoadActiveBackendModelCoreAsync()
+    private async Task LoadActiveBackendModelCoreAsync(long loadingVersion)
     {
+        var loadSucceeded = false;
         try
         {
-            await (activeBackend switch
+            loadSucceeded = await (activeBackend switch
             {
                 BackendTab.Llama => LoadModelAsync(),
                 BackendTab.OpenVino => LoadOpenVinoModelAsync(),
                 BackendTab.Vllm or BackendTab.Sglang => LoadPythonModelAsync(),
                 BackendTab.DotLlm => LoadDotLlmModelAsync(),
-                _ => Task.CompletedTask
+                _ => Task.FromResult(false)
             });
         }
         finally
@@ -1400,9 +1412,34 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 statusMessage = exception.Message;
             }
 
-            optimisticLoadingModel = null;
+            if (loadSucceeded)
+            {
+                optimisticLoadingModel = null;
+            }
+            else if (optimisticLoadingModel is not null)
+            {
+                var failedModel = optimisticLoadingModel with
+                {
+                    IsLoading = false,
+                    LoadLog = statusMessage ?? "The model could not be loaded."
+                };
+                optimisticLoadingModel = failedModel;
+                _ = RemoveFailedModelAfterDelayAsync(loadingVersion);
+            }
+
             await InvokeAsync(StateHasChanged);
         }
+    }
+
+    private async Task RemoveFailedModelAfterDelayAsync(long loadingVersion)
+    {
+        await Task.Delay(TimeSpan.FromSeconds(10));
+        await InvokeAsync(() =>
+        {
+            if (optimisticLoadingVersion == loadingVersion)
+                optimisticLoadingModel = null;
+            StateHasChanged();
+        });
     }
 
     private LoadedModelStatus? CreatePendingModelStatus()
@@ -1432,7 +1469,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             IsLoading: true);
     }
 
-    private async Task LoadPythonModelAsync()
+    private async Task<bool> LoadPythonModelAsync()
     {
         var backend = GetConfigurationBackend(activeBackend);
         var backendName = GetBackendLabel(activeBackend);
@@ -1448,12 +1485,14 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 ? $"{backendName} is ready."
                 : $"{backendName} could not be loaded.";
             statusMessage = result.IsModelLoaded ? null : pythonStatus;
+            return result.IsModelLoaded;
         }
         catch (Exception exception)
         {
             pythonStatus = exception.Message;
             statusMessage = pythonStatus;
             backendLoadLogs[backend] = exception.ToString();
+            return false;
         }
         finally
         {
@@ -1461,7 +1500,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         }
     }
 
-    private async Task LoadDotLlmModelAsync()
+    private async Task<bool> LoadDotLlmModelAsync()
     {
         isDotLlmLoading = true;
         dotLlmStatus = null;
@@ -1471,10 +1510,13 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             await DataService.LoadDotLlmModelAsync(new DotLlmLoadRequest(
                 dotLlmForm.ModelPath, dotLlmForm.Device, dotLlmForm.Threads));
             dotLlmStatus = "dotLLM is ready.";
+            return true;
         }
         catch (Exception exception)
         {
             dotLlmStatus = exception.Message;
+            statusMessage = dotLlmStatus;
+            return false;
         }
         finally
         {
@@ -2002,6 +2044,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private string? statusMessage;
     private ModelLoadStatus? loadStatus;
     private LoadedModelStatus? optimisticLoadingModel;
+    private long optimisticLoadingVersion;
         private long loadedModelStatusVersion;
     private readonly AdvancedForm advanced = new();
     private IReadOnlyList<Model> databaseModels = [];
@@ -2105,12 +2148,12 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         await InvokeAsync(StateHasChanged);
     }
 
-    private async Task LoadModelAsync()
+    private async Task<bool> LoadModelAsync()
     {
         if (string.IsNullOrWhiteSpace(form.ModelPath) || !string.Equals(Path.GetExtension(form.ModelPath), ".gguf", StringComparison.OrdinalIgnoreCase))
         {
             statusMessage = "Select or enter a .gguf model path first.";
-            return;
+            return false;
         }
 
         isLoading = true;
@@ -2131,22 +2174,27 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             await DataService.LoadModelAsync(request);
             SyncEnabledDevices();
             statusMessage = $"Loaded: {form.ModelPath}";
+            return true;
         }
         catch (OperationCanceledException)
         {
             statusMessage = "Loading was cancelled.";
+            return false;
         }
         catch (ArgumentException)
         {
             statusMessage = "Enter a valid GGUF model path and GPU layer count.";
+            return false;
         }
         catch (FileNotFoundException)
         {
             statusMessage = "The specified model file was not found.";
+            return false;
         }
         catch (Exception)
         {
             statusMessage = "The model could not be loaded.";
+            return false;
         }
         finally
         {

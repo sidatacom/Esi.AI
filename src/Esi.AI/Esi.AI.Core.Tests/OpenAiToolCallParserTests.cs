@@ -27,4 +27,15 @@ public sealed class OpenAiToolCallParserTests
         Assert.AreEqual("{\"query\":\"weather\"}", toolCall.Function.Arguments);
         Assert.IsEmpty(result.Text);
     }
+
+    [TestMethod]
+    public void Parse_WhenJsonToolCallArrayIsReturned_ProducesAllOpenAiToolCalls()
+    {
+        var result = OpenAiToolCallParser.Parse("[{\"name\":\"lookup\",\"arguments\":{\"query\":\"weather\"}}]");
+
+        var toolCall = result.ToolCalls.Single();
+        Assert.AreEqual("lookup", toolCall.Function.Name);
+        Assert.AreEqual("{\"query\":\"weather\"}", toolCall.Function.Arguments);
+        Assert.IsEmpty(result.Text);
+    }
 }

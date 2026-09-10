@@ -14,7 +14,6 @@ namespace Esi.AI.Core.ModelLoading;
 
 public sealed class OpenVinoModelLoader : IDisposable
 {
-    private readonly OpenVinoCoreProvider coreProvider;
     private readonly SemaphoreSlim loadLock = new(1, 1);
     private readonly SemaphoreSlim generationLock = new(1, 1);
     private readonly ConcurrentQueue<string> loadLog = new();
@@ -25,9 +24,8 @@ public sealed class OpenVinoModelLoader : IDisposable
     private string? loadedDevice;
     private double? vramUsageMiB;
 
-    public OpenVinoModelLoader(OpenVinoCoreProvider? coreProvider = null)
+    public OpenVinoModelLoader()
     {
-        this.coreProvider = coreProvider ?? new OpenVinoCoreProvider();
         OvLogger.SetCallback(HandleLog);
     }
 
@@ -125,6 +123,9 @@ public sealed class OpenVinoModelLoader : IDisposable
             ValidateNpuOptions(npu);
 
         cancellationToken.ThrowIfCancellationRequested();
+        if (!isNpu)
+            EnsureSufficientGpuMemory(fullModelPath, device);
+
         await loadLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         var generationLockHeld = false;
         var operation = "GenAI.Initialize";
@@ -298,18 +299,13 @@ public sealed class OpenVinoModelLoader : IDisposable
     {
         try
         {
-            var devices = device.StartsWith("MULTI:", StringComparison.OrdinalIgnoreCase)
-                ? device["MULTI:".Length..].Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                : [device];
-            var memoryBytes = devices
-                .SelectMany(selectedDevice => GetMemoryStatistics(coreProvider.Core, selectedDevice))
-                .Sum();
-            if (memoryBytes <= 0)
+            if (!TryGetGpuMemoryBytes(out var freeBytes, out var totalBytes))
             {
                 AppendLoadLog($"[INFO] OpenVINO VRAM statistics are unavailable for {device}.");
                 return null;
             }
 
+            var memoryBytes = totalBytes - freeBytes;
             var memoryMiB = memoryBytes / 1024d / 1024d;
             AppendLoadLog($"[INFO] OpenVINO VRAM allocated on {device}: {memoryMiB:F2} MiB.");
             return memoryMiB;
@@ -321,52 +317,73 @@ public sealed class OpenVinoModelLoader : IDisposable
         }
     }
 
-    private static IEnumerable<long> GetMemoryStatistics(OpenVinoSharp.Core core, string device)
+    private void EnsureSufficientGpuMemory(string modelPath, string device)
     {
-        foreach (var deviceAlias in GetDeviceAliases(device))
+        var modelBytes = CalculateModelFootprintBytes(modelPath);
+        if (modelBytes <= 0)
+            throw new InvalidOperationException($"Cannot verify GPU memory for '{modelPath}' because the model footprint is unavailable.");
+
+        if (!TryGetGpuMemoryBytes(out var freeBytes, out var totalBytes))
         {
-            try
-            {
-                var statistics = core.GetProperty(deviceAlias, "GPU_MEMORY_STATISTICS");
-                var values = ParseMemoryStatistics(statistics).ToArray();
-                if (values.Length > 0)
-                    return values;
-            }
-            catch (ArgumentException)
-            {
-            }
+            AppendLoadLog($"[WARN] GPU memory telemetry is unavailable for {device}; native OpenVINO load will perform the final resource check.");
+            return;
         }
 
-        return [];
+        var requiredBytes = checked(modelBytes + Math.Max(512L * 1024 * 1024, modelBytes / 5));
+        AppendLoadLog($"[INFO] OpenVINO GPU memory check on {device}: {freeBytes / 1024d / 1024d:F0} MiB free of {totalBytes / 1024d / 1024d:F0} MiB; {requiredBytes / 1024d / 1024d:F0} MiB required.");
+        if (freeBytes < requiredBytes)
+            throw new InvalidOperationException($"Insufficient GPU memory for OpenVINO device '{device}'. Available: {freeBytes / 1024d / 1024d:F0} MiB; estimated requirement: {requiredBytes / 1024d / 1024d:F0} MiB.");
     }
 
-    private static IEnumerable<string> GetDeviceAliases(string device)
+    internal static long CalculateModelFootprintBytes(string modelPath)
     {
-        yield return device;
+        if (File.Exists(modelPath))
+            return new FileInfo(modelPath).Length;
 
-        if (device.StartsWith("GPU.", StringComparison.OrdinalIgnoreCase))
-            yield return "GPU";
+        if (!Directory.Exists(modelPath))
+            return 0;
+
+        return Directory.EnumerateFiles(modelPath, "*", SearchOption.AllDirectories)
+            .Select(path => new FileInfo(path).Length)
+            .Aggregate(0L, (total, length) => checked(total + length));
     }
 
-    private static IEnumerable<long> ParseMemoryStatistics(string statistics)
+    private static bool TryGetGpuMemoryBytes(out long freeBytes, out long totalBytes)
     {
-        var entries = Regex.Matches(
-                statistics,
-                @"(?<key>[A-Za-z_][A-Za-z0-9_]*)\s*[:=]\s*(?<value>\d+(?:\.\d+)?)\s*(?<unit>GiB|MiB|KiB|B)?",
-                RegexOptions.IgnoreCase)
-            .Select(match =>
-            {
-                var value = double.Parse(match.Groups["value"].Value, System.Globalization.CultureInfo.InvariantCulture);
-                var unit = match.Groups["unit"].Value;
-                var multiplier = unit.Equals("GiB", StringComparison.OrdinalIgnoreCase) ? 1024d * 1024d * 1024d :
-                    unit.Equals("MiB", StringComparison.OrdinalIgnoreCase) ? 1024d * 1024d :
-                    unit.Equals("KiB", StringComparison.OrdinalIgnoreCase) ? 1024d : 1d;
-                return value * multiplier;
-            })
-            .Select(value => checked((long)value));
+        freeBytes = 0;
+        totalBytes = 0;
+        if (!OperatingSystem.IsLinux() || !Directory.Exists("/sys/class/drm"))
+            return false;
 
-        return entries.Any() ? entries :
-            long.TryParse(statistics.Trim(), out var value) ? [value] : [];
+        foreach (var devicePath in Directory.EnumerateDirectories("/sys/class/drm", "card*"))
+        {
+            var memoryPath = Path.Combine(devicePath, "device");
+            var total = ReadSysfsBytes(Path.Combine(memoryPath, "mem_info_vram_total"));
+            var used = ReadSysfsBytes(Path.Combine(memoryPath, "mem_info_vram_used"));
+            if (total <= 0)
+                continue;
+
+            totalBytes = checked(totalBytes + total);
+            freeBytes = checked(freeBytes + Math.Max(0, total - used));
+        }
+
+        return freeBytes > 0;
+    }
+
+    private static long ReadSysfsBytes(string path)
+    {
+        try
+        {
+            return long.TryParse(File.ReadAllText(path).Trim(), out var bytes) ? bytes : 0;
+        }
+        catch (IOException)
+        {
+            return 0;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return 0;
+        }
     }
 
     private void ClearLoadLog()

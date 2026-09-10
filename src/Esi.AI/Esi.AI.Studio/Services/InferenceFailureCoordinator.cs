@@ -17,6 +17,7 @@ public sealed class InferenceFailureCoordinator(
     IHostApplicationLifetime applicationLifetime,
     ILogger<InferenceFailureCoordinator> logger) : IInferenceFailureCoordinator
 {
+    private static readonly TimeSpan RuntimeCleanupTimeout = TimeSpan.FromSeconds(5);
     private int shutdownStarted;
 
     /// <inheritdoc />
@@ -26,25 +27,32 @@ public sealed class InferenceFailureCoordinator(
         if (Interlocked.Exchange(ref shutdownStarted, 1) != 0)
             return;
 
-        logger.LogCritical(exception, "Fatal inference failure; stopping model runtimes and shutting down Studio.");
+        logger.LogCritical(exception, "Fatal inference failure; shutting down Studio and stopping model runtimes.");
         try
         {
-            await modelRuntime.StopAsync(CancellationToken.None).ConfigureAwait(false);
+            applicationLifetime.StopApplication();
+        }
+        catch (Exception shutdownException)
+        {
+            logger.LogCritical(shutdownException, "Host shutdown could not be requested after a fatal inference error.");
+        }
+
+        try
+        {
+            using var cleanupCancellation = new CancellationTokenSource(RuntimeCleanupTimeout);
+            await modelRuntime.StopAsync(cleanupCancellation.Token).WaitAsync(RuntimeCleanupTimeout).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            logger.LogCritical("Model runtime cleanup exceeded {TimeoutSeconds} seconds after a fatal inference error.", RuntimeCleanupTimeout.TotalSeconds);
+        }
+        catch (OperationCanceledException) when (RuntimeCleanupTimeout > TimeSpan.Zero)
+        {
+            logger.LogCritical("Model runtime cleanup was cancelled after a fatal inference error.");
         }
         catch (Exception cleanupException)
         {
             logger.LogCritical(cleanupException, "Model runtime cleanup failed after a fatal inference error.");
-        }
-        finally
-        {
-            try
-            {
-                applicationLifetime.StopApplication();
-            }
-            catch (Exception shutdownException)
-            {
-                logger.LogCritical(shutdownException, "Host shutdown could not be requested after a fatal inference error.");
-            }
         }
     }
 }

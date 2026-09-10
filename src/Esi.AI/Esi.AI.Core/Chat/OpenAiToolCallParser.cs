@@ -32,8 +32,8 @@ public static partial class OpenAiToolCallParser
         }
 
         visibleText.Append(text, position, text.Length - position);
-        if (toolCalls.Count == 0 && TryParseJsonToolCall(text, out var jsonToolCall))
-            return new OpenAiToolCallParseResult(string.Empty, [jsonToolCall]);
+        if (toolCalls.Count == 0 && TryParseJsonToolCalls(text, out var jsonToolCalls))
+            return new OpenAiToolCallParseResult(string.Empty, jsonToolCalls);
 
         return new OpenAiToolCallParseResult(visibleText.ToString().Trim(), toolCalls);
     }
@@ -58,27 +58,40 @@ public static partial class OpenAiToolCallParser
                     JsonSerializer.Serialize(arguments, JsonOptions)))];
         }
 
-        return TryParseJsonToolCall(body, out var jsonToolCall) ? [jsonToolCall] : [];
+        return TryParseJsonToolCalls(body, out var jsonToolCalls) ? jsonToolCalls : [];
     }
 
-    private static bool TryParseJsonToolCall(string text, out OpenAiToolCall toolCall)
+    private static bool TryParseJsonToolCalls(string text, out IReadOnlyList<OpenAiToolCall> toolCalls)
     {
-        toolCall = null!;
+        toolCalls = [];
         try
         {
             using var document = JsonDocument.Parse(text.Trim());
             var root = document.RootElement;
-            if (!root.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String ||
-                !root.TryGetProperty("arguments", out var arguments))
+            IEnumerable<JsonElement> elements = root.ValueKind == JsonValueKind.Array
+                ? root.EnumerateArray()
+                : [root];
+            var parsedToolCalls = new List<OpenAiToolCall>();
+            foreach (var element in elements)
+            {
+                if (element.ValueKind != JsonValueKind.Object ||
+                    !element.TryGetProperty("name", out var name) || name.ValueKind != JsonValueKind.String ||
+                    !element.TryGetProperty("arguments", out var arguments))
+                    return false;
+
+                var argumentsText = arguments.ValueKind == JsonValueKind.String
+                    ? arguments.GetString() ?? "{}"
+                    : arguments.GetRawText();
+                parsedToolCalls.Add(new OpenAiToolCall(
+                    $"call_{Guid.NewGuid():N}",
+                    "function",
+                    new OpenAiToolCallFunction(name.GetString()!, argumentsText)));
+            }
+
+            if (parsedToolCalls.Count == 0)
                 return false;
 
-            var argumentsText = arguments.ValueKind == JsonValueKind.String
-                ? arguments.GetString() ?? "{}"
-                : arguments.GetRawText();
-            toolCall = new OpenAiToolCall(
-                $"call_{Guid.NewGuid():N}",
-                "function",
-                new OpenAiToolCallFunction(name.GetString()!, argumentsText));
+            toolCalls = parsedToolCalls;
             return true;
         }
         catch (JsonException)

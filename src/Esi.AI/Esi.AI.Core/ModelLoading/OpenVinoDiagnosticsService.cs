@@ -1,19 +1,15 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
-using OpenVinoSharp;
 
 namespace Esi.AI.Core.ModelLoading;
 
 public sealed class OpenVinoDiagnosticsService
 {
     private readonly OpenVinoLoadGate loadGate;
-    private readonly OpenVinoCoreProvider coreProvider;
     private OpenVinoDiagnostics? cachedDiagnostics;
 
-    public OpenVinoDiagnosticsService(OpenVinoLoadGate? loadGate = null, OpenVinoCoreProvider? coreProvider = null)
+    public OpenVinoDiagnosticsService(OpenVinoLoadGate? loadGate = null)
     {
         this.loadGate = loadGate ?? new OpenVinoLoadGate();
-        this.coreProvider = coreProvider ?? new OpenVinoCoreProvider();
     }
 
     public OpenVinoDiagnostics Diagnose()
@@ -36,74 +32,46 @@ public sealed class OpenVinoDiagnosticsService
         var checks = new List<OpenVinoDiagnosticCheck>();
         AddLinuxDriverChecks(checks);
 
-        try
-        {
-            var core = coreProvider.Core;
-            var devices = core.GetAvailableDevices();
-            var acceleratorDevices = devices
-                .Where(device => IsOpenVinoGpuDevice(device) || IsOpenVinoNpuDevice(device))
-                .Select(device =>
-                {
-                    var fullDeviceName = GetPropertyOrFallback(
-                        core,
-                        device,
-                        "FULL_DEVICE_NAME",
-                        device);
-                    var deviceId = GetPropertyOrFallback(core, device, "DEVICE_ID", string.Empty);
-                    var displayName = ResolveDeviceName(fullDeviceName, deviceId);
-                    var isNpu = device.StartsWith("NPU", StringComparison.OrdinalIgnoreCase);
-                    var isCompatible = isNpu || (displayName.Contains("Intel", StringComparison.OrdinalIgnoreCase)
-                        && !displayName.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase));
+        var hasRenderDevice = !OperatingSystem.IsLinux() ||
+            Directory.Exists("/dev/dri") && Directory.EnumerateFileSystemEntries("/dev/dri", "renderD*").Any();
+        var hasNpuDevice = OperatingSystem.IsLinux() &&
+            Directory.Exists("/dev/accel") && Directory.EnumerateFileSystemEntries("/dev/accel", "accel*").Any();
+        IReadOnlyList<OpenVinoDeviceStatus> gpuDevices = hasRenderDevice
+            ? new[] { new OpenVinoDeviceStatus(
+                "GPU",
+                "OpenVINO GPU (native probe deferred until load)",
+                true,
+                "Intel",
+                "OS render device",
+                "GPU route is available from OS device checks; native OpenVINO probing is deferred until model load.") }
+            : Array.Empty<OpenVinoDeviceStatus>();
+        var devices = hasNpuDevice
+            ? gpuDevices.Append(new OpenVinoDeviceStatus(
+                "NPU",
+                "OpenVINO NPU (native probe deferred until load)",
+                true,
+                "Intel",
+                "OS accelerator device",
+                "NPU route is available from OS device checks; native OpenVINO probing is deferred until model load.")).ToArray()
+            : gpuDevices;
+        checks.Add(new OpenVinoDiagnosticCheck(
+            "openvino-gpu-plugin",
+            "OpenVINO GPU route",
+            hasRenderDevice,
+            hasRenderDevice
+                ? "A render device is available. Native OpenVINO probing is deferred until model load."
+                : "No DRM render device was found under /dev/dri.",
+            false));
+        checks.Add(new OpenVinoDiagnosticCheck(
+            "openvino-npu-plugin",
+            "OpenVINO NPU route",
+            hasNpuDevice,
+            hasNpuDevice
+                ? "An accelerator device is available. Native OpenVINO probing is deferred until model load."
+                : "No accelerator device was found under /dev/accel.",
+            false));
 
-                    return new OpenVinoDeviceStatus(
-                        device,
-                        displayName,
-                        isCompatible,
-                        isNpu ? "Intel" : ResolveVendor(displayName),
-                        isNpu ? "Intel NPU plugin" : "Intel GPU plugin",
-                        isCompatible
-                            ? $"OpenVINO {(isNpu ? "NPU" : "GPU")} device detected and compatible ({device})."
-                            : $"OpenVINO GPU device detected but is not compatible with the Intel OpenVINO route ({device}).");
-                    })
-                .ToList();
-            var gpuDevices = acceleratorDevices
-                .Where(device => IsOpenVinoGpuDevice(device.Id))
-                .ToList();
-            var npuDevices = acceleratorDevices
-                .Where(device => device.Id.StartsWith("NPU", StringComparison.OrdinalIgnoreCase))
-                .ToList();
-
-            checks.Add(new OpenVinoDiagnosticCheck(
-                "openvino-gpu-plugin",
-                "OpenVINO GPU plugin",
-                gpuDevices.Any(device => device.IsCompatible),
-                gpuDevices.Any(device => device.IsCompatible)
-                    ? $"OpenVINO detected: {string.Join(", ", gpuDevices.Select(device => device.Name))}"
-                    : $"OpenVINO did not detect a GPU device. Available devices: {FormatDeviceList(devices)}",
-                false));
-
-            checks.Add(new OpenVinoDiagnosticCheck(
-                "openvino-npu-plugin",
-                "OpenVINO NPU plugin",
-                npuDevices.Any(device => device.IsCompatible),
-                npuDevices.Any(device => device.IsCompatible)
-                    ? $"OpenVINO detected: {string.Join(", ", npuDevices.Select(device => device.Name))}"
-                    : $"OpenVINO did not detect an NPU device. Available devices: {FormatDeviceList(devices)}",
-                false));
-
-            return Cache(new OpenVinoDiagnostics(
-                gpuDevices.Any(device => device.IsCompatible),
-                npuDevices.Any(device => device.IsCompatible),
-                acceleratorDevices,
-                checks,
-                null));
-        }
-        catch (Exception exception)
-        {
-            var detail = exception.ToString();
-            checks.Add(new OpenVinoDiagnosticCheck("openvino-runtime", "OpenVINO runtime", false, detail, false));
-            return Cache(new OpenVinoDiagnostics(false, false, [], checks, detail));
-        }
+        return Cache(new OpenVinoDiagnostics(hasRenderDevice, hasNpuDevice, devices, checks, null));
     }
 
     private OpenVinoDiagnostics Cache(OpenVinoDiagnostics diagnostics)
@@ -111,45 +79,6 @@ public sealed class OpenVinoDiagnosticsService
         Volatile.Write(ref cachedDiagnostics, diagnostics);
         return diagnostics;
     }
-
-    private static string GetPropertyOrFallback(OpenVinoSharp.Core core, string device, string property, string fallback)
-    {
-        try
-        {
-            var value = core.GetProperty(device, property);
-            return string.IsNullOrWhiteSpace(value) ? fallback : value;
-        }
-        catch
-        {
-            return fallback;
-        }
-    }
-
-    private static string ResolveDeviceName(string fullDeviceName, string deviceId)
-    {
-        if (deviceId.Contains("e223", StringComparison.OrdinalIgnoreCase)
-            || fullDeviceName.Contains("e223", StringComparison.OrdinalIgnoreCase))
-            return "Intel(R) Arc(TM) Pro B70 Graphics (0xe223)";
-
-        return fullDeviceName;
-    }
-
-    private static string ResolveVendor(string deviceName) =>
-        deviceName.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) ? "NVIDIA" :
-        deviceName.Contains("AMD", StringComparison.OrdinalIgnoreCase) || deviceName.Contains("Radeon", StringComparison.OrdinalIgnoreCase) ? "AMD" :
-        deviceName.Contains("Intel", StringComparison.OrdinalIgnoreCase) ? "Intel" :
-        "Unknown";
-
-    private static bool IsOpenVinoGpuDevice(string device) =>
-        device.Equals("GPU", StringComparison.OrdinalIgnoreCase) ||
-        device.StartsWith("GPU.", StringComparison.OrdinalIgnoreCase);
-
-    private static bool IsOpenVinoNpuDevice(string device) =>
-        device.Equals("NPU", StringComparison.OrdinalIgnoreCase) ||
-        device.StartsWith("NPU.", StringComparison.OrdinalIgnoreCase);
-
-    private static string FormatDeviceList(IReadOnlyList<string> devices) =>
-        devices.Count == 0 ? "none" : string.Join(", ", devices);
 
     private static void AddLinuxDriverChecks(ICollection<OpenVinoDiagnosticCheck> checks)
     {

@@ -190,7 +190,7 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
 
         var failures = new List<Exception>();
         await StopRuntimeAsync("LLama", () => llama.StopAsync(cancellationToken), failures).ConfigureAwait(false);
-        await StopRuntimeAsync("OpenVINO", () => openVino.UnloadAsync(cancellationToken), failures).ConfigureAwait(false);
+        await StopRuntimeAsync("OpenVINO", () => ExecuteOpenVinoOperationAsync(() => openVino.UnloadAsync(cancellationToken)), failures).ConfigureAwait(false);
         await StopRuntimeAsync("Python", () => python.StopAsync(cancellationToken), failures).ConfigureAwait(false);
         await StopRuntimeAsync("dotLLM", () => dotLlm.StopAsync(cancellationToken), failures).ConfigureAwait(false);
         await PublishStatusAsync(
@@ -223,7 +223,7 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
 
     public async Task UnloadOpenVinoAsync(CancellationToken cancellationToken = default)
     {
-        await openVino.UnloadAsync(cancellationToken).ConfigureAwait(false);
+        await ExecuteOpenVinoOperationAsync(() => openVino.UnloadAsync(cancellationToken)).ConfigureAwait(false);
         await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
     }
 
@@ -246,7 +246,7 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
     public async Task UnloadAsync(string modelPath, ConfigurationBackend backend, CancellationToken cancellationToken = default)
     {
         if (backend == ConfigurationBackend.OpenVino)
-            await openVino.UnloadAsync(cancellationToken);
+            await ExecuteOpenVinoOperationAsync(() => openVino.UnloadAsync(cancellationToken));
         else if (backend is ConfigurationBackend.Vllm or ConfigurationBackend.Sglang)
             await python.StopAsync(cancellationToken);
         else if (backend == ConfigurationBackend.DotLlm)
@@ -306,13 +306,16 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
     }
 
     private async Task ExecuteOpenVinoLoadAsync(Func<Task> load)
+        => await ExecuteOpenVinoOperationAsync(load).ConfigureAwait(false);
+
+    private async Task ExecuteOpenVinoOperationAsync(Func<Task> operation)
     {
         if (!openVinoLoadGate.TryEnter())
-            throw new InvalidOperationException("An OpenVINO model load is already in progress.");
+            throw new InvalidOperationException("An OpenVINO model operation is already in progress.");
 
         try
         {
-            await load().ConfigureAwait(false);
+            await operation().ConfigureAwait(false);
         }
         finally
         {
