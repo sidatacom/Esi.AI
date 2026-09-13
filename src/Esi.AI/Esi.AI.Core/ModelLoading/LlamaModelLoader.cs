@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using LLama;
 using LLama.Common;
@@ -55,7 +56,7 @@ public sealed class LlamaModelLoader : IDisposable
 
     public ModelLoadStatus GetStatus()
     {
-        var status = Status ?? CreateDiscoveryStatus();
+        var status = Status ?? CreateDiscoveryStatus(configuredBackend);
         return status with { LoadLog = string.Join(Environment.NewLine, loadLog) };
     }
 
@@ -107,9 +108,9 @@ public sealed class LlamaModelLoader : IDisposable
             throw new ArgumentException("The model file must use the .gguf extension.", nameof(modelPath));
         }
 
-        if (gpuLayerCount < 0)
+        if (gpuLayerCount < -1)
         {
-            throw new ArgumentOutOfRangeException(nameof(gpuLayerCount), "GPU layers cannot be negative.");
+            throw new ArgumentOutOfRangeException(nameof(gpuLayerCount), "GPU layers must be -1 (all layers) or greater.");
         }
 
         if (!Enum.IsDefined((LlamaContextSize)contextSize))
@@ -117,8 +118,19 @@ public sealed class LlamaModelLoader : IDisposable
             throw new ArgumentOutOfRangeException(nameof(contextSize), "The context size must be one of the supported values.");
         }
 
+        BackendRuntimePaths.PrependLibraryPath(BackendRuntimePaths.GetLlamaDirectory(backend, applicationDirectory));
         new BackendPrerequisiteProvisioner().EnsureLlamaReady(backend, applicationDirectory);
+        advanced ??= new();
+        if (string.Equals(backend, "SYCL", StringComparison.OrdinalIgnoreCase))
+            BackendRuntimePaths.PrepareSyclRuntimeEnvironment(applicationDirectory);
+        ConfigureSyclDeviceSelector(backend, advanced.Devices);
         ConfigureBackend(backend);
+        if (string.Equals(backend, "SYCL", StringComparison.OrdinalIgnoreCase) && CreateBackendDeviceStatuses(backend).Count == 0)
+        {
+            throw new InvalidOperationException(
+                "The SYCL backend was selected, but no SYCL device is available. Install the matching Intel oneAPI/Level Zero runtime for libggml-sycl.so before loading a SYCL model.");
+        }
+
         while (loadLog.TryDequeue(out _))
         {
         }
@@ -130,13 +142,13 @@ public sealed class LlamaModelLoader : IDisposable
             activeLoadCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             var loadCancellationToken = activeLoadCancellation.Token;
             Progress = 0;
-            advanced ??= new();
+            var backendDevices = ResolveBackendDevices(backend, advanced.Devices);
             var parameters = new ModelParams(Path.GetFullPath(modelPath))
             {
-                GpuLayerCount = gpuLayerCount,
+                GpuLayerCount = string.Equals(backend, "SYCL", StringComparison.OrdinalIgnoreCase) ? -1 : gpuLayerCount,
                 ContextSize = contextSize,
                 SplitMode = GPUSplitMode.Layer,
-                MainGpu = advanced.MainGpu,
+                Devices = backendDevices,
                 SeqMax = advanced.SeqMax,
                 RecurrentRollbackSnapshots = advanced.RecurrentRollbackSnapshots,
                 UseMemorymap = advanced.UseMemorymap,
@@ -250,7 +262,7 @@ public sealed class LlamaModelLoader : IDisposable
             while (loadLog.TryDequeue(out _))
             {
             }
-            Status = CreateDiscoveryStatus();
+            Status = CreateDiscoveryStatus(configuredBackend);
         }
         finally
         {
@@ -271,7 +283,7 @@ public sealed class LlamaModelLoader : IDisposable
             weights = current?.Weights;
             LoadedModelPath = current?.Status.ModelPath;
             Status = current is null
-                ? CreateDiscoveryStatus()
+                ? CreateDiscoveryStatus(configuredBackend)
                 : current.Status with { LoadedModels = CreateLoadedModelStatuses() };
         }
         finally
@@ -283,19 +295,49 @@ public sealed class LlamaModelLoader : IDisposable
     private static int GetVulkanDeviceIndex(string deviceName) =>
         int.TryParse(deviceName.TrimStart("Vulkan".ToCharArray()), out var index) ? index : int.MaxValue;
 
+    private static IReadOnlyList<string> ResolveBackendDevices(string backend, IReadOnlyList<string>? requestedDevices)
+    {
+        if (requestedDevices is not { Count: > 0 })
+            return [];
+
+        var availableDevices = Enumerable.Range(0, checked((int)NativeApi.ggml_backend_dev_count()))
+            .Select(index => Marshal.PtrToStringAnsi(NativeApi.ggml_backend_dev_name(NativeApi.ggml_backend_dev_get((nuint)index))))
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Select(name => name!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var prefix = backend.Trim().ToUpperInvariant();
+        return requestedDevices
+            .Select(device => ResolveBackendDeviceAlias(prefix, device, availableDevices))
+            .ToArray();
+    }
+
+    private static string ResolveBackendDeviceAlias(string backend, string device, IReadOnlySet<string> availableDevices)
+    {
+        if (availableDevices.Contains(device))
+            return device;
+
+        throw new ArgumentException(
+            $"Backend device '{device}' was not found. Available {backend} devices: {string.Join(", ", availableDevices.Where(name => name.StartsWith(backend, StringComparison.OrdinalIgnoreCase)))}.",
+            nameof(ModelParams.Devices));
+    }
+
     private ModelLoadStatus CreateStatus(string modelPath, string backend, int gpuLayerCount, uint contextSize, ulong modelSize, IReadOnlyDictionary<string, float> deviceWeights, bool isModelLoaded)
     {
         var nativeLog = string.Join(Environment.NewLine, loadLog);
-        var vulkanDevices = MergeVulkanDevices(ParseVulkanDevices(nativeLog), CreateDiscoveryStatus().VulkanDevices);
+        var normalizedBackend = backend.Trim().ToUpperInvariant();
+        var devices = normalizedBackend == "VULKAN"
+            ? MergeDevices(ParseVulkanDevices(nativeLog), CreateDiscoveryStatus(normalizedBackend).Devices)
+            : CreateBackendDeviceStatuses(normalizedBackend);
         var cpuBufferMiB = ParseCpuBufferMiB(nativeLog);
         return new ModelLoadStatus(
             modelPath,
-            backend.Trim().ToUpperInvariant(),
+            normalizedBackend,
             gpuLayerCount,
             contextSize,
             modelSize,
-            vulkanDevices.Count,
-            vulkanDevices,
+            devices.Count,
+            devices,
             cpuBufferMiB,
             nativeLog,
             deviceWeights.OrderBy(device => device.Key, StringComparer.OrdinalIgnoreCase)
@@ -312,12 +354,12 @@ public sealed class LlamaModelLoader : IDisposable
             model.Status.GpuLayerCount,
             model.Status.ContextSize,
             model.Status.ModelSizeInBytes,
-            model.Status.VulkanDevices,
+            model.Status.Devices,
             model.Status.CpuModelBufferMiB)).ToArray();
 
-    private static IReadOnlyList<VulkanDeviceStatus> MergeVulkanDevices(
-        IReadOnlyList<VulkanDeviceStatus> loadedDevices,
-        IReadOnlyList<VulkanDeviceStatus> discoveredDevices)
+    private static IReadOnlyList<DeviceStatus> MergeDevices(
+        IReadOnlyList<DeviceStatus> loadedDevices,
+        IReadOnlyList<DeviceStatus> discoveredDevices)
     {
         return discoveredDevices
             .Concat(loadedDevices)
@@ -328,7 +370,7 @@ public sealed class LlamaModelLoader : IDisposable
                 var loaded = group.Last();
                 return loaded with
                 {
-                    Description = loaded.Description ?? discovered?.Description,
+                    DeviceCaption = loaded.DeviceCaption ?? discovered?.DeviceCaption,
                     Vendor = loaded.Vendor ?? discovered?.Vendor,
                     Driver = loaded.Driver ?? discovered?.Driver,
                     MemoryCapacityMiB = loaded.MemoryCapacityMiB ?? discovered?.MemoryCapacityMiB
@@ -338,7 +380,39 @@ public sealed class LlamaModelLoader : IDisposable
             .ToArray();
     }
 
-    private static IReadOnlyList<VulkanDeviceStatus> ParseVulkanDevices(string nativeLog)
+    private static IReadOnlyList<DeviceStatus> CreateBackendDeviceStatuses(string backend)
+    {
+        var prefix = backend.Trim().ToUpperInvariant() switch
+        {
+            "VULKAN" => "VULKAN",
+            "CUDA" => "CUDA",
+            "SYCL" => "SYCL",
+            _ => string.Empty
+        };
+        if (prefix.Length == 0)
+            return [];
+
+        var devices = new List<DeviceStatus>();
+        for (nuint index = 0; index < NativeApi.ggml_backend_dev_count(); index++)
+        {
+            var device = NativeApi.ggml_backend_dev_get(index);
+            var name = Marshal.PtrToStringAnsi(NativeApi.ggml_backend_dev_name(device));
+            if (string.IsNullOrWhiteSpace(name) || !name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            devices.Add(new DeviceStatus(
+                name,
+                Marshal.PtrToStringAnsi(NativeApi.ggml_backend_dev_description(device)),
+                0,
+                null,
+                prefix is "CUDA" ? "NVIDIA" : "Intel",
+                $"{prefix} native runtime"));
+        }
+
+        return devices;
+    }
+
+    private static IReadOnlyList<DeviceStatus> ParseVulkanDevices(string nativeLog)
     {
         var devices = new Dictionary<string, (int Layers, double? MemoryMiB, string? Description)>();
         foreach (Match match in Regex.Matches(nativeLog, @"(?:found|using)\s+(?:Vulkan\d+\s*:\s*)?(.+?)(?=\r?$)", RegexOptions.IgnoreCase | RegexOptions.Multiline))
@@ -367,7 +441,7 @@ public sealed class LlamaModelLoader : IDisposable
 
         return devices
             .OrderBy(item => item.Key, StringComparer.Ordinal)
-            .Select(item => new VulkanDeviceStatus(item.Key, item.Value.Description, item.Value.Layers, item.Value.MemoryMiB))
+            .Select(item => new DeviceStatus(item.Key, item.Value.Description, item.Value.Layers, item.Value.MemoryMiB))
             .ToArray();
     }
 
@@ -377,37 +451,48 @@ public sealed class LlamaModelLoader : IDisposable
         return match.Success ? double.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture) : null;
     }
 
-    private static ModelLoadStatus CreateDiscoveryStatus()
+    private static ModelLoadStatus CreateDiscoveryStatus(string? backend = null)
     {
-        var devices = new List<VulkanDeviceStatus>();
-        try
+        var normalizedBackend = string.IsNullOrWhiteSpace(backend) ? "VULKAN" : backend.Trim().ToUpperInvariant();
+        var devices = new List<DeviceStatus>();
+        if (normalizedBackend == "VULKAN")
         {
-            using var process = Process.Start(new ProcessStartInfo
+            if (FindExecutable("vulkaninfo") is null)
+                return CreateDiscoveryStatusWithoutExternalProbe(normalizedBackend, devices);
+
+            try
             {
-                FileName = "vulkaninfo",
-                Arguments = string.Empty,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-            if (process is not null)
+                using var process = Process.Start(new ProcessStartInfo
+                {
+                    FileName = "vulkaninfo",
+                    Arguments = string.Empty,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                });
+                if (process is not null)
+                {
+                    var outputTask = process.StandardOutput.ReadToEndAsync();
+                    var errorTask = process.StandardError.ReadToEndAsync();
+                    process.WaitForExit(5000);
+                    var output = outputTask.GetAwaiter().GetResult();
+                    var error = errorTask.GetAwaiter().GetResult();
+                    devices.AddRange(ParseDiscoveredVulkanDevices(output + Environment.NewLine + error));
+                }
+            }
+            catch (Exception)
             {
-                var outputTask = process.StandardOutput.ReadToEndAsync();
-                var errorTask = process.StandardError.ReadToEndAsync();
-                process.WaitForExit(5000);
-                var output = outputTask.GetAwaiter().GetResult();
-                var error = errorTask.GetAwaiter().GetResult();
-                devices.AddRange(ParseDiscoveredVulkanDevices(output + Environment.NewLine + error));
             }
         }
-        catch (Exception)
+        else
         {
+            devices.AddRange(CreateBackendDeviceStatuses(normalizedBackend));
         }
 
         return new ModelLoadStatus(
             null,
-            "VULKAN",
+            normalizedBackend,
             0,
             (uint)LlamaContextSize.Context128K,
             0,
@@ -420,9 +505,46 @@ public sealed class LlamaModelLoader : IDisposable
             []);
     }
 
-    private static IReadOnlyList<VulkanDeviceStatus> ParseDiscoveredVulkanDevices(string output)
+    private static ModelLoadStatus CreateDiscoveryStatusWithoutExternalProbe(string backend, IReadOnlyList<DeviceStatus> devices)
     {
-        var devices = new List<VulkanDeviceStatus>();
+        return new ModelLoadStatus(
+            null,
+            backend,
+            0,
+            (uint)LlamaContextSize.Context128K,
+            0,
+            devices.Count,
+            devices,
+            null,
+            string.Empty,
+            new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase),
+            false,
+            []);
+    }
+
+    private static string? FindExecutable(string command)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        return path.Split(Path.PathSeparator)
+            .Select(directory => Path.Combine(directory, command))
+            .FirstOrDefault(IsExecutable);
+    }
+
+    private static bool IsExecutable(string path)
+    {
+        if (!File.Exists(path))
+            return false;
+
+        return !OperatingSystem.IsLinux()
+            || (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
+    }
+
+    private static IReadOnlyList<DeviceStatus> ParseDiscoveredVulkanDevices(string output)
+    {
+        var devices = new List<DeviceStatus>();
         foreach (Match match in Regex.Matches(output, @"(?ms)^GPU(?<index>\d+):\s*(?<block>.*?)(?=^GPU\d+:|\z)"))
         {
             var block = match.Groups["block"].Value;
@@ -437,7 +559,7 @@ public sealed class LlamaModelLoader : IDisposable
             var vendor = description.Contains("Intel", StringComparison.OrdinalIgnoreCase)
                 ? "Intel"
                 : description.Contains("NVIDIA", StringComparison.OrdinalIgnoreCase) ? "NVIDIA" : null;
-            devices.Add(new VulkanDeviceStatus(
+            devices.Add(new DeviceStatus(
                 $"Vulkan{match.Groups["index"].Value}",
                 description,
                 0,
@@ -480,6 +602,21 @@ public sealed class LlamaModelLoader : IDisposable
 
         backendConfigured = true;
         configuredBackend = normalizedBackend;
+    }
+
+    private static void ConfigureSyclDeviceSelector(string backend, IReadOnlyList<string>? requestedDevices)
+    {
+        if (!string.Equals(backend, "SYCL", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        var selectors = requestedDevices?
+            .Select(device => Regex.Match(device, @"^SYCL(?<index>\d+)$", RegexOptions.IgnoreCase))
+            .Where(match => match.Success)
+            .Select(match => int.Parse(match.Groups["index"].Value, CultureInfo.InvariantCulture))
+            .ToArray() ?? [];
+        Environment.SetEnvironmentVariable(
+            "ONEAPI_DEVICE_SELECTOR",
+            "level_zero:gpu");
     }
 
     private static bool IsGpuBackend(string backend) =>
@@ -542,7 +679,6 @@ public sealed class LlamaModelLoader : IDisposable
 }
 
 public sealed record LlamaLoadOptions(
-    int MainGpu = 0,
     uint SeqMax = 1,
     uint RecurrentRollbackSnapshots = 0,
     bool UseMemorymap = true,
@@ -566,4 +702,5 @@ public sealed record LlamaLoadOptions(
     float? YarnBetaFast = null,
     float? YarnBetaSlow = null,
     uint? YarnOriginalContext = null,
-    string? MmprojPath = null);
+    string? MmprojPath = null,
+    IReadOnlyList<string>? Devices = null);

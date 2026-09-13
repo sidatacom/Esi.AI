@@ -107,7 +107,7 @@ public sealed class InferenceService(
                         cancellationToken.ThrowIfCancellationRequested();
                         onDelta?.Invoke(delta).GetAwaiter().GetResult();
                     }, images: imageTensors.Length == 0 ? null : imageTensors);
-                    return new GenerationResult(openVinoGeneration.Text, openVinoGeneration.TokenCount, TimeSpan.Zero, openVinoGeneration.TokensPerSecond);
+                    return new GenerationResult(openVinoGeneration.Text, openVinoGeneration.TokenCount, TimeSpan.Zero, openVinoGeneration.TokensPerSecond, openVinoGeneration.PromptTokenCount, "stop", null, openVinoGeneration.TimeToFirstTokenMs, openVinoGeneration.PrefillDurationMs, openVinoGeneration.DecodeDurationMs);
                 }
                 finally
                 {

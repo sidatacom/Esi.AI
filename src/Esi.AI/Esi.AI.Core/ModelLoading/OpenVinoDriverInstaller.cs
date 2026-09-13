@@ -64,6 +64,9 @@ public sealed class OpenVinoDriverInstaller
 
     private static async Task<CommandResult> RunPkexecAsync(IReadOnlyList<string> arguments, CancellationToken cancellationToken)
     {
+        if (FindExecutable("pkexec") is null)
+            return new(-1, string.Empty, string.Empty, "The privileged command 'pkexec' was not found on PATH.");
+
         var startInfo = new ProcessStartInfo
         {
             FileName = "pkexec",
@@ -95,6 +98,9 @@ public sealed class OpenVinoDriverInstaller
 
     private static bool IsPackageAvailable(string package)
     {
+        if (FindExecutable("apt-cache") is null)
+            return false;
+
         var startInfo = new ProcessStartInfo
         {
             FileName = "apt-cache",
@@ -116,6 +122,26 @@ public sealed class OpenVinoDriverInstaller
         return process.ExitCode == 0 && output.Split('\n')
             .Any(line => line.TrimStart().StartsWith("Candidate:", StringComparison.Ordinal) &&
                 !line.Contains("(none)", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? FindExecutable(string command)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        return path.Split(Path.PathSeparator)
+            .Select(directory => Path.Combine(directory, command))
+            .FirstOrDefault(IsExecutable);
+    }
+
+    private static bool IsExecutable(string path)
+    {
+        if (!File.Exists(path))
+            return false;
+
+        return !OperatingSystem.IsLinux()
+            || (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
     }
 
     private static bool IsSupportedUbuntu(out string message)

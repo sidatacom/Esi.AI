@@ -153,6 +153,11 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
   button { background: var(--vscode-button-background); border: 0; color: var(--vscode-button-foreground); cursor: pointer; padding: 6px 9px; width: 100%; }
   button:hover { background: var(--vscode-button-hoverBackground); }
   button.secondary { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); }
+  .tabs { border-bottom: 1px solid var(--vscode-panel-border); display: flex; gap: 2px; margin: 16px -12px 0; padding: 0 12px; }
+  .tab { background: transparent; border-bottom: 2px solid transparent; color: var(--vscode-descriptionForeground); width: auto; }
+  .tab.active { border-bottom-color: var(--vscode-focusBorder); color: var(--vscode-foreground); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
   .status { border-left: 2px solid var(--vscode-testing-iconPassed); display: none; font-size: 12px; margin: 14px 0; padding: 5px 8px; }
   .status.error { border-color: var(--vscode-testing-iconFailed); }
   .hint { font-size: 12px; }
@@ -164,32 +169,43 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
   <p>Lokaler Model Provider für VS Code Chat.</p>
   <div class="status" id="status" role="status" aria-live="polite"></div>
 
-  <h2>Verbindung</h2>
-  <label><span>Base URL</span><input id="base-url" type="url" value="${baseUrl}" spellcheck="false"></label>
-  <button id="save-url" type="button">Base URL speichern</button>
-  <label><span>Request Timeout (ms)</span><input id="timeout" type="number" min="1000" step="1000" value="${timeout}"></label>
-  <button id="save-timeout" type="button">Timeout speichern</button>
+  <div class="tabs" role="tablist" aria-label="Provider-Konfiguration">
+    <button class="tab active" id="connection-tab" role="tab" aria-selected="true" aria-controls="connection-panel" type="button">Verbindung</button>
+    <button class="tab" id="parameters-tab" role="tab" aria-selected="false" aria-controls="parameters-panel" type="button">Parameter</button>
+  </div>
 
-  <h2>Token-Limits</h2>
-  <label><span>Maximale Input-Tokens</span><input id="max-input-tokens" type="number" min="1" step="1" value="${maxInputTokens}"></label>
-  <button id="save-max-input-tokens" type="button">Input-Limit speichern</button>
-  <label><span>Maximale Output-Tokens</span><input id="max-output-tokens" type="number" min="1" step="1" value="${maxOutputTokens}"></label>
-  <button id="save-max-output-tokens" type="button">Output-Limit speichern</button>
+  <section class="tab-panel active" id="connection-panel" role="tabpanel" aria-labelledby="connection-tab">
+    <h2>Verbindung</h2>
+    <label><span>Base URL</span><input id="base-url" type="url" value="${baseUrl}" spellcheck="false"></label>
+    <button id="save-url" type="button">Base URL speichern</button>
 
-  <h2>Logging</h2>
-  <label><span><input id="logging-enabled" type="checkbox" ${loggingEnabled ? "checked" : ""}> Request-Logging aktivieren</span></label>
-  <label><span>Logpfad</span><input id="logging-path" type="text" value="${loggingPath}" spellcheck="false"></label>
-  <button id="save-logging-path" type="button">Logpfad speichern</button>
+    <h2>Logging</h2>
+    <label><span><input id="logging-enabled" type="checkbox" ${loggingEnabled ? "checked" : ""}> Request-Logging aktivieren</span></label>
+    <label><span>Logpfad</span><input id="logging-path" type="text" value="${loggingPath}" spellcheck="false"></label>
+    <button id="save-logging-path" type="button">Logpfad speichern</button>
 
-  <h2>Modelle</h2>
-  <p class="endpoint">GET /models</p>
-  <button id="test-connection" class="secondary" type="button">Verbindung testen</button>
-  <br>
-  <button id="refresh" type="button">Modelle aktualisieren</button>
+    <h2>Modelle</h2>
+    <p class="endpoint">GET /models</p>
+    <button id="test-connection" class="secondary" type="button">Verbindung testen</button>
+    <br>
+    <button id="refresh" type="button">Modelle aktualisieren</button>
 
-  <h2>Sicherheit</h2>
-  <p class="hint">Der API-Key wird ausschließlich im VS-Code SecretStorage verwaltet.</p>
-  <button id="api-key" class="secondary" type="button">API-Key konfigurieren</button>
+    <h2>Sicherheit</h2>
+    <p class="hint">Der API-Key wird ausschließlich im VS-Code SecretStorage verwaltet.</p>
+    <button id="api-key" class="secondary" type="button">API-Key konfigurieren</button>
+  </section>
+
+  <section class="tab-panel" id="parameters-panel" role="tabpanel" aria-labelledby="parameters-tab" hidden>
+    <h2>Request</h2>
+    <label><span>Request Timeout (ms)</span><input id="timeout" type="number" min="1000" step="1000" value="${timeout}"></label>
+    <button id="save-timeout" type="button">Timeout speichern</button>
+
+    <h2>Token-Limits</h2>
+    <label><span>Maximale Input-Tokens</span><input id="max-input-tokens" type="number" min="1" step="1" value="${maxInputTokens}"></label>
+    <button id="save-max-input-tokens" type="button">Input-Limit speichern</button>
+    <label><span>Maximale Output-Tokens</span><input id="max-output-tokens" type="number" min="1" step="1" value="${maxOutputTokens}"></label>
+    <button id="save-max-output-tokens" type="button">Output-Limit speichern</button>
+  </section>
 
   <script nonce="${nonce}">
     const vscode = acquireVsCodeApi();
@@ -199,6 +215,17 @@ export class EsiAiStudioConfigurationViewProvider implements vscode.WebviewViewP
       status.classList.toggle("error", isError);
       status.style.display = "block";
     };
+    document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => {
+      document.querySelectorAll(".tab").forEach(item => {
+        item.classList.toggle("active", item === tab);
+        item.setAttribute("aria-selected", item === tab ? "true" : "false");
+      });
+      document.querySelectorAll(".tab-panel").forEach(panel => {
+        const active = panel.id === tab.getAttribute("aria-controls");
+        panel.classList.toggle("active", active);
+        panel.toggleAttribute("hidden", !active);
+      });
+    }));
     document.getElementById("save-url").addEventListener("click", () => vscode.postMessage({ command: "saveBaseUrl", value: document.getElementById("base-url").value }));
     document.getElementById("save-timeout").addEventListener("click", () => vscode.postMessage({ command: "saveTimeout", value: document.getElementById("timeout").value }));
     document.getElementById("save-max-input-tokens").addEventListener("click", () => vscode.postMessage({ command: "saveMaxInputTokens", value: document.getElementById("max-input-tokens").value }));

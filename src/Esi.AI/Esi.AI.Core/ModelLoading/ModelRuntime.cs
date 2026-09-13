@@ -111,6 +111,13 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         return llamaStatus with { LoadedModels = loadedModels };
     }
 
+    /// <summary>Reads the LLama status without allowing another backend to replace the response.</summary>
+    public ModelLoadStatus LoadedLlamaModel_Read()
+    {
+        var aggregateStatus = LoadedModel_Read();
+        return llama.GetStatus() with { LoadedModels = aggregateStatus.LoadedModels };
+    }
+
     public OpenVinoModelLoadStatus GetOpenVinoStatus() => openVino.GetStatus();
 
     /// <summary>Returns the current lifecycle state for all model loading operations.</summary>
@@ -363,7 +370,8 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
             [],
             null,
             GetPendingLoadLog(pending.Backend, llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus),
-            true)).ToArray();
+            true,
+            false)).ToArray();
 
     private static string GetPendingLoadLog(
         ConfigurationBackend backend,
@@ -395,10 +403,11 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
             0,
             modelSize,
             status.VramUsageMiB is double vramUsageMiB && !string.IsNullOrWhiteSpace(status.Device)
-                ? [new VulkanDeviceStatus(status.Device, "OpenVINO", 0, vramUsageMiB, "Intel", "OpenVINO")]
+                ? [new DeviceStatus(status.Device, "OpenVINO", 0, vramUsageMiB, "Intel", "OpenVINO", status.VramTotalMiB)]
                 : [],
             null,
-            status.LoadLog)];
+            status.LoadLog,
+            IsModelLoaded: true)];
     }
 
     private sealed record PendingModel(string ModelPath, ConfigurationBackend Backend, string Runtime);

@@ -16,6 +16,7 @@ namespace Esi.AI.Studio.Services;
 
 public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCatalog, IHuggingFaceCatalog, IModelDownloadManager, IAsyncDisposable
 {
+    private static readonly JsonSerializerOptions SettingsJsonOptions = new(JsonSerializerDefaults.Web);
     private readonly HttpClient httpClient;
     private readonly IHubContext<DataHub> hubContext;
     private readonly IDbContextFactory<ApplicationDbContext> dbContextFactory;
@@ -35,14 +36,13 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
         HttpClient httpClient,
         IHubContext<DataHub> hubContext,
         IDbContextFactory<ApplicationDbContext> dbContextFactory,
-        IOptions<ModelLibraryOptions> options,
         ILocalModelScanner? localModelScanner = null)
     {
         this.httpClient = httpClient;
         this.hubContext = hubContext;
         this.dbContextFactory = dbContextFactory;
         this.localModelScanner = localModelScanner ?? new LocalModelScanner();
-        this.options = options.Value;
+        this.options = ReadPersistedOptions(dbContextFactory, new ModelLibraryOptions());
         downloadSlots = new(Math.Max(1, this.options.MaxParallelDownloads));
         fileDownloadSlots = new(Math.Max(1, this.options.MaxParallelFileDownloads));
         queueWorker = ProcessDownloadQueueAsync(queueCancellation.Token);
@@ -874,6 +874,32 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
         if (directory.StartsWith("~/", StringComparison.Ordinal))
             directory = Path.Combine(userProfile, directory[2..]);
         return Path.GetFullPath(Environment.ExpandEnvironmentVariables(directory));
+    }
+
+    private static ModelLibraryOptions ReadPersistedOptions(
+        IDbContextFactory<ApplicationDbContext> dbContextFactory,
+        ModelLibraryOptions configuredOptions)
+    {
+        using var db = dbContextFactory.CreateDbContext();
+        var json = db.ApplicationSettings.AsNoTracking()
+            .Select(settings => settings.InferenceTimeoutsJson)
+            .SingleOrDefault();
+        if (string.IsNullOrWhiteSpace(json))
+            return configuredOptions;
+
+        var settings = JsonSerializer.Deserialize<ApplicationSettings>(json, SettingsJsonOptions);
+        var persisted = settings?.ModelLibrary;
+        if (persisted is null)
+            return configuredOptions;
+
+        return new ModelLibraryOptions
+        {
+            Directories = persisted.Directories?.ToList() ?? [],
+            SearchLimit = persisted.SearchLimit,
+            MaxParallelDownloads = persisted.MaxParallelDownloads,
+            MaxParallelFileDownloads = persisted.MaxParallelFileDownloads,
+            HuggingFaceToken = configuredOptions.HuggingFaceToken
+        };
     }
 }
 

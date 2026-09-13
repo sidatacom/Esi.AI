@@ -1,6 +1,16 @@
 # Backend Runtime Gallery
 
-Esi.AI Studio can install verified LLamaSharp native runtime archives through the existing backend requirement page. Configure the gallery under `BackendRuntime` in `appsettings.Development.json`, user secrets, or environment variables.
+Esi.AI Studio keeps each backend runtime isolated. A backend runtime is provided either by a verified NuGet package or by a backend-owned runtime folder. Configure installable native packages under `BackendRuntime` in `appsettings.Development.json`, user secrets, or environment variables.
+
+| Backend | Runtime source | Isolated location |
+| --- | --- | --- |
+| LLama | LLamaSharp NuGet package or verified native package | `runtimes/linux-x64/native/<route>/` |
+| OpenVINO | OpenVINO and GenAI runtime NuGet packages | `runtimes/linux-x64/native/openvino/` |
+| vLLM | Python packages | `~/.venvs/esi-ai-vllm-*` |
+| SGLang | Python packages | `~/.venvs/esi-ai-sglang-*` |
+| dotLLM | dotLLM native runtime | dotLLM-owned runtime folder |
+
+The NuGet package source is `.local-nuget` during development and NuGet.org after publication. Python environments are deliberately folders rather than NuGet packages because their dependencies are installed and launched by the Python backend provisioner.
 
 The gallery catalog is JSON and contains one package per operating-system/runtime combination:
 
@@ -88,5 +98,21 @@ For this fork, the reproducible local command is:
 git -C origins/sidatacom/LLamaSharp submodule update --init --recursive
 origins/sidatacom/LLamaSharp/scripts/build-sycl-runtime.sh
 ```
+
+The SYCL package must contain the transitive Intel oneAPI shared libraries required by `libggml-sycl.so`, including `libsycl`, oneMKL, oneDNN, and the Intel compiler runtime libraries. The Studio requirements page checks these dependencies with the Linux dynamic linker; the presence of only `libllama.so`, `libggml.so`, `libggml-base.so`, `libggml-sycl.so`, and `libmtmd.so` is not sufficient.
+
+The source of those native files is the LLamaSharp SYCL NuGet package. Until the packages are published on NuGet.org, build them from the fork and place them in the repository-local feed configured by `NuGet.config`:
+
+```bash
+mkdir -p .local-nuget
+cd origins/sidatacom/LLamaSharp/LLama/runtimes/build
+nuget pack LLamaSharp.Backend.Cpu.nuspec -Version 0.0.0-local -OutputDirectory ../../../../../../.local-nuget
+nuget pack LLamaSharp.Backend.Sycl.Linux.nuspec -Version 0.0.0-local -OutputDirectory ../../../../../../.local-nuget
+nuget pack LLamaSharp.Backend.Sycl.nuspec -Version 0.0.0-local -OutputDirectory ../../../../../../.local-nuget
+```
+
+The Linux SYCL NuGet package includes every `.so` file staged under `LLama/runtimes/deps/sycl`. The application then restores `LLamaSharp.Backend.Sycl` from `.local-nuget`; the package supplies the backend libraries and their runtime dependencies. Replace this local feed with NuGet.org after the packages are officially published.
+
+When the local package is configured and the main SYCL libraries are already present but these dependencies are missing, the requirements page exposes an `Install` action. That action copies the additional `.so` files from `localPath` into the isolated SYCL runtime directory. A restart is required before loading the model. The `icpx`, `sycl-ls`, and `ze_info` checks are informational build-tool checks and are not end-user runtime installation requirements.
 
 It builds inside `intel/oneapi-basekit:2025.3.0-0-devel-ubuntu22.04` and stages `libllama.so`, `libggml.so`, `libggml-base.so`, `libggml-sycl.so`, and `libmtmd.so` under `origins/sidatacom/LLamaSharp/LLama/runtimes/deps/sycl`. The host needs Docker; `icpx`, `icx`, CMake, and Ninja are provided by the container. The Intel Level Zero driver remains a runtime prerequisite on the host.

@@ -194,6 +194,8 @@ h2 {
 .profile-button:disabled { cursor: not-allowed; opacity: .45; }
 .profile-button-primary { border-color: #087f8c; background: #087f8c; color: #fff; }
 .profile-button-primary:hover { background: #056873; color: #fff; }
+.profile-button-danger { border-color: #c05640; color: #9b2c1f; }
+.profile-button-danger:hover { border-color: #9b2c1f; background: #fff5f2; color: #7b2118; }
 .profile-create-row { margin: -0.35rem 0 1.25rem; }
 .profile-create-row .form-label { display: block; margin-bottom: .4rem; }
 .profile-create-fields .form-control { flex: 1 1 auto; min-width: 0; }
@@ -229,6 +231,12 @@ h2 {
 .loaded-model-devices { display: flex; flex-wrap: wrap; gap: .35rem .75rem; margin-top: .55rem; color: #486581; font-size: .72rem; }
 .loaded-model-devices span { white-space: nowrap; }
 .loaded-model-devices b { color: #102a43; }
+.gpu-memory-meter { margin-top: .8rem; padding-top: .7rem; border-top: 1px solid #e9eef2; }
+.gpu-memory-meter-heading { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; color: #627d98; font-size: .72rem; }
+.gpu-memory-meter-heading strong { color: #102a43; font-size: .76rem; font-weight: 800; white-space: nowrap; }
+.gpu-memory-meter-track { height: .55rem; margin-top: .4rem; overflow: hidden; border-radius: 999px; background: #e6f0f7; }
+.gpu-memory-meter-track span { display: block; height: 100%; min-width: 1px; border-radius: inherit; background: #087f8c; transition: width .35s ease; }
+.gpu-memory-meter small { display: block; margin-top: .35rem; color: #829ab1; font-size: .66rem; }
 .runtime-log-details { margin-top: .7rem; }
 .runtime-log-details summary { color: #486581; cursor: pointer; font-size: .75rem; font-weight: 700; }
 .runtime-log-details .log-output { margin-top: .55rem; width: 100%; }

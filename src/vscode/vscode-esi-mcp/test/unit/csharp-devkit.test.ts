@@ -96,14 +96,14 @@ describe("EsiMCP C# Dev Kit tools", () => {
   });
 
   it("returns buffered Debug Console diagnostics for the active session", async () => {
-    const getDebugConsoleDiagnostics = vi.fn(() => ({ sessionId: "session-123", bufferedCharacters: 256, readinessStringSeen: true }));
+    const getDebugConsoleDiagnostics = vi.fn(() => ({ sessionId: "session-123", bufferedCharacters: 256, readinessStringSeen: true, output: "debug output", lastLine: "debug output" }));
     const result = await CSHARP_DEVKIT_TOOLS[1].handler(
       { commandId: "csdevkit.debug.output.diagnostics", arguments: [] },
       { getActiveSessionId: vi.fn(() => "session-123") } as never,
       { getDebugConsoleDiagnostics } as never,
     );
 
-    expect(JSON.parse(result.content[0].text)).toEqual({ sessionId: "session-123", bufferedCharacters: 256, readinessStringSeen: true });
+    expect(JSON.parse(result.content[0].text)).toEqual({ sessionId: "session-123", bufferedCharacters: 256, readinessStringSeen: true, output: "debug output", lastLine: "debug output" });
     expect(getDebugConsoleDiagnostics).toHaveBeenCalledWith("session-123");
   });
 

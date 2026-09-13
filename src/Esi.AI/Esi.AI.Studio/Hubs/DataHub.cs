@@ -36,6 +36,18 @@ public sealed class DataHub(
         await Clients.All.SendAsync("ApplicationSettings_Update", updated, Context.ConnectionAborted);
     }
 
+    public Task<BackendRuntimeOptions> BackendRuntimePackage_Read() =>
+        dataService.BackendRuntimePackage_ReadAsync(Context.ConnectionAborted);
+
+    public Task<BackendRuntimeOptions> BackendRuntimePackage_Create(BackendRuntimeOptions options) =>
+        dataService.BackendRuntimePackage_CreateAsync(options, Context.ConnectionAborted);
+
+    public Task<BackendRuntimeOptions> BackendRuntimePackage_Update(BackendRuntimeOptions options) =>
+        dataService.BackendRuntimePackage_UpdateAsync(options, Context.ConnectionAborted);
+
+    public Task BackendRuntimePackage_Delete(string packageId) =>
+        dataService.BackendRuntimePackage_DeleteAsync(packageId, Context.ConnectionAborted);
+
     public Task ModelSettings_Update(ModelSettings settings) => dataService.ModelSettings_UpdateAsync(settings, Context.ConnectionAborted);
 
     public Task<IReadOnlyList<Model>> Model_Read() => dataService.Model_ReadAsync(Context.ConnectionAborted);
@@ -86,13 +98,17 @@ public sealed class DataHub(
     public Task<ModelLoadStatus> UnloadModelByPathForBackend(string modelPath, ConfigurationBackend backend) =>
         dataService.UnloadModelAsync(modelPath, backend, Context.ConnectionAborted);
 
-    public OpenVinoDiagnosticsDto GetOpenVinoDiagnostics() => backendDiagnostics.GetOpenVinoDiagnostics();
+    public Task<OpenVinoDiagnosticsDto> GetOpenVinoDiagnostics() =>
+        backendDiagnostics.GetOpenVinoDiagnosticsAsync(Context.ConnectionAborted);
 
     public Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisites(ConfigurationBackend backend, string pythonExecutable, IReadOnlyList<string>? devices) =>
         dataService.GetBackendPrerequisitesAsync(backend, pythonExecutable, Context.ConnectionAborted, devices);
 
     public Task<BackendRequirementState> GetBackendRequirementState() =>
         Task.FromResult(requirementMonitor.Current);
+
+    public Task<BackendRequirementState> RefreshBackendRequirementState() =>
+        dataService.RefreshBackendRequirementStateAsync(Context.ConnectionAborted);
 
     public Task<IReadOnlyList<BackendRuntimeStatus>> BackendRuntime_Read() =>
         dataService.BackendRuntime_ReadAsync(Context.ConnectionAborted);

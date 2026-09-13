@@ -47,26 +47,39 @@
         </div>
     </section>
 
-    <section class="settings-panel" aria-labelledby="openvino-sources-heading">
+    <section class="settings-panel" aria-labelledby="runtime-sources-heading">
         <div class="section-heading">
             <div>
-                <p class="eyebrow">OPENVINO RUNTIME</p>
-                <h2 id="openvino-sources-heading">Paketquellen</h2>
+                <p class="eyebrow">BACKEND RUNTIMES</p>
+                <h2 id="runtime-sources-heading">Runtime-Quellen</h2>
             </div>
         </div>
-        <p class="settings-note">Die .NET-Pakete werden aus der versionierten Repository-Konfiguration wiederhergestellt. Das Ubuntu-26.04-Archiv ist die native OpenVINO-Quelle für eine manuelle Runtime-Installation.</p>
+        <p class="settings-note">Jedes Backend verwendet eine isolierte Runtime-Quelle. Native Backends werden über NuGet-Pakete oder den zugehörigen Runtime-Ordner verteilt; Python-Backends verwenden eine eigene venv.</p>
+        <div class="runtime-options">
+            <label class="field-group"><span>Katalog-URL</span><input @bind="runtimeOptions.CatalogUrl" /></label>
+            <label class="field-group"><span>Installationsordner</span><input @bind="runtimeOptions.InstallationDirectory" /></label>
+            <label class="checkbox-group"><input type="checkbox" @bind="runtimeOptions.AllowLocalPackages" /> Lokale Entwicklungspakete erlauben</label>
+        </div>
         <div class="source-list">
-            <div class="source-row">
-                <strong>NuGet-Pakete</strong>
-                <a href="https://api.nuget.org/v3/index.json" target="_blank" rel="noopener noreferrer">nuget.org</a>
-                <span>OpenVINO.runtime.ubuntu.24-x86_64 und JYPPX.OpenVINO.GenAI.runtime.ubuntu.24-x86_64, Version 2026.3.1</span>
-            </div>
-            <div class="source-row">
-                <strong>Ubuntu-26.04-Archiv</strong>
-                <a href="https://storage.openvinotoolkit.org/repositories/openvino/packages/2026.3.1/linux/" target="_blank" rel="noopener noreferrer">OpenVINO 2026.3.1 Linux archives</a>
-                <span>Für den manuellen Download der x86_64-Binaries `openvino_toolkit_ubuntu26_2026.3.1...tgz`.</span>
-            </div>
+            @foreach (var package in runtimeOptions.Packages)
+            {
+                <div class="source-row">
+                    <div class="source-row-header"><strong>@package.Id</strong><button class="secondary-button" type="button" @onclick="() => RemovePackage(package)">Entfernen</button></div>
+                    <div class="package-grid">
+                        <label class="field-group"><span>Backend</span><select @bind="package.Backend"><option>Llama</option><option>OpenVINO</option><option>vLLM</option><option>SGLang</option><option>dotLLM</option></select></label>
+                        <label class="field-group"><span>Route</span><input @bind="package.Route" /></label>
+                        <label class="field-group"><span>RID</span><input @bind="package.RuntimeIdentifier" /></label>
+                        <label class="field-group"><span>Version</span><input @bind="package.Version" /></label>
+                        <label class="field-group field-wide"><span>Archiv-URL</span><input @bind="package.ArchiveUrl" /></label>
+                        <label class="field-group field-wide"><span>Lokaler Pfad</span><input @bind="package.LocalPath" /></label>
+                        <label class="field-group field-wide"><span>Erforderliche Dateien, komma-getrennt</span><input @bind="package.RequiredFilesText" /></label>
+                        <label class="field-group field-wide"><span>Treiberanforderung</span><input @bind="package.DriverRequirement" /></label>
+                        <label class="checkbox-group"><input type="checkbox" @bind="package.RequiresRestart" /> Neustart erforderlich</label>
+                    </div>
+                </div>
+            }
         </div>
+        <button class="secondary-button" type="button" @onclick="AddPackage">Paket hinzufügen</button>
     </section>
 </div>
 
@@ -83,6 +96,11 @@
     .source-row { display: grid; gap: .3rem; padding: .85rem 0; border-top: 1px solid #ebe7df; }
     .source-row a { color: #176b5b; font-weight: 700; overflow-wrap: anywhere; }
     .source-row span { color: #5e625f; font-size: .9rem; }
+    .runtime-options, .package-grid { display: grid; gap: .75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: .75rem; }
+    .field-wide { grid-column: 1 / -1; }
+    .source-row-header { display: flex; justify-content: space-between; gap: 1rem; align-items: center; }
+    .checkbox-group { display: flex; align-items: center; gap: .5rem; font-weight: 700; }
+    .secondary-button { border: 1px solid #176b5b; background: transparent; color: #176b5b; padding: .55rem .8rem; font: inherit; font-weight: 700; }
     .backend-timeout-row { display: grid; grid-template-columns: 7rem repeat(3, minmax(0, 1fr)); align-items: end; gap: 1rem; padding: .85rem 0; border-top: 1px solid #ebe7df; }
     .field-group { display: grid; gap: .4rem; color: #313633; font-weight: 700; }
     .field-group input { width: 100%; border: 1px solid #c9c4bb; padding: .7rem; font: inherit; }
@@ -92,6 +110,7 @@
 @code {
     private readonly SettingsForm form = new();
     private bool isSaving;
+    private BackendRuntimeForm runtimeOptions = new();
     private string? message;
     private string? errorMessage;
 
@@ -105,7 +124,11 @@
     {
         try
         {
-            Apply(await DataService.ApplicationSettings_ReadAsync());
+            var settingsTask = DataService.ApplicationSettings_ReadAsync();
+            var runtimeTask = DataService.BackendRuntimePackage_ReadAsync();
+            await Task.WhenAll(settingsTask, runtimeTask);
+            Apply(await settingsTask);
+            runtimeOptions.Apply(await runtimeTask);
         }
         catch (Exception exception)
         {
@@ -121,6 +144,7 @@
         try
         {
             Apply(await DataService.ApplicationSettings_UpdateAsync(form.ToContract()));
+            runtimeOptions.Apply(await DataService.BackendRuntimePackage_UpdateAsync(runtimeOptions.ToContract()));
             message = "Settings gespeichert.";
         }
         catch (Exception exception)
@@ -143,6 +167,10 @@
     {
         form.Apply(settings);
     }
+
+    private void AddPackage() => runtimeOptions.Packages.Add(new RuntimePackageForm());
+
+    private void RemovePackage(RuntimePackageForm package) => runtimeOptions.Packages.Remove(package);
 
     public ValueTask DisposeAsync()
     {
@@ -185,5 +213,59 @@
         }
 
         public InferenceTimeoutSettings ToContract() => new(Backend, BaseSeconds, SecondsPerTool, SecondsPerPrefillToken);
+    }
+
+    private sealed class BackendRuntimeForm
+    {
+        public string? CatalogUrl { get; set; }
+        public string? InstallationDirectory { get; set; }
+        public bool AllowLocalPackages { get; set; }
+        public List<RuntimePackageForm> Packages { get; } = [];
+
+        public void Apply(BackendRuntimeOptions options)
+        {
+            CatalogUrl = options.CatalogUrl;
+            InstallationDirectory = options.InstallationDirectory;
+            AllowLocalPackages = options.AllowLocalPackages;
+            Packages.Clear();
+            Packages.AddRange(options.Packages.Select(RuntimePackageForm.FromContract));
+        }
+
+        public BackendRuntimeOptions ToContract() => new()
+        {
+            CatalogUrl = CatalogUrl,
+            InstallationDirectory = InstallationDirectory,
+            AllowLocalPackages = AllowLocalPackages,
+            Packages = Packages.Select(package => package.ToContract()).ToList()
+        };
+    }
+
+    private sealed class RuntimePackageForm
+    {
+        public string Id { get; set; } = "new-runtime-package";
+        public string Backend { get; set; } = nameof(ConfigurationBackend.Llama);
+        public string Route { get; set; } = "sycl";
+        public string RuntimeIdentifier { get; set; } = "linux-x64";
+        public string Version { get; set; } = "1.0.0";
+        public string ArchiveUrl { get; set; } = string.Empty;
+        public string Sha256 { get; set; } = string.Empty;
+        public string RequiredFilesText { get; set; } = string.Empty;
+        public string DriverRequirement { get; set; } = string.Empty;
+        public bool RequiresRestart { get; set; } = true;
+        public string? LocalPath { get; set; }
+
+        public static RuntimePackageForm FromContract(BackendRuntimePackage package) => new()
+        {
+            Id = package.Id, Backend = package.Backend.ToString(), Route = package.Route,
+            RuntimeIdentifier = package.RuntimeIdentifier, Version = package.Version,
+            ArchiveUrl = package.ArchiveUrl, Sha256 = package.Sha256,
+            RequiredFilesText = string.Join(", ", package.RequiredFiles), DriverRequirement = package.DriverRequirement,
+            RequiresRestart = package.RequiresRestart, LocalPath = package.LocalPath
+        };
+
+        public BackendRuntimePackage ToContract() => new(
+            Id.Trim(), Enum.Parse<ConfigurationBackend>(Backend, ignoreCase: true), Route.Trim(), RuntimeIdentifier.Trim(),
+            Version.Trim(), ArchiveUrl.Trim(), Sha256.Trim(), RequiredFilesText.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            DriverRequirement.Trim(), RequiresRestart, string.IsNullOrWhiteSpace(LocalPath) ? null : LocalPath.Trim());
     }
 }

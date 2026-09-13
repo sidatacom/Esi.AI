@@ -6,42 +6,19 @@ namespace Esi.AI.Studio.Services;
 /// <summary>Application-facing diagnostics and repair operations for backend requirements.</summary>
 public interface IBackendDiagnosticsService
 {
-    OpenVinoDiagnosticsDto GetOpenVinoDiagnostics();
+    Task<OpenVinoDiagnosticsDto> GetOpenVinoDiagnosticsAsync(CancellationToken cancellationToken = default);
 
     Task<OpenVinoSolveResultDto> SolveOpenVinoDiagnosticAsync(string checkId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Maps backend diagnostic infrastructure into transport-independent application DTOs.</summary>
 public sealed class BackendDiagnosticsService(
-    OpenVinoDiagnosticsService openVinoDiagnostics,
+    BackendSandboxBroker sandbox,
     OpenVinoDriverInstaller openVinoInstaller) : IBackendDiagnosticsService
 {
     /// <inheritdoc />
-    public OpenVinoDiagnosticsDto GetOpenVinoDiagnostics()
-    {
-        var result = openVinoDiagnostics.Diagnose();
-        return new OpenVinoDiagnosticsDto
-        {
-            IsGpuReady = result.IsGpuReady,
-            IsNpuReady = result.IsNpuReady,
-            Devices = result.Devices.Select(device => new OpenVinoDeviceDto
-            {
-                Id = device.Id,
-                Name = device.Name,
-                IsCompatible = device.IsCompatible,
-                Detail = device.Detail
-            }).ToArray(),
-            Checks = result.Checks.Select(check => new OpenVinoDiagnosticCheckDto
-            {
-                Name = check.Name,
-                Id = check.Id,
-                IsAvailable = check.IsAvailable,
-                Detail = check.Detail,
-                CanSolve = check.CanSolve
-            }).ToArray(),
-            Error = result.Error
-        };
-    }
+    public Task<OpenVinoDiagnosticsDto> GetOpenVinoDiagnosticsAsync(CancellationToken cancellationToken = default) =>
+        sandbox.DiagnoseOpenVinoAsync(cancellationToken);
 
     /// <inheritdoc />
     public async Task<OpenVinoSolveResultDto> SolveOpenVinoDiagnosticAsync(string checkId, CancellationToken cancellationToken = default)

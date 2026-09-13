@@ -13,6 +13,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Studio.Contracts", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Models", "Esi.AI\Esi.AI.Models\Esi.AI.Models.csproj", "{8D0BD96D-96CC-4BEA-8B19-2C12AF3FB9CA}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.BackendWorker", "Esi.AI\Esi.AI.BackendWorker\Esi.AI.BackendWorker.csproj", "{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -71,6 +73,18 @@ Global
 		{8D0BD96D-96CC-4BEA-8B19-2C12AF3FB9CA}.Release|x64.Build.0 = Release|Any CPU
 		{8D0BD96D-96CC-4BEA-8B19-2C12AF3FB9CA}.Release|x86.ActiveCfg = Release|Any CPU
 		{8D0BD96D-96CC-4BEA-8B19-2C12AF3FB9CA}.Release|x86.Build.0 = Release|Any CPU
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}.Debug|x64.Build.0 = Debug|Any CPU
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}.Debug|x86.Build.0 = Debug|Any CPU
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}.Release|x64.ActiveCfg = Release|Any CPU
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}.Release|x64.Build.0 = Release|Any CPU
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}.Release|x86.ActiveCfg = Release|Any CPU
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -78,5 +92,6 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{1D0884E8-8563-43EE-B3A5-82A2EECB5C57} = {060E8EC9-F888-9AFF-32C7-05637CDAD865}
 		{8D0BD96D-96CC-4BEA-8B19-2C12AF3FB9CA} = {060E8EC9-F888-9AFF-32C7-05637CDAD865}
+		{C45C1D48-1C7B-4C1A-9D5C-7D7E8B6D6F44} = {060E8EC9-F888-9AFF-32C7-05637CDAD865}
 	EndGlobalSection
 EndGlobal

@@ -7,5 +7,7 @@ public interface IBackendRequirementState
 {
     BackendRequirementState Current { get; }
 
+    Task<BackendRequirementState> RefreshAsync(CancellationToken cancellationToken = default);
+
     void RequestRefresh();
 }

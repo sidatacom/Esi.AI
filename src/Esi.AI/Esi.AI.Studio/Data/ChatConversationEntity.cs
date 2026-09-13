@@ -20,5 +20,8 @@ public sealed class ChatMessageEntity
     public string? Backend { get; set; }
     public int? TokenCount { get; set; }
     public double? TokensPerSecond { get; set; }
+    public double? TimeToFirstTokenMs { get; set; }
+    public double? PrefillDurationMs { get; set; }
+    public double? DecodeDurationMs { get; set; }
     public DateTime CreatedAtUtc { get; set; }
 }

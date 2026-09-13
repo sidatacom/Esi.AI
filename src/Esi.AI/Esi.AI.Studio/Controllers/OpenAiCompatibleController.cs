@@ -532,7 +532,7 @@ public sealed class OpenAiCompatibleController(
             GpuLayerCount = loadedModel.GpuLayerCount,
             ContextSize = loadedModel.ContextSize,
             ModelSizeInBytes = loadedModel.ModelSizeInBytes,
-            VulkanDevices = loadedModel.VulkanDevices,
+            Devices = loadedModel.Devices,
             CpuModelBufferMiB = loadedModel.CpuModelBufferMiB,
             LoadLog = loadedModel.LoadLog,
             IsModelLoaded = !loadedModel.IsLoading
@@ -586,7 +586,7 @@ public sealed class OpenAiCompatibleController(
         int? totalTokens = result.PromptTokenCount is int promptTokens
             ? promptTokens + result.TokenCount
             : null;
-        return new OpenAiUsage(result.PromptTokenCount, result.TokenCount, totalTokens, result.TokensPerSecond);
+        return new OpenAiUsage(result.PromptTokenCount, result.TokenCount, totalTokens, result.TokensPerSecond, result.TimeToFirstTokenMs, result.PrefillDurationMs, result.DecodeDurationMs);
     }
 
     private static OpenAiChatCompletionChunk CreateChunk(
@@ -680,6 +680,9 @@ public sealed class OpenAiCompatibleController(
                 DurationMilliseconds = result.Duration.TotalMilliseconds,
                 result.TokensPerSecond,
                 result.PromptTokenCount,
+                result.TimeToFirstTokenMs,
+                result.PrefillDurationMs,
+                result.DecodeDurationMs,
                 result.FinishReason,
                 result.ToolCalls
             })).ConfigureAwait(false);

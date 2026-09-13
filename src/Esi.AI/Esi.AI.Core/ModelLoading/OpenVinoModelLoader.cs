@@ -23,6 +23,7 @@ public sealed class OpenVinoModelLoader : IDisposable
     private string? loadedModelPath;
     private string? loadedDevice;
     private double? vramUsageMiB;
+    private double? vramTotalMiB;
 
     public OpenVinoModelLoader()
     {
@@ -42,6 +43,7 @@ public sealed class OpenVinoModelLoader : IDisposable
         loadedDevice,
         IsLoaded,
         vramUsageMiB,
+        vramTotalMiB,
         string.Join(Environment.NewLine, loadLog));
 
     /// <summary>
@@ -107,9 +109,6 @@ public sealed class OpenVinoModelLoader : IDisposable
             throw new FileNotFoundException($"The GGUF file or OpenVINO model directory was not found: {fullModelPath}", fullModelPath);
         }
 
-        if (isVisionLanguageModel)
-            ValidateVisionLanguageModelCompatibility(fullModelPath);
-
         if (string.IsNullOrWhiteSpace(device))
             throw new ArgumentException("An OpenVINO device is required.", nameof(device));
         var isNpu = device.Equals("NPU", StringComparison.OrdinalIgnoreCase);
@@ -138,6 +137,10 @@ public sealed class OpenVinoModelLoader : IDisposable
             ClearLoadedModelState();
             AppendLoadLog($"Starting OpenVINO model load on {device}.");
             cancellationToken.ThrowIfCancellationRequested();
+            operation = "ModelMetadata.Validate";
+            if (isVisionLanguageModel)
+                ValidateVisionLanguageModelCompatibility(fullModelPath);
+
             var runtimeDirectory = InitializeRuntime();
             ConfigureVerboseLogging();
             OvLogger.Debug($"OpenVINO model load: path='{fullModelPath}', format={(isGgufFile ? "GGUF" : "OpenVINO IR directory")}, device='{device}'");
@@ -209,6 +212,10 @@ public sealed class OpenVinoModelLoader : IDisposable
             vramUsageMiB = TryGetVramUsageMiB(device);
         }
         catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (NotSupportedException)
         {
             throw;
         }
@@ -307,7 +314,8 @@ public sealed class OpenVinoModelLoader : IDisposable
 
             var memoryBytes = totalBytes - freeBytes;
             var memoryMiB = memoryBytes / 1024d / 1024d;
-            AppendLoadLog($"[INFO] OpenVINO VRAM allocated on {device}: {memoryMiB:F2} MiB.");
+            vramTotalMiB = totalBytes / 1024d / 1024d;
+            AppendLoadLog($"[INFO] Global GPU memory usage on {device}: {memoryMiB:F2} MiB of {vramTotalMiB:F2} MiB.");
             return memoryMiB;
         }
         catch (Exception exception)
@@ -367,7 +375,145 @@ public sealed class OpenVinoModelLoader : IDisposable
             freeBytes = checked(freeBytes + Math.Max(0, total - used));
         }
 
-        return freeBytes > 0;
+        return freeBytes > 0 || TryGetXeGpuMemoryBytes(out freeBytes, out totalBytes);
+    }
+
+    private static bool TryGetXeGpuMemoryBytes(out long freeBytes, out long totalBytes)
+    {
+        freeBytes = 0;
+        totalBytes = 0;
+        if (!OperatingSystem.IsLinux())
+            return false;
+
+        foreach (var cardPath in Directory.EnumerateDirectories("/sys/class/drm", "card*"))
+        {
+            var driverPath = Path.Combine(cardPath, "device", "driver");
+            if (!string.Equals(Path.GetFileName(ReadLink(driverPath)), "xe", StringComparison.Ordinal))
+                continue;
+
+            if (TryQueryXeMemory(Path.Combine("/dev/dri", Path.GetFileName(cardPath)), out var deviceFreeBytes, out var deviceTotalBytes))
+            {
+                freeBytes = checked(freeBytes + deviceFreeBytes);
+                totalBytes = checked(totalBytes + deviceTotalBytes);
+            }
+        }
+
+        return totalBytes > 0;
+    }
+
+    private static bool TryQueryXeMemory(string devicePath, out long freeBytes, out long totalBytes)
+    {
+        freeBytes = 0;
+        totalBytes = 0;
+        var fileDescriptor = NativeMethods.open(devicePath, NativeMethods.O_RDONLY | NativeMethods.O_CLOEXEC);
+        if (fileDescriptor < 0)
+            return false;
+
+        try
+        {
+            var query = new XeDeviceQuery { Query = 1 };
+            if (NativeMethods.ioctl(fileDescriptor, NativeMethods.DrmIoctlXeDeviceQuery, ref query) != 0 || query.Size == 0)
+                return false;
+
+            var data = Marshal.AllocHGlobal(checked((int)query.Size));
+            try
+            {
+                query.Data = data;
+                if (NativeMethods.ioctl(fileDescriptor, NativeMethods.DrmIoctlXeDeviceQuery, ref query) != 0)
+                    return false;
+
+                var regionCount = (uint)Marshal.ReadInt32(data);
+                var regionOffset = Marshal.SizeOf<XeMemoryRegionHeader>();
+                var regionSize = Marshal.SizeOf<XeMemoryRegion>();
+                for (var index = 0; index < regionCount; index++)
+                {
+                    var region = Marshal.PtrToStructure<XeMemoryRegion>(data + regionOffset + index * regionSize);
+                    if (region.MemoryClass != 1)
+                        continue;
+
+                    totalBytes = checked(totalBytes + checked((long)region.TotalSize));
+                    freeBytes = checked(freeBytes + Math.Max(0, checked((long)region.TotalSize - (long)region.Used)));
+                }
+
+                return totalBytes > 0;
+            }
+            finally
+            {
+                Marshal.FreeHGlobal(data);
+            }
+        }
+        finally
+        {
+            NativeMethods.close(fileDescriptor);
+        }
+    }
+
+    private static string ReadLink(string path)
+    {
+        try
+        {
+            return File.ResolveLinkTarget(path, false)?.Name ?? string.Empty;
+        }
+        catch (IOException)
+        {
+            return string.Empty;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return string.Empty;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct XeDeviceQuery
+    {
+        public ulong Extensions;
+        public uint Query;
+        public uint Size;
+        public nint Data;
+        public ulong Reserved0;
+        public ulong Reserved1;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct XeMemoryRegionHeader
+    {
+        public uint Count;
+        public uint Padding;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct XeMemoryRegion
+    {
+        public ushort MemoryClass;
+        public ushort Instance;
+        public uint MinimumPageSize;
+        public ulong TotalSize;
+        public ulong Used;
+        public ulong CpuVisibleSize;
+        public ulong CpuVisibleUsed;
+        public ulong Reserved0;
+        public ulong Reserved1;
+        public ulong Reserved2;
+        public ulong Reserved3;
+        public ulong Reserved4;
+        public ulong Reserved5;
+    }
+
+    private static class NativeMethods
+    {
+        public const int O_RDONLY = 0;
+        public const int O_CLOEXEC = 0x80000;
+        public const uint DrmIoctlXeDeviceQuery = 0xc0286440;
+
+        [DllImport("libc", EntryPoint = "open", SetLastError = true, CharSet = CharSet.Ansi)]
+        public static extern int open(string path, int flags);
+
+        [DllImport("libc", EntryPoint = "ioctl", SetLastError = true)]
+        public static extern int ioctl(int fileDescriptor, uint request, ref XeDeviceQuery query);
+
+        [DllImport("libc", EntryPoint = "close", SetLastError = true)]
+        public static extern int close(int fileDescriptor);
     }
 
     private static long ReadSysfsBytes(string path)
@@ -417,6 +563,7 @@ public sealed class OpenVinoModelLoader : IDisposable
         loadedModelPath = null;
         loadedDevice = null;
         vramUsageMiB = null;
+        vramTotalMiB = null;
     }
 
     private static void ValidateNpuOptions(OpenVinoNpuOptions options)
@@ -565,6 +712,11 @@ public sealed class OpenVinoModelLoader : IDisposable
                 ? configuredPath
                 : Path.Combine(configuredPath, "runtime", "lib", "intel64");
         }
+
+        var localRuntimeDirectory = BackendRuntimePaths.GetOpenVinoDirectory(AppContext.BaseDirectory);
+        if (Directory.Exists(localRuntimeDirectory) &&
+            Directory.EnumerateFiles(localRuntimeDirectory, "libopenvino*", SearchOption.TopDirectoryOnly).Any())
+            return localRuntimeDirectory;
 
         var cacheRoot = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
@@ -893,6 +1045,9 @@ public sealed class OpenVinoChatSession : IDisposable
                 checked((int)metrics.NumGenerationTokens),
                 metrics.Throughput.Mean,
                 checked((int)metrics.NumInputTokens),
+                metrics.TimeToFirstToken.Mean,
+                metrics.GenerateDuration.Mean,
+                metrics.InferenceDuration.Mean,
                 parsed.ToolCalls,
                 parsed.ToolCalls.Count > 0 ? "tool_calls" : "stop");
         }
@@ -940,6 +1095,9 @@ public sealed record OpenVinoGenerationResult(
     int TokenCount,
     double TokensPerSecond,
     int PromptTokenCount = 0,
+    double? TimeToFirstTokenMs = null,
+    double? PrefillDurationMs = null,
+    double? DecodeDurationMs = null,
     IReadOnlyList<OpenAiToolCall>? ToolCalls = null,
     string FinishReason = "stop");
 
@@ -969,4 +1127,5 @@ public sealed record OpenVinoModelLoadStatus(
     string? Device,
     bool IsModelLoaded,
     double? VramUsageMiB,
+    double? VramTotalMiB,
     string LoadLog);

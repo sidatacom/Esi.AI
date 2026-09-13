@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.30] - 2026-09-13
+
+### Added
+- Return buffered Debug Console output and its last non-empty line from diagnostics
+
 ## [1.0.29] - 2026-09-06
 
 ### Fixed

@@ -99,6 +99,33 @@ namespace Esi.AI.Studio.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
+            modelBuilder.Entity("Esi.AI.Studio.Data.BackendRuntimeSettingsEntity", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("AllowLocalPackages")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("CatalogUrl")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InstallationDirectory")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PackagesJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("BackendRuntimeSettings");
+                });
+
             modelBuilder.Entity("Esi.AI.Studio.Data.ChatConversationEntity", b =>
                 {
                     b.Property<Guid>("Id")
@@ -139,12 +166,21 @@ namespace Esi.AI.Studio.Migrations
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("TEXT");
 
+                    b.Property<double?>("DecodeDurationMs")
+                        .HasColumnType("REAL");
+
                     b.Property<string>("ModelPath")
                         .HasColumnType("TEXT");
+
+                    b.Property<double?>("PrefillDurationMs")
+                        .HasColumnType("REAL");
 
                     b.Property<string>("Role")
                         .IsRequired()
                         .HasColumnType("TEXT");
+
+                    b.Property<double?>("TimeToFirstTokenMs")
+                        .HasColumnType("REAL");
 
                     b.Property<int?>("TokenCount")
                         .HasColumnType("INTEGER");
@@ -165,15 +201,15 @@ namespace Esi.AI.Studio.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("TEXT");
 
+                    b.Property<bool>("AutoLaunch")
+                        .HasColumnType("INTEGER");
+
                     b.Property<int>("Backend")
                         .HasColumnType("INTEGER");
 
                     b.Property<string>("ConfigurationJson")
                         .IsRequired()
                         .HasColumnType("TEXT");
-
-                    b.Property<bool>("AutoLaunch")
-                        .HasColumnType("INTEGER");
 
                     b.Property<DateTime>("CreatedAtUtc")
                         .HasColumnType("TEXT");

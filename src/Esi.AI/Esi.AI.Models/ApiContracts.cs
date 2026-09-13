@@ -28,7 +28,26 @@ public sealed record ModelSettings(
     Guid? ConfigurationId = null);
 
 /// <summary>Stores application-wide runtime policies for every local backend.</summary>
-public sealed record ApplicationSettings(IReadOnlyList<InferenceTimeoutSettings> InferenceTimeouts);
+public sealed record ApplicationSettings(
+    IReadOnlyList<InferenceTimeoutSettings> InferenceTimeouts,
+    ConfigurationBackend? LastSelectedBackend = null,
+    BackendSandboxSettings? BackendSandbox = null,
+    ModelLibrarySettings? ModelLibrary = null);
+
+/// <summary>Stores the resource limits and timeouts for isolated backend worker processes.</summary>
+public sealed record BackendSandboxSettings(
+    int CpuQuotaPercent = 200,
+    string MemoryLimitBytes = "4G",
+    int TaskLimit = 64,
+    int DiagnosticTimeoutSeconds = 20,
+    int WorkerTimeoutSeconds = 60);
+
+/// <summary>Stores the local model directories and download limits in application settings.</summary>
+public sealed record ModelLibrarySettings(
+    IReadOnlyList<string>? Directories = null,
+    int SearchLimit = 20,
+    int MaxParallelDownloads = 3,
+    int MaxParallelFileDownloads = 2);
 
 /// <summary>Configures the inference deadline formula for one backend family.</summary>
 public sealed record InferenceTimeoutSettings(
@@ -75,6 +94,22 @@ public sealed record BackendPrerequisiteDiagnostics(
     string BackendName,
     bool IsReady,
     IReadOnlyList<BackendPrerequisiteCheck> Checks,
+    string? Error = null);
+
+/// <summary>Describes one bounded diagnostic operation executed by the backend worker.</summary>
+public sealed record BackendWorkerRequest(
+    string Operation,
+    ConfigurationBackend Backend = ConfigurationBackend.Llama,
+    string PythonExecutable = "python3",
+    string? ApplicationDirectory = null,
+    int TimeoutSeconds = 20,
+    IReadOnlyList<string>? Devices = null);
+
+/// <summary>Contains the result returned by one isolated backend worker process.</summary>
+public sealed record BackendWorkerResponse(
+    bool Succeeded,
+    BackendPrerequisiteDiagnostics? Prerequisites = null,
+    OpenVinoDiagnosticsDto? OpenVino = null,
     string? Error = null);
 
 /// <summary>Describes one backend prerequisite and whether it can be repaired.</summary>
@@ -164,7 +199,8 @@ public sealed record LoadModelRequest(
     uint ContextSize,
     IReadOnlyDictionary<string, float> VulkanDeviceWeights,
     LlamaAdvancedSettings? AdvancedSettings,
-    string? MmprojPath = null)
+    string? MmprojPath = null,
+    IReadOnlyList<string>? Devices = null)
 {
     public LlamaAdvancedSettings Advanced { get; } = AdvancedSettings ?? new();
 }
@@ -402,7 +438,10 @@ public sealed record OpenAiUsage(
     [property: JsonPropertyName("prompt_tokens")] int? PromptTokens = null,
     [property: JsonPropertyName("completion_tokens")] int? CompletionTokens = null,
     [property: JsonPropertyName("total_tokens")] int? TotalTokens = null,
-    [property: JsonPropertyName("tokens_per_second")] double? TokensPerSecond = null);
+    [property: JsonPropertyName("tokens_per_second")] double? TokensPerSecond = null,
+    [property: JsonPropertyName("time_to_first_token_ms")] double? TimeToFirstTokenMs = null,
+    [property: JsonPropertyName("prefill_duration_ms")] double? PrefillDurationMs = null,
+    [property: JsonPropertyName("decode_duration_ms")] double? DecodeDurationMs = null);
 
 public sealed record OpenAiErrorResponse(OpenAiError Error);
 
@@ -421,7 +460,7 @@ public sealed record ChatSummary(Guid Id, string Title, DateTime UpdatedAtUtc, i
 
 public sealed record PersistedChat(Guid Id, string Title, DateTime CreatedAtUtc, DateTime UpdatedAtUtc, IReadOnlyList<PersistedChatMessage> Messages);
 
-public sealed record PersistedChatMessage(string Role, string Content, DateTime CreatedAtUtc, string? ModelPath = null, string? Backend = null, int? TokenCount = null, double? TokensPerSecond = null);
+public sealed record PersistedChatMessage(string Role, string Content, DateTime CreatedAtUtc, string? ModelPath = null, string? Backend = null, int? TokenCount = null, double? TokensPerSecond = null, double? TimeToFirstTokenMs = null, double? PrefillDurationMs = null, double? DecodeDurationMs = null);
 
 public sealed record ChatStreamUpdate(Guid ChatId, string Delta, bool IsCompleted = false, PersistedChat? Chat = null);
 
@@ -478,7 +517,6 @@ public sealed record HuggingFaceSearchRequest(
 public sealed record SelectModelRequest(string Path);
 
 public sealed record LlamaAdvancedSettings(
-    int MainGpu = 0,
     uint SeqMax = 1,
     uint RecurrentRollbackSnapshots = 0,
     bool UseMemorymap = true,
@@ -524,7 +562,7 @@ public sealed record LlamaAdvancedSettings(
 
 public sealed record OpenVinoDeviceSetting(bool Enabled, float Weight);
 
-public sealed record VulkanDeviceSetting(bool Enabled, float Weight);
+public sealed record BackendDeviceSetting(bool Enabled, float Weight);
 
 public sealed record OpenVinoLoadRequest(
     string ModelPath,
@@ -587,22 +625,27 @@ public sealed record ModelLoadStatus(
     int GpuLayerCount,
     uint ContextSize,
     ulong ModelSizeInBytes,
-    int FoundVulkanGpuCount,
-    IReadOnlyList<VulkanDeviceStatus> VulkanDevices,
+    int FoundGpuCount,
+    IReadOnlyList<DeviceStatus> Devices,
     double? CpuModelBufferMiB,
     string LoadLog,
     IReadOnlyDictionary<string, float> VulkanDeviceWeights,
     bool IsModelLoaded,
     IReadOnlyList<LoadedModelStatus> LoadedModels);
 
-public sealed record VulkanDeviceStatus(
-    string Name,
-    string? Description,
+public sealed record DeviceStatus(
+    string DeviceId,
+    string? DeviceCaption,
     int AssignedLayerCount,
     double? ModelBufferMiB,
     string? Vendor = null,
     string? Driver = null,
-    double? MemoryCapacityMiB = null);
+    double? MemoryCapacityMiB = null)
+{
+    public string Name => DeviceId;
+
+    public string? Description => DeviceCaption;
+}
 
 public sealed record LoadedModelStatus(
     string ModelPath,
@@ -611,7 +654,8 @@ public sealed record LoadedModelStatus(
     int GpuLayerCount,
     uint ContextSize,
     ulong ModelSizeInBytes,
-    IReadOnlyList<VulkanDeviceStatus> VulkanDevices,
+    IReadOnlyList<DeviceStatus> Devices,
     double? CpuModelBufferMiB,
     string LoadLog = "",
-    bool IsLoading = false);
+    bool IsLoading = false,
+    bool IsModelLoaded = true);

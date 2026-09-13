@@ -27,7 +27,9 @@ public sealed class DataService(
     IBackendRuntimeStatusPublisher? backendRuntimePublisher = null,
     IInferenceService? inferenceService = null,
     ApplicationSettingsService? applicationSettingsService = null,
-    ProviderTraceStore? providerTraceStore = null) : IDataService
+    ProviderTraceStore? providerTraceStore = null,
+    BackendRuntimeCatalogService? backendRuntimeCatalog = null,
+    BackendSandboxBroker? backendSandbox = null) : IDataService
 {
     private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -35,6 +37,8 @@ public sealed class DataService(
     };
     private readonly IInferenceService effectiveInferenceService = inferenceService ?? new InferenceService(modelRuntime, new InferenceScheduler());
     private readonly ApplicationSettingsService effectiveApplicationSettings = applicationSettingsService ?? new(dbContextFactory);
+    private readonly BackendRuntimeCatalogService? effectiveBackendRuntimeCatalog = backendRuntimeCatalog;
+    private readonly BackendSandboxBroker? effectiveBackendSandbox = backendSandbox;
     private readonly ConcurrentDictionary<Guid, Lazy<Task<ModelLoadStatus>>> configurationLoadTasks = new();
     private readonly object openVinoLoadSync = new();
     private CancellationTokenSource? openVinoLoadCancellation;
@@ -43,6 +47,10 @@ public sealed class DataService(
 
     public Task<BackendRequirementState> GetBackendRequirementStateAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(requirementMonitor?.Current ?? new BackendRequirementState([], DateTimeOffset.MinValue));
+
+    public Task<BackendRequirementState> RefreshBackendRequirementStateAsync(CancellationToken cancellationToken = default) =>
+        requirementMonitor?.RefreshAsync(cancellationToken) ??
+        Task.FromResult(new BackendRequirementState([], DateTimeOffset.MinValue));
 
     public Task<IReadOnlyList<ProviderTraceEntry>> ProviderTrace_ReadAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(providerTraceStore?.Read() ?? (IReadOnlyList<ProviderTraceEntry>)[]);
@@ -331,6 +339,29 @@ public sealed class DataService(
 
     public Task<ApplicationSettings> ApplicationSettings_UpdateAsync(ApplicationSettings settings, CancellationToken cancellationToken = default) =>
         effectiveApplicationSettings.UpdateAsync(settings, cancellationToken);
+
+    public Task<BackendRuntimeOptions> BackendRuntimePackage_ReadAsync(CancellationToken cancellationToken = default) =>
+        effectiveBackendRuntimeCatalog is null
+            ? Task.FromResult(new BackendRuntimeOptions())
+            : effectiveBackendRuntimeCatalog.ReadAsync(cancellationToken);
+
+    public Task<BackendRuntimeOptions> BackendRuntimePackage_CreateAsync(BackendRuntimeOptions options, CancellationToken cancellationToken = default) =>
+        UpdateBackendRuntimeOptionsAsync(options, cancellationToken);
+
+    public Task<BackendRuntimeOptions> BackendRuntimePackage_UpdateAsync(BackendRuntimeOptions options, CancellationToken cancellationToken = default) =>
+        UpdateBackendRuntimeOptionsAsync(options, cancellationToken);
+
+    public async Task BackendRuntimePackage_DeleteAsync(string packageId, CancellationToken cancellationToken = default)
+    {
+        var options = await BackendRuntimePackage_ReadAsync(cancellationToken).ConfigureAwait(false);
+        options.Packages.RemoveAll(package => package.Id.Equals(packageId, StringComparison.OrdinalIgnoreCase));
+        await UpdateBackendRuntimeOptionsAsync(options, cancellationToken).ConfigureAwait(false);
+    }
+
+    private Task<BackendRuntimeOptions> UpdateBackendRuntimeOptionsAsync(BackendRuntimeOptions options, CancellationToken cancellationToken) =>
+        effectiveBackendRuntimeCatalog is null
+            ? Task.FromResult(options)
+            : effectiveBackendRuntimeCatalog.UpdateAsync(options, cancellationToken);
 
     public async Task<IReadOnlyList<ModelSettings>> ModelSettings_ReadAsync(CancellationToken cancellationToken = default)
     {
@@ -747,16 +778,16 @@ public sealed class DataService(
     }
 
     private async Task<PersistedChat?> Chat_UpdateCoreAsync(Guid id, string userContent, GenerationResult generation, string modelPath, string backend, CancellationToken cancellationToken = default) =>
-        await PersistChatUpdateAsync(id, userContent, generation.Text, modelPath, backend, generation.TokenCount, generation.TokensPerSecond, cancellationToken);
+        await PersistChatUpdateAsync(id, userContent, generation, modelPath, backend, cancellationToken);
 
-    private async Task<PersistedChat?> PersistChatUpdateAsync(Guid id, string userContent, string assistantContent, string modelPath, string backend, int? tokenCount, double? tokensPerSecond, CancellationToken cancellationToken = default)
+    private async Task<PersistedChat?> PersistChatUpdateAsync(Guid id, string userContent, GenerationResult generation, string modelPath, string backend, CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var chat = await db.ChatConversations.Include(item => item.Messages).SingleOrDefaultAsync(item => item.Id == id, cancellationToken);
         if (chat is null) return null;
         var now = DateTime.UtcNow;
         chat.Messages.Add(new ChatMessageEntity { Role = "user", Content = userContent, CreatedAtUtc = now });
-        chat.Messages.Add(new ChatMessageEntity { Role = "assistant", Content = assistantContent, ModelPath = modelPath, Backend = backend, TokenCount = tokenCount, TokensPerSecond = tokensPerSecond, CreatedAtUtc = now });
+        chat.Messages.Add(new ChatMessageEntity { Role = "assistant", Content = generation.Text, ModelPath = modelPath, Backend = backend, TokenCount = generation.TokenCount, TokensPerSecond = generation.TokensPerSecond, TimeToFirstTokenMs = generation.TimeToFirstTokenMs, PrefillDurationMs = generation.PrefillDurationMs, DecodeDurationMs = generation.DecodeDurationMs, CreatedAtUtc = now });
         chat.UpdatedAtUtc = now;
         if (chat.Title == "Neuer Chat") chat.Title = userContent.Length > 60 ? userContent[..60] : userContent;
         await db.SaveChangesAsync(cancellationToken);
@@ -777,7 +808,7 @@ public sealed class DataService(
             throw new ArgumentException("LLama loading requires a .gguf model path.", nameof(request));
 
         await modelRuntime.LoadAsync(request, cancellationToken);
-        return modelRuntime.LoadedModel_Read();
+        return modelRuntime.LoadedLlamaModel_Read();
     }
 
     public async Task<ModelLoadStatus> LoadPythonModelAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default)
@@ -892,6 +923,9 @@ public sealed class DataService(
 
     public Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default)
     {
+        if (effectiveBackendSandbox is not null)
+            return effectiveBackendSandbox.DiagnoseOpenVinoAsync(cancellationToken);
+
         var result = openVinoDiagnostics.Diagnose();
         return Task.FromResult(new OpenVinoDiagnosticsDto
         {
@@ -921,6 +955,16 @@ public sealed class DataService(
 
     public async Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null)
     {
+        if (effectiveBackendSandbox is not null)
+        {
+            return await effectiveBackendSandbox.DiagnoseRequirementsAsync(
+                backend,
+                pythonExecutable,
+                AppContext.BaseDirectory,
+                devices,
+                cancellationToken).ConfigureAwait(false);
+        }
+
         if (backend != ConfigurationBackend.OpenVino)
             return await (backendPrerequisites ?? new BackendPrerequisiteProvisioner()).DiagnoseAsync(backend, pythonExecutable, AppContext.BaseDirectory, cancellationToken: cancellationToken, devices: devices);
 
@@ -938,7 +982,18 @@ public sealed class DataService(
                 ? null
                 : await backendRuntimeInstaller.FindPackageAsync(backend, route, cancellationToken).ConfigureAwait(false);
             if (package is null)
-                return new(false, "No verified LLama runtime package is configured for this route.", "Configure a backend gallery package before installing this requirement.");
+            {
+                var configuredRoutes = backendRuntimeInstaller is null
+                    ? []
+                    : (await backendRuntimeInstaller.ReadAsync(cancellationToken).ConfigureAwait(false))
+                        .Where(status => status.Backend == backend)
+                        .Select(status => status.Route)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToArray();
+                return new(false,
+                    $"No verified LLama runtime package is configured for route '{route}'.",
+                    $"Configured routes: {(configuredRoutes.Length == 0 ? "none" : string.Join(", ", configuredRoutes))}. Configure a backend gallery package before installing this requirement.");
+            }
 
             var result = await BackendRuntime_CreateAsync(new BackendRuntimeInstallRequest(package.Id), cancellationToken).ConfigureAwait(false);
             return new(result.IsInstalled, result.Message, $"Package: {result.PackageId}{Environment.NewLine}Version: {result.Version}{Environment.NewLine}Route: {result.Route}");
@@ -1096,7 +1151,7 @@ public sealed class DataService(
     }
 
     private static PersistedChat ToChat(ChatConversationEntity chat) => new(chat.Id, chat.Title, chat.CreatedAtUtc, chat.UpdatedAtUtc,
-        chat.Messages.OrderBy(message => message.CreatedAtUtc).ThenBy(message => message.Id).Select(message => new PersistedChatMessage(message.Role, message.Content, message.CreatedAtUtc, message.ModelPath, message.Backend, message.TokenCount, message.TokensPerSecond)).ToArray());
+        chat.Messages.OrderBy(message => message.CreatedAtUtc).ThenBy(message => message.Id).Select(message => new PersistedChatMessage(message.Role, message.Content, message.CreatedAtUtc, message.ModelPath, message.Backend, message.TokenCount, message.TokensPerSecond, message.TimeToFirstTokenMs, message.PrefillDurationMs, message.DecodeDurationMs)).ToArray());
 
     private static ModelSettings ToModelSettings(ModelSettingsEntity entity) =>
         new(entity.ModelPath, entity.Backend, entity.ConfigurationJson, entity.ConfigurationId);
@@ -1175,11 +1230,11 @@ public sealed class DataService(
         }
     }
 
-    private static IReadOnlyDictionary<string, VulkanDeviceSetting> DeserializeVulkanDevices(string json)
+    private static IReadOnlyDictionary<string, BackendDeviceSetting> DeserializeVulkanDevices(string json)
     {
         try
         {
-            var devices = JsonSerializer.Deserialize<Dictionary<string, VulkanDeviceSetting?>>(json);
+            var devices = JsonSerializer.Deserialize<Dictionary<string, BackendDeviceSetting?>>(json);
             if (devices is not null && devices.Values.All(setting => setting is not null))
                 return devices.ToDictionary(pair => pair.Key, pair => pair.Value!, StringComparer.OrdinalIgnoreCase);
         }
@@ -1191,7 +1246,7 @@ public sealed class DataService(
             ?? new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
         return legacyWeights.ToDictionary(
             pair => pair.Key,
-            pair => new VulkanDeviceSetting(pair.Value > 0, Math.Max(0, pair.Value)),
+            pair => new BackendDeviceSetting(pair.Value > 0, Math.Max(0, pair.Value)),
             StringComparer.OrdinalIgnoreCase);
     }
 

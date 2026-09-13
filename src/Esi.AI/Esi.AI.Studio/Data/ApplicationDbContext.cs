@@ -7,6 +7,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 {
 	public DbSet<ModelSettingsEntity> ModelSettings => Set<ModelSettingsEntity>();
 	public DbSet<ApplicationSettingsEntity> ApplicationSettings => Set<ApplicationSettingsEntity>();
+	public DbSet<BackendRuntimeSettingsEntity> BackendRuntimeSettings => Set<BackendRuntimeSettingsEntity>();
 	public DbSet<ModelConfigurationEntity> ModelConfigurations => Set<ModelConfigurationEntity>();
 	public DbSet<ModelEntity> Models => Set<ModelEntity>();
 	public DbSet<ChatConversationEntity> ChatConversations => Set<ChatConversationEntity>();

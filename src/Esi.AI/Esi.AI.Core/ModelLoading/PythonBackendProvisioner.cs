@@ -248,6 +248,9 @@ public sealed class PythonBackendProvisioner
             RedirectStandardError = true,
             CreateNoWindow = true
         };
+        if (!CanExecute(executable))
+            return new(-1, $"Executable '{executable}' was not found or is not executable.");
+
         foreach (var argument in arguments)
             startInfo.ArgumentList.Add(argument);
 
@@ -274,6 +277,16 @@ public sealed class PythonBackendProvisioner
                 process.Kill(entireProcessTree: true);
             throw;
         }
+    }
+
+    private static bool CanExecute(string executable)
+    {
+        if (Path.IsPathFullyQualified(executable))
+            return File.Exists(executable) && (!OperatingSystem.IsLinux() || (File.GetUnixFileMode(executable) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0);
+
+        return Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator)
+            .Select(directory => Path.Combine(directory, executable))
+            .Any(path => File.Exists(path) && (!OperatingSystem.IsLinux() || (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0)) == true;
     }
 
     private static void EnsureProcessSucceeded(ProcessResult result, string operation, string? additionalOutput = null)
@@ -307,18 +320,7 @@ public sealed class PythonBackendProvisioner
 
     private static string ResolveEnvironmentPath(string environmentName)
     {
-        var root = Environment.GetEnvironmentVariable("ESI_PYTHON_ENV_ROOT");
-        if (string.IsNullOrWhiteSpace(root))
-        {
-            var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (string.IsNullOrWhiteSpace(userProfile))
-                userProfile = AppContext.BaseDirectory;
-            root = Path.Combine(
-                userProfile,
-                ".venvs");
-        }
-
-        return Path.Combine(Path.GetFullPath(root), environmentName);
+        return Path.Combine(BackendRuntimePaths.GetPythonRoot(), environmentName);
     }
 
     private static string GetEnvironmentPythonPath(string environmentPath) =>

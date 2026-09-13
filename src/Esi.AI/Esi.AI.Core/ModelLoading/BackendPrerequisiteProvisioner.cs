@@ -1,4 +1,6 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 using Esi.AI.Models;
 
 namespace Esi.AI.Core.ModelLoading;
@@ -153,6 +155,15 @@ public sealed class BackendPrerequisiteProvisioner
                 checks.Add(canInstall && !syclCheck.IsAvailable
                     ? syclCheck with { CanSolve = true, Detail = $"{syclCheck.Detail} A verified SYCL 16 package is available in the backend gallery." }
                     : syclCheck);
+                var dependencyCheck = CreateNativeDependencyCheck(
+                    "sycl-runtime-dependencies",
+                    "SYCL runtime dependencies",
+                    Path.Combine(nativeRoot, "sycl", "libggml-sycl.so"),
+                    "The SYCL native runtime dependencies are available to the dynamic linker.");
+                checks.Add(CreateSyclAdapterCheck(nativeRoot));
+                checks.Add(canInstall && !dependencyCheck.IsAvailable
+                    ? dependencyCheck with { CanSolve = true, Detail = $"{dependencyCheck.Detail} A configured SYCL package can install the runtime files." }
+                    : dependencyCheck);
                 checks.Add(CreateLevelZeroHostCheck());
                 checks.Add(CreateToolchainCheck(
                     "oneapi-build-toolchain",
@@ -192,10 +203,72 @@ public sealed class BackendPrerequisiteProvisioner
             : new(id, name, false, $"Missing native file(s): {string.Join(", ", missing)} in {directory}.", false);
     }
 
+    private static BackendPrerequisiteCheck CreateSyclAdapterCheck(string nativeRoot)
+    {
+        var syclRoot = Path.Combine(nativeRoot, "sycl");
+        var localPath = Path.Combine(syclRoot, "libur_adapter_level_zero.so");
+        var localV2Path = Path.Combine(syclRoot, "libur_adapter_level_zero_v2.so.0");
+        if (!File.Exists(localPath) || !File.Exists(localV2Path))
+            return new("sycl-level-zero-adapter", "SYCL Level Zero adapter", false, "The SYCL Unified Runtime Level Zero adapters are missing from the local runtime package.", false);
+
+        return new("sycl-level-zero-adapter", "SYCL Level Zero adapter", true, "The Unified Runtime Level Zero adapters are available in the LLama runtime.", false);
+    }
+
     private static BackendPrerequisiteCheck CreateCommandCheck(string id, string name, string command, string detail)
     {
         var available = FindExecutable(command) is not null;
         return new(id, name, available, available ? $"{detail} Found {command}." : $"{detail} Command '{command}' was not found on PATH.", false);
+    }
+
+    private static BackendPrerequisiteCheck CreateNativeDependencyCheck(
+        string id,
+        string name,
+        string libraryPath,
+        string availableDetail)
+    {
+        if (!OperatingSystem.IsLinux())
+            return new(id, name, true, availableDetail, false);
+
+        if (!File.Exists(libraryPath))
+            return new(id, name, false, $"The native library was not found: {libraryPath}.", false);
+
+        if (FindExecutable("ldd") is null)
+            return new(id, name, false, "The dynamic linker diagnostic command 'ldd' was not found on PATH.", false);
+
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "ldd",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            startInfo.ArgumentList.Add(libraryPath);
+            var currentLibraryPath = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
+            startInfo.Environment["LD_LIBRARY_PATH"] = string.IsNullOrWhiteSpace(currentLibraryPath)
+                ? Path.GetDirectoryName(libraryPath)!
+                : string.Join(Path.PathSeparator, Path.GetDirectoryName(libraryPath), currentLibraryPath);
+            using var process = Process.Start(startInfo);
+            if (process is null)
+                return new(id, name, false, "The dynamic linker diagnostic could not be started.", false);
+
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit(5000);
+            var missing = Regex.Matches(output + Environment.NewLine + error, @"^\s*(\S+)\s+=>\s+not found\s*$", RegexOptions.Multiline)
+                .Select(match => match.Groups[1].Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return missing.Length == 0
+                ? new(id, name, true, availableDetail, false)
+                : new(id, name, false, $"Missing dynamic libraries: {string.Join(", ", missing)}.", false);
+        }
+        catch (Exception exception)
+        {
+            return new(id, name, false, $"Could not inspect native dependencies: {exception.Message}", false);
+        }
     }
 
     private static BackendPrerequisiteCheck CreateToolchainCheck(string id, string name, IReadOnlyList<string> commands, string detail, bool isOptional = false)
@@ -233,7 +306,16 @@ public sealed class BackendPrerequisiteProvisioner
 
         return path.Split(Path.PathSeparator)
             .Select(directory => Path.Combine(directory, command))
-            .FirstOrDefault(File.Exists);
+            .FirstOrDefault(IsExecutable);
+    }
+
+    private static bool IsExecutable(string path)
+    {
+        if (!File.Exists(path))
+            return false;
+
+        return !OperatingSystem.IsLinux()
+            || (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
     }
 
     private static string GetLlamaRuntimeIdentifier()

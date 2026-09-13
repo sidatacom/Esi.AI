@@ -14,6 +14,7 @@
 - Starte `Esi.AI.Studio` mit C# Dev Kit über `csdevkit.debug.projectDebugLaunch` beziehungsweise **Start New Instance** im Solution Explorer.
 - C# Dev Kit verwendet dynamische, speicherinterne Debugkonfigurationen. Für den normalen Start dürfen keine `.vscode/launch.json` oder `.vscode/tasks.json` vorausgesetzt oder neu erzeugt werden.
 - Verwende `csdevkit.debug.hotReload` für Hot Reload und `csdevkit.debug.showHotReloadPanel` zur Diagnose.
+- Für den Klartext der Debug-Console verwende bei aktiver Session `csdevkit.debug.output.diagnostics` über EsiMCP. Die Antwort enthält `output` und `lastLine`; bei der Frage nach der letzten Zeile ist `lastLine` maßgeblich. `csdevkit.debug.showHotReloadPanel` öffnet nur das VS-Code-Panel und ersetzt diese strukturierte Diagnose nicht.
 - Für clientseitige Breakpoints muss `Properties/launchSettings.json` die Microsoft-`inspectUri` enthalten und die Anwendung muss in Development `UseWebAssemblyDebugging()` aktivieren.
 - Prüfe vor jedem Start, dass kein alter Studio-Prozess den Port `7010` belegt. Beende verwaiste projektbezogene Prozesse kontrolliert, bevor eine neue Debugsession gestartet wird.
 - Ein separater Watchdog, eine PID-Datei und eine Startblockade im Anwendungscode gehören nicht zum Blazor-Debugging und dürfen nicht eingeführt werden.
@@ -21,6 +22,7 @@
 ## Esi.AI Studio Hot Reload
 
 - Bei einer laufenden Studio-Debugsession ist für reine UI-Änderungen zuerst Hot Reload zu verwenden.
+- Nach jeder Änderung an `.razor`, `.razor.css`, CSS oder Markup ist bei einer aktiven Studio-Debugsession die unmittelbar nächste Validierungsaktion `csdevkit.debug.hotReload`; ein separater Build, `get_errors`, Testlauf oder bloßes `git diff` darf davor nicht als Ersatz ausgeführt werden.
 - Als Hot-Reload-fähige UI-Änderungen gelten insbesondere Änderungen an `.razor`, `.razor.css`, CSS, Markup und anderem Client-Code, sofern VS Code und die laufende Anwendung die Änderung übernehmen können.
 - Für solche Änderungen darf die Debugsession nicht nur wegen einer anschließenden Browserprüfung oder eines unnötigen separaten Builds gestoppt werden. Die laufende Session bleibt aktiv, und die Änderung wird direkt im Browser validiert.
 - Ein kontrollierter Debug-Restart oder ein Stop vor einem Build ist erst erforderlich, wenn Hot Reload die Änderung nicht anwenden kann, ein vollständiger Build ausdrücklich nötig ist oder die Änderung Server-/Projektdateien betrifft, die einen Neustart verlangen.
@@ -29,9 +31,10 @@
 ## Esi.AI Studio Build- und Debug-Lebenszyklus
 
 - Vor jedem Build, Rebuild oder Test des Studio-Projekts muss die aktive VS-Code-Debugsession geprüft werden.
-- Läuft eine Studio-Debugsession und ist ein separater Build tatsächlich erforderlich, muss sie vor diesem Build kontrolliert beendet werden. Ein Build darf niemals parallel zu einer laufenden Studio-Debugsession ausgeführt werden. Für reine Hot-Reload-Änderungen gilt die Hot-Reload-Regel oben.
+- Vor jedem separaten Compile-, Build-, Rebuild- oder Test-Befehl muss eine laufende Studio-Debugsession kontrolliert gestoppt werden. Kein solcher Befehl darf gestartet werden, solange die Debugsession noch läuft.
+- Nach dem Stoppen muss geprüft werden, dass kein alter Studio-Prozess den Port `7010` belegt. Erst danach darf der separate Compile-, Build-, Rebuild- oder Test-Befehl gestartet werden.
+- Für reine `.razor`-, `.razor.css`-, CSS- oder Markup-Änderungen gilt ausschließlich die Hot-Reload-Regel oben; dafür darf die Debugsession aktiv bleiben und es darf kein unnötiger separater Build gestartet werden.
 - Wenn die Debugsession weiter benötigt wird, ist stattdessen ein kontrollierter Debug-Restart zu verwenden; dieser führt den notwendigen Rebuild aus. Danach muss die Host-Readiness erneut geprüft werden.
-- Nach dem Beenden der Debugsession ist zu verifizieren, dass keine alte Studio-Instanz den Port `7010` belegt, bevor ein separater Build oder ein neuer Start erfolgt.
 - Für Änderungen am Studio gilt daher: aktive Debugsession prüfen, zunächst Hot Reload versuchen, anschließend die laufende UI validieren und nur bei Bedarf kontrolliert stoppen oder per Debug-Restart neu bauen. Nach einem Neustart muss die Host-Readiness erneut geprüft werden.
 
 ## Long-Running Commands

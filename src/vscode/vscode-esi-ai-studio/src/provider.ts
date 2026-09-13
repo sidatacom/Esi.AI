@@ -495,10 +495,15 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
         throw new Error(`Zeitüberschreitung beim Verbinden mit Esi.AI Studio unter ${baseUrl}.`);
       }
 
-      if (error instanceof Error && (error.name === "AbortError" || error.name === "TypeError")) {
+      if (error instanceof Error && error.name === "AbortError") {
+        this.output.appendLine(`Request ${path} was aborted before completion.`);
+        throw new Error(`Die Anfrage an Esi.AI Studio wurde abgebrochen (${path}).`, { cause: error });
+      }
+
+      if (error instanceof Error && error.name === "TypeError") {
         const cause = error.cause instanceof Error ? `; Ursache: ${error.cause.message}` : "";
         this.output.appendLine(`Fetch ${path} fehlgeschlagen (${error.name}): ${error.message}${cause}`);
-        throw new Error(`Esi.AI Studio ist unter ${baseUrl} nicht erreichbar. Läuft der Host?`, { cause: error });
+        throw new Error(`Esi.AI Studio konnte ${path} unter ${baseUrl} nicht erreichen: ${error.message}${cause}`, { cause: error });
       }
 
       throw error;

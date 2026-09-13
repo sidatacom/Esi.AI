@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Threading.Channels;
-using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
 using Esi.AI.Studio.Hubs;
 using Microsoft.AspNetCore.SignalR;
@@ -18,33 +17,43 @@ public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequi
         new(ConfigurationBackend.Sglang, "Intel / XPU", ["xpu:1"])
     ];
 
-    private readonly BackendPrerequisiteProvisioner prerequisites;
-    private readonly OpenVinoDiagnosticsService openVinoDiagnostics;
+    private readonly BackendSandboxBroker sandbox;
     private readonly IHubContext<DataHub> hubContext;
     private readonly Channel<bool> refreshRequests = Channel.CreateBounded<bool>(1);
+    private readonly SemaphoreSlim refreshGate = new(1, 1);
     private BackendRequirementState current = new([], DateTimeOffset.MinValue);
     private DateTimeOffset lastPublishedAtUtc = DateTimeOffset.MinValue;
 
     public BackendRequirementMonitor(
-        BackendPrerequisiteProvisioner prerequisites,
-        OpenVinoDiagnosticsService openVinoDiagnostics,
+        BackendSandboxBroker sandbox,
         IHubContext<DataHub> hubContext)
     {
-        this.prerequisites = prerequisites;
-        this.openVinoDiagnostics = openVinoDiagnostics;
+        this.sandbox = sandbox;
         this.hubContext = hubContext;
     }
 
     /// <summary>Gets the most recent cached state without starting a diagnostic process.</summary>
     public BackendRequirementState Current => Volatile.Read(ref current);
 
+    public async Task<BackendRequirementState> RefreshAsync(CancellationToken cancellationToken = default)
+    {
+        await refreshGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await RefreshCoreAsync(cancellationToken).ConfigureAwait(false);
+            return Current;
+        }
+        finally
+        {
+            refreshGate.Release();
+        }
+    }
+
     /// <summary>Requests an out-of-band refresh after a requirement action completes.</summary>
     public void RequestRefresh() => refreshRequests.Writer.TryWrite(true);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await RefreshAsync(stoppingToken).ConfigureAwait(false);
-
         while (await refreshRequests.Reader.WaitToReadAsync(stoppingToken).ConfigureAwait(false))
         {
             while (refreshRequests.Reader.TryRead(out _))
@@ -55,7 +64,7 @@ public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequi
         }
     }
 
-    private async Task RefreshAsync(CancellationToken cancellationToken)
+    private async Task RefreshCoreAsync(CancellationToken cancellationToken)
     {
         var entries = new List<BackendRequirementSnapshot>
         {
@@ -71,11 +80,12 @@ public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequi
             new("AMD / ROCm", new[] { "vulkan:0" })
         })
         {
-            var diagnostics = await prerequisites.DiagnoseAsync(
+            var diagnostics = await sandbox.DiagnoseRequirementsAsync(
                 ConfigurationBackend.Llama,
-                applicationDirectory: AppContext.BaseDirectory,
-                cancellationToken: cancellationToken,
-                devices: route.Item2).ConfigureAwait(false);
+                "python3",
+                AppContext.BaseDirectory,
+                route.Item2,
+                cancellationToken).ConfigureAwait(false);
             entries.Insert(0, new(ConfigurationBackend.Llama, route.Item1, route.Item2, diagnostics));
         }
 
@@ -83,7 +93,7 @@ public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequi
 
         try
         {
-            var result = openVinoDiagnostics.Diagnose();
+            var result = await sandbox.DiagnoseOpenVinoAsync(cancellationToken).ConfigureAwait(false);
             var checks = result.Checks
                 .Select(check => new BackendPrerequisiteCheck(check.Id, check.Name, check.IsAvailable, check.Detail, check.CanSolve))
                 .ToArray();
@@ -91,7 +101,7 @@ public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequi
                 ConfigurationBackend.OpenVino,
                 "Intel / XPU",
                 [],
-                new(ConfigurationBackend.OpenVino, "OpenVINO", result.IsGpuReady || result.IsNpuReady, checks, result.Error)));
+                    new(ConfigurationBackend.OpenVino, "OpenVINO", result.IsGpuReady || result.IsNpuReady, checks, result.Error)));
         }
         catch (Exception exception)
         {
@@ -105,13 +115,12 @@ public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequi
             BackendPrerequisiteDiagnostics diagnostics;
             try
             {
-                diagnostics = await prerequisites.DiagnoseAsync(
+                diagnostics = await sandbox.DiagnoseRequirementsAsync(
                     route.Backend,
                     "python3",
                     AppContext.BaseDirectory,
-                    TimeSpan.FromSeconds(20),
-                    cancellationToken,
-                    route.Devices).ConfigureAwait(false);
+                    route.Devices,
+                    cancellationToken).ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {

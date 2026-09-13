@@ -56,8 +56,11 @@ public sealed class LlamaChatSession : IDisposable
     {
         var result = string.Empty;
         var stopwatch = Stopwatch.StartNew();
+        double? timeToFirstTokenMs = null;
         await foreach (var token in GenerateStreamingAsync(messages, options, cancellationToken).ConfigureAwait(false))
         {
+            if (!string.IsNullOrEmpty(token) && timeToFirstTokenMs is null)
+                timeToFirstTokenMs = stopwatch.Elapsed.TotalMilliseconds;
             result += token;
             if (onToken is not null)
                 await onToken(token).ConfigureAwait(false);
@@ -65,12 +68,18 @@ public sealed class LlamaChatSession : IDisposable
         stopwatch.Stop();
         var tokenCount = context.Tokenize(result, addBos: false, special: true).Length;
         var tokensPerSecond = stopwatch.Elapsed.TotalSeconds > 0 ? tokenCount / stopwatch.Elapsed.TotalSeconds : 0;
+        var decodeDurationMs = timeToFirstTokenMs is double firstTokenMs
+            ? Math.Max(0, stopwatch.Elapsed.TotalMilliseconds - firstTokenMs)
+            : (double?)null;
         var cleanedResult = CleanGeneratedText(result);
         if (string.IsNullOrWhiteSpace(cleanedResult))
             throw new InvalidOperationException("The model returned an empty answer.");
 
         var promptTokenCount = context.Tokenize(CreatePrompt(messages), addBos: true, special: true).Length;
-        return new GenerationResult(cleanedResult, tokenCount, stopwatch.Elapsed, tokensPerSecond, promptTokenCount);
+        return new GenerationResult(cleanedResult, tokenCount, stopwatch.Elapsed, tokensPerSecond, promptTokenCount,
+            TimeToFirstTokenMs: timeToFirstTokenMs,
+            PrefillDurationMs: timeToFirstTokenMs,
+            DecodeDurationMs: decodeDurationMs);
     }
 
     public async IAsyncEnumerable<string> GenerateStreamingAsync(
@@ -269,4 +278,7 @@ public sealed record GenerationResult(
     double TokensPerSecond,
     int? PromptTokenCount = null,
     string FinishReason = "stop",
-    IReadOnlyList<OpenAiToolCall>? ToolCalls = null);
+    IReadOnlyList<OpenAiToolCall>? ToolCalls = null,
+    double? TimeToFirstTokenMs = null,
+    double? PrefillDurationMs = null,
+    double? DecodeDurationMs = null);

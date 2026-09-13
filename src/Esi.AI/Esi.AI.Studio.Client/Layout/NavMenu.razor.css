@@ -174,7 +174,7 @@
 .studio-brand small { margin-top: .15rem; color: #a8c4c2; font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; }
 
 ::deep .fluent-nav {
-    width: auto !important;
+    width: 100% !important;
     min-width: 0 !important;
     padding: 1rem .75rem;
     background: transparent;
@@ -182,12 +182,15 @@
 }
 
 ::deep .fluent-nav .fluent-navitem {
+    display: block !important;
+    width: 100% !important;
     margin: .18rem 0;
     padding: .7rem .8rem;
     border-radius: 2px;
     background: transparent !important;
     color: #b9d0ce !important;
     font-size: .87rem;
+    white-space: nowrap;
 }
 
 ::deep .fluent-nav .fluent-navitem:hover {

@@ -112,4 +112,4 @@ public sealed record ModelDownloadUpdate(DownloadStatus Download, IReadOnlyList<
 
 public sealed record DownloadStarted(Guid Id);
 
-public sealed record ModelStatus(string? ModelPath, string Backend, int GpuLayerCount, uint ContextSize, int FoundVulkanGpuCount, bool IsModelLoaded);
+public sealed record ModelStatus(string? ModelPath, string Backend, int GpuLayerCount, uint ContextSize, int FoundGpuCount, bool IsModelLoaded);

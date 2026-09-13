@@ -167,6 +167,9 @@ public sealed class OpenVinoDiagnosticsService
 
     private static CommandResult RunCommand(string command, string arguments)
     {
+        if (FindExecutable(command) is null)
+            return new(false, string.Empty);
+
         try
         {
             using var process = Process.Start(new ProcessStartInfo
@@ -189,6 +192,26 @@ public sealed class OpenVinoDiagnosticsService
         {
             return new(false, string.Empty);
         }
+    }
+
+    private static string? FindExecutable(string command)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        return path.Split(Path.PathSeparator)
+            .Select(directory => Path.Combine(directory, command))
+            .FirstOrDefault(IsExecutable);
+    }
+
+    private static bool IsExecutable(string path)
+    {
+        if (!File.Exists(path))
+            return false;
+
+        return !OperatingSystem.IsLinux()
+            || (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
     }
 
     private readonly record struct CommandResult(bool Success, string Output);

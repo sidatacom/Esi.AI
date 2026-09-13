@@ -367,6 +367,8 @@ describe("SessionManager terminal recovery", () => {
       sessionId: "session-1",
       bufferedCharacters: 35,
       readinessStringSeen: true,
+      output: "Now ready on: http://localhost:7010",
+      lastLine: "Now ready on: http://localhost:7010",
     });
     manager.dispose();
   });

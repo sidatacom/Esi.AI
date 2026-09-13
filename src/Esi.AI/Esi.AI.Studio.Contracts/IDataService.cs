@@ -19,6 +19,10 @@ public interface IDataService
     Task<ApplicationSettings> ApplicationSettings_ReadAsync(CancellationToken cancellationToken = default);
 
     Task<ApplicationSettings> ApplicationSettings_UpdateAsync(ApplicationSettings settings, CancellationToken cancellationToken = default);
+    Task<BackendRuntimeOptions> BackendRuntimePackage_ReadAsync(CancellationToken cancellationToken = default);
+    Task<BackendRuntimeOptions> BackendRuntimePackage_CreateAsync(BackendRuntimeOptions options, CancellationToken cancellationToken = default);
+    Task<BackendRuntimeOptions> BackendRuntimePackage_UpdateAsync(BackendRuntimeOptions options, CancellationToken cancellationToken = default);
+    Task BackendRuntimePackage_DeleteAsync(string packageId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<ProviderTraceEntry>> ProviderTrace_ReadAsync(CancellationToken cancellationToken = default);
 
@@ -74,6 +78,8 @@ public interface IDataService
     Task<OpenVinoSolveResultDto> SolveDiagnosticAsync(string checkId, CancellationToken cancellationToken = default);
     Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null);
     Task<BackendRequirementState> GetBackendRequirementStateAsync(CancellationToken cancellationToken = default);
+
+    Task<BackendRequirementState> RefreshBackendRequirementStateAsync(CancellationToken cancellationToken = default);
     Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null);
     Task<IReadOnlyList<BackendRuntimeStatus>> BackendRuntime_ReadAsync(CancellationToken cancellationToken = default);
     Task<BackendRuntimeStatus> BackendRuntime_CreateAsync(BackendRuntimeInstallRequest request, CancellationToken cancellationToken = default);

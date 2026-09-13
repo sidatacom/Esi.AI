@@ -8,6 +8,34 @@ namespace Esi.AI.Core.Tests;
 public sealed class PythonBackendProvisionerTests
 {
     [TestMethod]
+    [DataRow("vulkan", "vulkan")]
+    [DataRow("cuda12", "cuda12")]
+    [DataRow("sycl16", "sycl")]
+    public void GetLlamaDirectory_UsesSharedBackendRoute(string backend, string expectedRoute)
+    {
+        var path = BackendRuntimePaths.GetLlamaDirectory(backend, Path.Combine(Path.GetTempPath(), "esi-ai-test-app"));
+
+        StringAssert.EndsWith(path, Path.Combine("runtimes", "linux-x64", "native", expectedRoute));
+    }
+
+    [TestMethod]
+    public void GetPythonRoot_UsesConfiguredSharedRoot()
+    {
+        var originalRoot = Environment.GetEnvironmentVariable("ESI_PYTHON_ENV_ROOT");
+        try
+        {
+            var configuredRoot = Path.Combine(Path.GetTempPath(), "esi-ai-test-python-root");
+            Environment.SetEnvironmentVariable("ESI_PYTHON_ENV_ROOT", configuredRoot);
+
+            Assert.AreEqual(Path.GetFullPath(configuredRoot), BackendRuntimePaths.GetPythonRoot());
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ESI_PYTHON_ENV_ROOT", originalRoot);
+        }
+    }
+
+    [TestMethod]
     public void GetDefaultEnvironmentPath_Vllm_UsesVllmSpecificDirectory()
     {
         var originalRoot = Environment.GetEnvironmentVariable("ESI_PYTHON_ENV_ROOT");

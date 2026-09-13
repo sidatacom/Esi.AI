@@ -18,19 +18,22 @@ Esi.AI Studio is a .NET 10 Blazor Web App. Start it through the C# Dev Kit Run a
 1. Inspect the active debug session before starting anything. Reuse it when it already matches the requested configuration.
 2. If a debug session is active and a fresh session is required, stop the existing session first with `csharp_devkit_execute_command` using `commandId: "csdevkit.debug.stop"`. Never start a second session on top of an existing one.
 3. Confirm that the previous session has stopped and that its application process or debug port is no longer owned by the old session.
-4. In the Run and Debug configuration picker, select `C#: Esi.AI.Studio [Default Configuration]`; do not launch with an undefined, stale, or unrelated target.
-5. Start exactly one server debug session with `csdevkit.debug.projectDebugLaunch` and the Studio server project selected.
-6. Wait for the debugger to attach, verify an active debug-session ID with `commandId: "csdevkit.debug.active.session"`, invoke `csharp_devkit_execute_command` using `commandId: "csdevkit.debug.check.host.readyness"`, and verify the shared browser page at `http://localhost:7010`.
-7. Reuse the existing shared browser page when possible, reload the target route, and verify the behavior that motivated the debug session.
-8. For WebAssembly breakpoints, verify the `inspectUri` in the server launch profile and use the `blazorwasm` attach configuration only when an explicit browser attach is needed.
-9. At the end of the task, leave the single intended session running only when further interactive verification is expected; otherwise stop it cleanly.
+4. Before every debug start or restart, build `src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj` successfully. Do not launch or restart the debugger when the build exits non-zero; report the build diagnostics and fix or request resolution first.
+5. In the Run and Debug configuration picker, select `C#: Esi.AI.Studio [Default Configuration]`; do not launch with an undefined, stale, or unrelated target.
+6. Start exactly one server debug session with `csdevkit.debug.projectDebugLaunch` and the Studio server project selected.
+7. Wait for the debugger to attach, verify an active debug-session ID with `commandId: "csdevkit.debug.active.session"`, invoke `csharp_devkit_execute_command` using `commandId: "csdevkit.debug.check.host.readyness"`, and verify the shared browser page at `http://localhost:7010`.
+8. Reuse the existing shared browser page when possible, reload the target route, and verify the behavior that motivated the debug session.
+9. For WebAssembly breakpoints, verify the `inspectUri` in the server launch profile and use the `blazorwasm` attach configuration only when an explicit browser attach is needed.
+10. At the end of the task, leave the single intended session running only when further interactive verification is expected; otherwise stop it cleanly.
 
 When the active session only needs to be refreshed, execute `csdevkit.debug.restart` with `csharp_devkit_execute_command`, then execute `csdevkit.debug.active.session` and `csdevkit.debug.check.host.readyness`, reselect `C#: Esi.AI.Studio [Default Configuration]` in Run and Debug when required, and verify the active session and host readiness after the restart.
 
 ### Change routing: Hot Reload versus restart
 
 - For `.razor`, `.razor.css`, CSS, markup, and other client/UI changes, keep the active Studio debug session running and invoke `csdevkit.debug.hotReload` through `csharp_devkit_execute_command`. Verify the result in the existing browser page without a page reload when possible.
-- Do not stop the session, run a separate build, or restart only because a UI change was made. Use `csdevkit.debug.showHotReloadPanel` only when Hot Reload diagnostics are needed; the panel contents are not returned by EsiMCP.
+- After such a UI edit, `csdevkit.debug.hotReload` is the agent's immediate next validation action. Do not run a separate build, test, `get_errors`, or diff-only check first; those do not replace Hot Reload while the Studio debug session is active.
+- Do not stop the session, run a separate build, or restart only because a UI change was made. Use `csdevkit.debug.showHotReloadPanel` only to open the VS Code panel interactively; its panel text is not returned by EsiMCP.
+- After Hot Reload, a restart, or a failed browser check, use `csdevkit.debug.output.diagnostics` with the active session ID to read the buffered Debug Console output. Inspect `lastLine` first for the latest error or readiness state, and inspect `output` when surrounding context is needed. Do not claim that the Debug Console is unreadable when this command returns a session object.
 - Use `csdevkit.debug.restart` only when Hot Reload reports that the change cannot be applied, or when the change affects server/project files, dependencies, startup configuration, or another runtime boundary that requires recompilation.
 - Before a required separate build or test, stop the active Studio debug session first and verify that port `7010` is free. For UI-only changes, Hot Reload takes precedence over a build.
 
@@ -90,7 +93,7 @@ C# Dev Kit 3.20.199 now exposes these lifecycle and diagnostic commands through 
 5. For a refresh, call `{ "commandId": "csdevkit.debug.restart", "arguments": [] }`, then query the new active session and run the readiness command again.
 6. Confirm a reachable browser page before browser checks.
 
-For structured diagnostics, call `{ "commandId": "csdevkit.debug.output.diagnostics", "arguments": [{ "sessionId": "<active-session-id>" }] }`. The verified response included `bufferedCharacters: 15337` and `readinessStringSeen: true`. The readiness command returned `{ "ready": true }`; these are the C# Dev Kit bridge checks, distinct from the legacy EsiMCP host-readiness helper.
+For structured diagnostics, call `{ "commandId": "csdevkit.debug.output.diagnostics", "arguments": [{ "sessionId": "<active-session-id>" }] }`. The response includes `sessionId`, `bufferedCharacters`, `readinessStringSeen`, `output`, and `lastLine`. Use `lastLine` as the concise answer when the user asks for the last Debug Console line; use `output` to investigate the surrounding messages. If no session is active, the command returns `null`, so first call `csdevkit.debug.active.session` and do not infer a console failure from `null`. The readiness command returned `{ "ready": true }`; these are the C# Dev Kit bridge checks, distinct from the legacy EsiMCP host-readiness helper.
 
 ### Verified Razor Hot Reload check
 

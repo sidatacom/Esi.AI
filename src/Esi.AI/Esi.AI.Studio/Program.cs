@@ -30,7 +30,14 @@ catch (AbandonedMutexException)
 {
 }
 
-var builder = WebApplication.CreateBuilder(args);
+BackendRuntimePaths.PrepareSyclRuntimeEnvironment(AppContext.BaseDirectory);
+BackendRuntimePaths.PrependLibraryPath(BackendRuntimePaths.GetLlamaDirectory("SYCL", AppContext.BaseDirectory));
+
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory
+});
 builder.WebHost.UseStaticWebAssets();
 
 // Add services to the container.
@@ -117,8 +124,11 @@ builder.Services.AddSingleton<OpenVinoLoadGate>();
 builder.Services.AddSingleton<OpenVinoModelLoader>();
 builder.Services.AddSingleton<OpenVinoDiagnosticsService>();
 builder.Services.AddSingleton<OpenVinoDriverInstaller>();
+builder.Services.Configure<BackendSandboxOptions>(builder.Configuration.GetSection("BackendSandbox"));
+builder.Services.AddSingleton<BackendSandboxBroker>();
 builder.Services.AddSingleton<IBackendDiagnosticsService, BackendDiagnosticsService>();
-builder.Services.Configure<BackendRuntimeOptions>(builder.Configuration.GetSection("BackendRuntime"));
+builder.Services.AddSingleton<BackendRuntimeCatalogService>();
+builder.Services.AddSingleton<IBackendRuntimeCatalog>(services => services.GetRequiredService<BackendRuntimeCatalogService>());
 builder.Services.AddHttpClient("BackendRuntime", client =>
 {
     client.DefaultRequestHeaders.UserAgent.ParseAdd("Esi.AI.Studio/1.0");
@@ -127,7 +137,7 @@ builder.Services.AddHttpClient("BackendRuntime", client =>
 builder.Services.AddSingleton<BackendRuntimeInstaller>(services =>
     new BackendRuntimeInstaller(
         services.GetRequiredService<IHttpClientFactory>().CreateClient("BackendRuntime"),
-        services.GetRequiredService<IOptions<BackendRuntimeOptions>>()));
+        services.GetRequiredService<IBackendRuntimeCatalog>().ReadAsync));
 builder.Services.AddSingleton<BackendPrerequisiteProvisioner>();
 builder.Services.AddSingleton<BackendRequirementMonitor>();
 builder.Services.AddHostedService(services => services.GetRequiredService<BackendRequirementMonitor>());
@@ -148,7 +158,6 @@ builder.Services.AddSingleton<ModelRuntime>(services =>
 builder.Services.AddSingleton<IModelRuntimeShutdown>(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddHostedService(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddSingleton<IInferenceFailureCoordinator, InferenceFailureCoordinator>();
-builder.Services.Configure<InferenceTimeoutOptions>(builder.Configuration.GetSection("InferenceTimeout"));
 builder.Services.AddSingleton<ApplicationSettingsService>();
 builder.Services.AddSingleton<InferenceTimeoutPolicy>();
 builder.Services.AddScoped<IModelDownloadEvents, ServerModelDownloadEvents>();
@@ -175,14 +184,12 @@ builder.Services.AddHttpClient<IOmniRouteClient, OmniRouteClient>((services, cli
     client.BaseAddress = baseUri;
     client.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.TimeoutSeconds));
 });
-builder.Services.Configure<ModelLibraryOptions>(builder.Configuration.GetSection("ModelLibrary"));
 builder.Services.AddSingleton<ILocalModelScanner, LocalModelScanner>();
 builder.Services.AddSingleton<ModelLibraryService>(services =>
     new ModelLibraryService(
         services.GetRequiredService<IHttpClientFactory>().CreateClient("HuggingFace"),
         services.GetRequiredService<IHubContext<DataHub>>(),
         services.GetRequiredService<IDbContextFactory<ApplicationDbContext>>(),
-        services.GetRequiredService<IOptions<ModelLibraryOptions>>(),
         services.GetRequiredService<ILocalModelScanner>()));
 builder.Services.AddSingleton<ILocalModelCatalog>(services => services.GetRequiredService<ModelLibraryService>());
 builder.Services.AddSingleton<IModelDirectoryCatalog>(services => services.GetRequiredService<ModelLibraryService>());
@@ -200,6 +207,8 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     db.Database.Migrate();
+    await scope.ServiceProvider.GetRequiredService<ApplicationSettingsService>().SeedAsync();
+    await scope.ServiceProvider.GetRequiredService<BackendRuntimeCatalogService>().SeedAsync();
 
     var library = scope.ServiceProvider.GetRequiredService<ModelLibraryService>();
     await library.RestoreDownloadsAsync();

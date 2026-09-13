@@ -29,6 +29,25 @@ public sealed class BackendReferenceModelTests
 
     [TestMethod]
     [TestCategory("BackendReference")]
+    public async Task LoadReferenceModel_LlamaSycl_GeneratesResponse()
+    {
+        var modelPath = GetConfiguredPath("ESI_LLAMA_SYCL_MODEL_PATH") ?? GetConfiguredPath("ESI_LLAMA_MODEL_PATH");
+        if (modelPath is null)
+        {
+            Assert.Inconclusive("Set ESI_LLAMA_SYCL_MODEL_PATH or ESI_LLAMA_MODEL_PATH to run the LLama SYCL reference model test.");
+            return;
+        }
+
+        using var loader = new LlamaModelLoader();
+        await loader.LoadAsync(modelPath, "SYCL", -1);
+        using var session = loader.CreateChatSession("Answer briefly.");
+        var response = await session.GenerateAsync([new ChatMessage("user", "Reply with exactly: LLama SYCL reference passed.")]);
+
+        Assert.IsFalse(string.IsNullOrWhiteSpace(response));
+    }
+
+    [TestMethod]
+    [TestCategory("BackendReference")]
     public async Task LoadReferenceModel_OpenVino_GeneratesResponse()
     {
         var modelPath = GetConfiguredPath("ESI_OPENVINO_MODEL_PATH");

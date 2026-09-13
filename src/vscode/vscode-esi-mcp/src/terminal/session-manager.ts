@@ -363,12 +363,15 @@ export class SessionManager {
     return sessionId ? this.debugHostReadyBySession.get(sessionId) === true : this.debugHostReadyTerminal !== null;
   }
 
-  getDebugConsoleDiagnostics(sessionId: string): { sessionId: string; bufferedCharacters: number; readinessStringSeen: boolean } {
+  getDebugConsoleDiagnostics(sessionId: string): { sessionId: string; bufferedCharacters: number; readinessStringSeen: boolean; output: string; lastLine: string } {
     const output = this.debugConsoleOutputBySession.get(sessionId) ?? "";
+    const lastLine = output.split(/\r\n|\n|\r/).filter((line) => line.length > 0).at(-1) ?? "";
     return {
       sessionId,
       bufferedCharacters: output.length,
       readinessStringSeen: output.includes(this.getDebugReadyString()),
+      output,
+      lastLine,
     };
   }
 

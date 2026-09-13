@@ -39,7 +39,25 @@
                             }
                             @if (message.Role == "assistant" && message.TokenCount is not null)
                             {
-                                <div class="generation-stats">@message.TokenCount tokens · @message.TokensPerSecond?.ToString("F1") tok/s</div>
+                                <div class="generation-stats">
+                                    @message.TokenCount tokens · @FormatDecodeRate(message) decode tok/s
+                                    @if (message.TokensPerSecond is not null)
+                                    {
+                                        <span>Total @message.TokensPerSecond.Value.ToString("F1") tok/s</span>
+                                    }
+                                    @if (message.TimeToFirstTokenMs is not null)
+                                    {
+                                        <span>TTFT @FormatMilliseconds(message.TimeToFirstTokenMs)</span>
+                                    }
+                                    @if (message.PrefillDurationMs is not null)
+                                    {
+                                        <span>Prefill @FormatMilliseconds(message.PrefillDurationMs)</span>
+                                    }
+                                    @if (message.DecodeDurationMs is not null)
+                                    {
+                                        <span>Decode @FormatMilliseconds(message.DecodeDurationMs)</span>
+                                    }
+                                </div>
                             }
                             @if (!string.IsNullOrWhiteSpace(display.Thinking))
                             {
@@ -98,6 +116,17 @@
 </style>
 
 @code {
+
+    private static string FormatMilliseconds(double? milliseconds) => milliseconds is double value
+        ? value >= 1000 ? $"{value / 1000d:F1}s" : $"{value:F0}ms"
+        : "-";
+    private static string FormatDecodeRate(PersistedChatMessage message)
+    {
+        if (message.TokenCount is int tokenCount && message.DecodeDurationMs is > 0)
+            return (tokenCount / (message.DecodeDurationMs.Value / 1000d)).ToString("F1");
+
+        return message.TokensPerSecond?.ToString("F1") ?? "-";
+    }
     private readonly List<ChatSummary> chatSummaries = [];
     private readonly List<LoadedModelStatus> loadedModels = [];
     private readonly List<LocalModel> localModels = [];

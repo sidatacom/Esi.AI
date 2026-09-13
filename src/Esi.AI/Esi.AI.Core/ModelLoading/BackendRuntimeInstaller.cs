@@ -18,31 +18,41 @@ public sealed class BackendRuntimeInstaller
     private static readonly IReadOnlyDictionary<string, string[]> DefaultRequiredFiles = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
     {
         ["cuda12"] = ["libllama.so", "libggml.so", "libggml-base.so", "libggml-cuda.so"],
-        ["sycl"] = ["libllama.so", "libggml.so", "libggml-base.so", "libggml-sycl.so"],
+        ["sycl"] = ["libllama.so", "libggml.so", "libggml-base.so", "libggml-sycl.so", "libur_adapter_level_zero.so", "libur_adapter_level_zero_v2.so.0"],
         ["vulkan"] = ["libllama.so", "libggml.so", "libggml-base.so", "libggml-vulkan.so"],
         ["cpu"] = ["libllama.so", "libggml.so", "libggml-base.so"]
     };
 
     private readonly HttpClient httpClient;
-    private readonly BackendRuntimeOptions options;
+    private readonly Func<CancellationToken, Task<BackendRuntimeOptions>> optionsReader;
+    private readonly string applicationDirectoryBase;
     private readonly SemaphoreSlim catalogLock = new(1, 1);
     private readonly SemaphoreSlim installLock = new(1, 1);
     private IReadOnlyList<BackendRuntimePackage>? catalog;
+    private bool allowLocalPackages;
 
     /// <summary>Creates a backend runtime installer using the configured gallery.</summary>
     public BackendRuntimeInstaller(HttpClient httpClient, IOptions<BackendRuntimeOptions> options, string? applicationDirectory = null)
+        : this(httpClient, _ => Task.FromResult(options.Value), applicationDirectory ?? options.Value.InstallationDirectory)
+    {
+    }
+
+    /// <summary>Creates a backend runtime installer backed by a current runtime catalog.</summary>
+    public BackendRuntimeInstaller(HttpClient httpClient, Func<CancellationToken, Task<BackendRuntimeOptions>> optionsReader, string? applicationDirectory = null)
     {
         this.httpClient = httpClient;
-        this.options = options.Value;
-        ApplicationDirectory = Path.GetFullPath(applicationDirectory ?? this.options.InstallationDirectory ?? AppContext.BaseDirectory);
+        this.optionsReader = optionsReader ?? throw new ArgumentNullException(nameof(optionsReader));
+        applicationDirectoryBase = Path.GetFullPath(applicationDirectory ?? AppContext.BaseDirectory);
+        ApplicationDirectory = applicationDirectoryBase;
     }
 
     /// <summary>Gets the application directory that contains the native runtime folders.</summary>
-    public string ApplicationDirectory { get; }
+    public string ApplicationDirectory { get; private set; }
 
     /// <summary>Returns whether a configured package can repair the selected route.</summary>
     public bool CanInstall(ConfigurationBackend backend, string route) =>
-        options.Packages.Any(package => package.Backend == backend && NormalizeRoute(package.Route) == NormalizeRoute(route));
+        (catalog ?? [])
+            .Any(package => package.Backend == backend && NormalizeRoute(package.Route) == NormalizeRoute(route));
 
     /// <summary>Returns whether the configured or remote gallery can repair the selected route.</summary>
     public async Task<bool> CanInstallAsync(ConfigurationBackend backend, string route, CancellationToken cancellationToken = default) =>
@@ -83,8 +93,26 @@ public sealed class BackendRuntimeInstaller
             ValidatePackage(package);
             var targetDirectory = GetTargetDirectory(package);
             var requiredFiles = GetRequiredFiles(package);
-            if (requiredFiles.All(file => File.Exists(Path.Combine(targetDirectory, file))))
+            var requiredFilesInstalled = requiredFiles.All(file => File.Exists(Path.Combine(targetDirectory, file)));
+            if (requiredFilesInstalled && NormalizeRoute(package.Route) != "sycl")
                 return CreateStatus(package) with { Message = "The backend runtime is already installed." };
+            if (requiredFilesInstalled && NormalizeRoute(package.Route) == "sycl" && !string.IsNullOrWhiteSpace(package.LocalPath))
+            {
+                var localSourceDirectory = ResolveLocalPath(package.LocalPath);
+                foreach (var dependency in Directory.EnumerateFiles(localSourceDirectory, "*.so*", SearchOption.AllDirectories))
+                {
+                    var target = Path.Combine(targetDirectory, Path.GetFileName(dependency));
+                    if (!File.Exists(target))
+                        File.Copy(dependency, target);
+                }
+
+                return CreateStatus(package) with
+                {
+                    State = BackendRuntimeState.Installed,
+                    IsInstalled = true,
+                    Message = "SYCL runtime dependencies installed. Restart Studio before loading a model."
+                };
+            }
             if (Directory.Exists(targetDirectory) && Directory.EnumerateFileSystemEntries(targetDirectory).Any())
                 return FailedStatus(package, "The native runtime directory contains files and cannot be replaced while Studio is running.");
 
@@ -94,7 +122,7 @@ public sealed class BackendRuntimeInstaller
             var activationDirectory = Path.Combine(stagingDirectory, "activation");
             Directory.CreateDirectory(stagingDirectory);
             var sourceDirectory = await PrepareRuntimeSourceAsync(package, archivePath, extractedDirectory, cancellationToken).ConfigureAwait(false);
-            CopyRequiredFiles(sourceDirectory, activationDirectory, requiredFiles);
+            CopyRequiredFiles(sourceDirectory, activationDirectory, requiredFiles, NormalizeRoute(package.Route));
             await File.WriteAllTextAsync(
                 Path.Combine(activationDirectory, ".esi-runtime.json"),
                 JsonSerializer.Serialize(new { package.Version, packageId = package.Id, package.Route }),
@@ -129,14 +157,13 @@ public sealed class BackendRuntimeInstaller
 
     private async Task<IReadOnlyList<BackendRuntimePackage>> GetPackagesAsync(CancellationToken cancellationToken)
     {
-        if (catalog is not null)
-            return catalog;
-
         await catalogLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (catalog is not null)
-                return catalog;
+            var options = await optionsReader(cancellationToken).ConfigureAwait(false);
+            allowLocalPackages = options.AllowLocalPackages;
+            ApplicationDirectory = Path.GetFullPath(options.InstallationDirectory ?? applicationDirectoryBase);
+            catalog = options.Packages;
 
             if (!string.IsNullOrWhiteSpace(options.CatalogUrl))
             {
@@ -153,7 +180,6 @@ public sealed class BackendRuntimeInstaller
                 }
             }
 
-            catalog ??= options.Packages;
             return catalog;
         }
         finally
@@ -266,7 +292,11 @@ public sealed class BackendRuntimeInstaller
         }
     }
 
-    private static void CopyRequiredFiles(string sourceDirectory, string activationDirectory, IReadOnlyList<string> requiredFiles)
+    private static void CopyRequiredFiles(
+        string sourceDirectory,
+        string activationDirectory,
+        IReadOnlyList<string> requiredFiles,
+        string route)
     {
         Directory.CreateDirectory(activationDirectory);
         foreach (var requiredFile in requiredFiles)
@@ -275,6 +305,16 @@ public sealed class BackendRuntimeInstaller
             if (matches.Length != 1)
                 throw new InvalidOperationException($"The backend runtime source must contain exactly one '{requiredFile}' file.");
             File.Copy(matches[0], Path.Combine(activationDirectory, requiredFile));
+        }
+
+        if (route != "sycl")
+            return;
+
+        foreach (var dependency in Directory.EnumerateFiles(sourceDirectory, "*.so*", SearchOption.AllDirectories))
+        {
+            var target = Path.Combine(activationDirectory, Path.GetFileName(dependency));
+            if (!File.Exists(target))
+                File.Copy(dependency, target);
         }
     }
 
@@ -305,7 +345,7 @@ public sealed class BackendRuntimeInstaller
             throw new InvalidOperationException("The backend runtime package contains an invalid native file name.");
         if (!string.IsNullOrWhiteSpace(package.LocalPath))
         {
-            if (!options.AllowLocalPackages)
+            if (!allowLocalPackages)
                 throw new InvalidOperationException("Local backend runtime packages are disabled.");
         }
         else

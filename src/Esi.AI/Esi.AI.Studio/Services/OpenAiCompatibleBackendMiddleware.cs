@@ -182,7 +182,7 @@ public sealed class OpenAiCompatibleBackendMiddleware(
                     streamer,
                     ToOpenVinoOptions(request.Options),
                     imageTensors.Length == 0 ? null : imageTensors);
-                return new GenerationResult(result.Text, result.TokenCount, TimeSpan.Zero, result.TokensPerSecond, result.PromptTokenCount, result.FinishReason, result.ToolCalls);
+                return new GenerationResult(result.Text, result.TokenCount, TimeSpan.Zero, result.TokensPerSecond, result.PromptTokenCount, result.FinishReason, result.ToolCalls, result.TimeToFirstTokenMs, result.PrefillDurationMs, result.DecodeDurationMs);
             }
             finally
             {

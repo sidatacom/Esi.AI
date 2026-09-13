@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>aspnet-Esi_AI_Studio-06d2dd05-e7aa-451c-9de0-62a22d6b719a</UserSecretsId>
     <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <NoWarn>$(NoWarn);NU1603</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,6 +18,7 @@
     <ProjectReference Include="..\Esi.AI.Studio.Contracts\Esi.AI.Studio.Contracts.csproj" Watch="false" />
     <ProjectReference Include="..\Esi.AI.Core\Esi.AI.Core.csproj" Watch="false" />
     <ProjectReference Include="..\Esi.AI.Models\Esi.AI.Models.csproj" Watch="false" />
+    <ProjectReference Include="..\Esi.AI.BackendWorker\Esi.AI.BackendWorker.csproj" />
     <ProjectReference Include="..\..\..\origins\sidatacom\fluentui-blazor\src\Core\Microsoft.FluentUI.AspNetCore.Components.csproj" Watch="false" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.11" />
     <PackageReference Include="Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore" Version="10.0.11" />

@@ -15,7 +15,7 @@ public sealed class BackendRuntimeInstallerTests
     public async Task InstallAsync_VerifiedPackage_ActivatesRuntimeFiles()
     {
         var applicationDirectory = Path.Combine(Path.GetTempPath(), $"esi-ai-runtime-{Guid.NewGuid():N}");
-        var archive = CreateArchive("libllama.so", "libggml.so", "libggml-base.so", "libggml-sycl.so");
+        var archive = CreateArchive("libllama.so", "libggml.so", "libggml-base.so", "libggml-sycl.so", "libur_adapter_level_zero.so", "libur_adapter_level_zero_v2.so.0", "libze_loader.so.1", "libze_intel_gpu.so.1");
         var package = CreatePackage(Convert.ToHexString(SHA256.HashData(archive)));
         var installer = CreateInstaller(applicationDirectory, archive, package);
 
@@ -98,6 +98,38 @@ public sealed class BackendRuntimeInstallerTests
 
             Assert.IsTrue(result.IsInstalled);
             Assert.IsTrue(File.Exists(Path.Combine(applicationDirectory, "runtimes", "linux-x64", "native", "sycl", "libmtmd.so")));
+        }
+        finally
+        {
+            DeleteDirectory(applicationDirectory);
+            DeleteDirectory(localRuntimeDirectory);
+        }
+    }
+
+    [TestMethod]
+    public async Task InstallAsync_LocalSyclRuntimeDirectory_AddsDependenciesToExistingRuntime()
+    {
+        var applicationDirectory = Path.Combine(Path.GetTempPath(), $"esi-ai-runtime-{Guid.NewGuid():N}");
+        var localRuntimeDirectory = Path.Combine(Path.GetTempPath(), $"esi-ai-sycl-{Guid.NewGuid():N}");
+        var targetDirectory = Path.Combine(applicationDirectory, "runtimes", "linux-x64", "native", "sycl");
+        Directory.CreateDirectory(localRuntimeDirectory);
+        Directory.CreateDirectory(targetDirectory);
+        foreach (var fileName in new[] { "libllama.so", "libggml.so", "libggml-base.so", "libggml-sycl.so", "libmtmd.so" })
+        {
+            File.WriteAllText(Path.Combine(localRuntimeDirectory, fileName), "native runtime");
+            File.WriteAllText(Path.Combine(targetDirectory, fileName), "native runtime");
+        }
+
+        File.WriteAllText(Path.Combine(localRuntimeDirectory, "libsycl.so.8"), "SYCL runtime dependency");
+        var package = CreatePackage(string.Empty, localRuntimeDirectory, ["libllama.so", "libggml.so", "libggml-base.so", "libggml-sycl.so", "libmtmd.so"]);
+        var installer = CreateInstaller(applicationDirectory, [], package, allowLocalPackages: true);
+
+        try
+        {
+            var result = await installer.InstallAsync(new BackendRuntimeInstallRequest(package.Id));
+
+            Assert.IsTrue(result.IsInstalled);
+            Assert.IsTrue(File.Exists(Path.Combine(targetDirectory, "libsycl.so.8")));
         }
         finally
         {

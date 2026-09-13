@@ -46,12 +46,12 @@ public sealed class LlamaRuntimeAdapter(LlamaModelLoader loader) : IBackendRunti
             request.GpuLayerCount,
             request.ContextSize,
             request.VulkanDeviceWeights,
-            new LlamaLoadOptions(advanced.MainGpu, advanced.SeqMax, advanced.RecurrentRollbackSnapshots, advanced.UseMemorymap,
+            new LlamaLoadOptions(advanced.SeqMax, advanced.RecurrentRollbackSnapshots, advanced.UseMemorymap,
                 advanced.UseDirectIO, advanced.UseMemoryLock, advanced.Threads, advanced.BatchThreads, advanced.BatchSize,
                 advanced.UBatchSize, advanced.Embeddings, advanced.NoKqvOffload, advanced.FlashAttention, advanced.VocabOnly,
                 advanced.OpOffload, advanced.SwaFull, advanced.KVUnified, advanced.RopeFrequencyBase, advanced.RopeFrequencyScale,
                 advanced.YarnExtrapolationFactor, advanced.YarnAttentionFactor, advanced.YarnBetaFast, advanced.YarnBetaSlow,
-                advanced.YarnOriginalContext, request.MmprojPath), cancellationToken);
+                advanced.YarnOriginalContext, request.MmprojPath, request.Devices ?? []), cancellationToken);
     }
 
     public LlamaChatSession CreateChatSession(string systemPrompt, string? modelPath = null) => loader.CreateChatSession(systemPrompt, modelPath);
@@ -76,7 +76,7 @@ public sealed class OpenVinoRuntimeAdapter(OpenVinoModelLoader loader) : IBacken
     {
         var status = loader.GetStatus();
         var loadedModels = status.IsModelLoaded && status.ModelPath is not null
-            ? new[] { new LoadedModelStatus(status.ModelPath, Backend, status.Device ?? RuntimeName, 0, 0, 0, [], null, status.LoadLog) }
+            ? new[] { new LoadedModelStatus(status.ModelPath, Backend, status.Device ?? RuntimeName, 0, 0, 0, [], null, status.LoadLog, IsModelLoaded: true) }
             : Array.Empty<LoadedModelStatus>();
         return new ModelLoadStatus(status.ModelPath, status.Device ?? RuntimeName, 0, 0, 0, 0, [], null, status.LoadLog,
             new Dictionary<string, float>(), status.IsModelLoaded, loadedModels);

@@ -121,6 +121,9 @@ public sealed class PythonInferenceServer : IDisposable
                 startInfo.ArgumentList.Add(argument);
             ApplyDeviceEnvironment(startInfo, devices, pythonExecutable);
 
+            if (!IsExecutable(pythonExecutable))
+                throw new InvalidOperationException($"The Python executable '{pythonExecutable}' was not found or is not executable.");
+
             var newProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             newProcess.OutputDataReceived += CaptureOutput;
             newProcess.ErrorDataReceived += CaptureOutput;
@@ -327,6 +330,15 @@ public sealed class PythonInferenceServer : IDisposable
                 errorLines.Add(line);
         }
         return string.Join(Environment.NewLine, errorLines);
+    }
+
+    private static bool IsExecutable(string path)
+    {
+        if (!File.Exists(path))
+            return false;
+
+        return !OperatingSystem.IsLinux()
+            || (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
     }
 
     private static void ApplyDeviceEnvironment(ProcessStartInfo startInfo, IReadOnlyList<string> devices, string pythonExecutable)

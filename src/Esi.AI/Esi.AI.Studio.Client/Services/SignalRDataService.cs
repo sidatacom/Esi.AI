@@ -142,6 +142,30 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         return settings;
     }
 
+    public async Task<BackendRuntimeOptions> BackendRuntimePackage_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<BackendRuntimeOptions>("BackendRuntimePackage_Read", cancellationToken);
+    }
+
+    public async Task<BackendRuntimeOptions> BackendRuntimePackage_CreateAsync(BackendRuntimeOptions options, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<BackendRuntimeOptions>("BackendRuntimePackage_Create", options, cancellationToken);
+    }
+
+    public async Task<BackendRuntimeOptions> BackendRuntimePackage_UpdateAsync(BackendRuntimeOptions options, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<BackendRuntimeOptions>("BackendRuntimePackage_Update", options, cancellationToken);
+    }
+
+    public async Task BackendRuntimePackage_DeleteAsync(string packageId, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("BackendRuntimePackage_Delete", packageId, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<ProviderTraceEntry>> ProviderTrace_ReadAsync(CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
@@ -272,6 +296,12 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     {
         await EnsureConnectedAsync(cancellationToken);
         return await connection.InvokeAsync<BackendRequirementState>("GetBackendRequirementState", cancellationToken);
+    }
+
+    public async Task<BackendRequirementState> RefreshBackendRequirementStateAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<BackendRequirementState>("RefreshBackendRequirementState", cancellationToken);
     }
 
     public async Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null)
