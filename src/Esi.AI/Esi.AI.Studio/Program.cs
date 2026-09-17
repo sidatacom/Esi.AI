@@ -174,16 +174,6 @@ builder.Services.AddHttpClient("HuggingFace", client =>
     if (!string.IsNullOrWhiteSpace(token))
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 });
-builder.Services.Configure<OmniRouteOptions>(builder.Configuration.GetSection("OmniRoute"));
-builder.Services.AddHttpClient<IOmniRouteClient, OmniRouteClient>((services, client) =>
-{
-    var options = services.GetRequiredService<IOptions<OmniRouteOptions>>().Value;
-    if (!Uri.TryCreate(options.BaseUrl.TrimEnd('/') + "/v1/", UriKind.Absolute, out var baseUri))
-        throw new InvalidOperationException("OmniRoute:BaseUrl must be an absolute URI.");
-
-    client.BaseAddress = baseUri;
-    client.Timeout = TimeSpan.FromSeconds(Math.Max(1, options.TimeoutSeconds));
-});
 builder.Services.AddSingleton<ILocalModelScanner, LocalModelScanner>();
 builder.Services.AddSingleton<ModelLibraryService>(services =>
     new ModelLibraryService(

@@ -619,8 +619,6 @@ public sealed class OpenAiCompatibleControllerTests
         var controller = new OpenAiCompatibleController(
             runtime,
             catalog ?? new EmptyLocalModelCatalog(),
-            new DisabledOmniRouteClient(),
-            Options.Create(new OmniRouteOptions()),
             new OpenAiCompatibleBackendMiddleware(runtime, new InferenceScheduler()),
             dataService)
         {
@@ -642,18 +640,6 @@ public sealed class OpenAiCompatibleControllerTests
     {
         public Task<IReadOnlyList<LocalModelInfo>> ScanLocalModelsAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(models);
-    }
-
-    private sealed class DisabledOmniRouteClient : IOmniRouteClient
-    {
-        public Task<OmniRouteModelsResult> ListModelsAsync(CancellationToken cancellationToken) =>
-            Task.FromResult(new OmniRouteModelsResult(false, null));
-
-        public Task<HttpResponseMessage> CreateChatCompletionAsync(
-            OpenAiChatRequest request,
-            string? authorizationHeader,
-            CancellationToken cancellationToken) =>
-            throw new NotSupportedException();
     }
 
     private sealed class TestDbContextFactory(DbContextOptions<ApplicationDbContext> options) : IDbContextFactory<ApplicationDbContext>

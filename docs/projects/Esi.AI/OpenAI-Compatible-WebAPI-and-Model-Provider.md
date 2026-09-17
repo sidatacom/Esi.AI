@@ -48,17 +48,14 @@ Der Controller ist unter `v1` geroutet und stellt zwei Endpunkte bereit:
 
 | Methode | Pfad | Zweck |
 | --- | --- | --- |
-| `GET` | `/v1/models` | Modelle aus dem lokalen Katalog oder von OmniRoute auflisten |
+| `GET` | `/v1/models` | Modelle aus dem lokalen Katalog auflisten |
 | `POST` | `/v1/chat/completions` | Eine Chat Completion erzeugen, optional als SSE-Stream |
 
 Es gibt dafür keinen zusätzlichen Browser- oder Feature-Controller. Die API bleibt auf den OpenAI-kompatiblen Vertrag begrenzt.
 
 ### Modellauflistung
 
-`GET /v1/models` verwendet abhängig von der Konfiguration einen von zwei Pfaden:
-
-- Ist OmniRoute aktiviert, wird die Modellauflistung an den konfigurierten Upstream weitergereicht.
-- Im lokalen Betrieb werden Modelle aus dem lokalen Katalog beziehungsweise aus `DataService.LocalModel_ReadAsync` gelesen.
+`GET /v1/models` liest Modelle aus dem lokalen Katalog beziehungsweise aus `DataService.LocalModel_ReadAsync`.
 
 Jedes Modell enthält mindestens `id`, `object`, `created` und `owned_by`. Zusätzlich werden der Anzeigename, `capabilities` und das Flag `loaded` geliefert. Modelle, die gerade geladen werden, werden nicht als aktiv geladen gemeldet. Bereits geladene Modelle werden ergänzt, auch wenn sie im lokalen Katalog nicht mehr auftauchen.
 

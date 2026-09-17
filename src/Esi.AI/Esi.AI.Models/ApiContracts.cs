@@ -326,25 +326,6 @@ public sealed record OpenAiBackendChatRequest(
     ChatGenerationOptions Options,
     InferenceTimeoutSettings? InferenceTimeout = null);
 
-/// <summary>Configures the optional OmniRoute OpenAI-compatible upstream.</summary>
-public sealed class OmniRouteOptions
-{
-    /// <summary>Gets or sets a value indicating whether OmniRoute should be used as an upstream.</summary>
-    public bool Enabled { get; set; }
-
-    /// <summary>Gets or sets the base URL of the OmniRoute server.</summary>
-    public string BaseUrl { get; set; } = "http://localhost:20128";
-
-    /// <summary>Gets or sets the optional bearer token used for OmniRoute requests.</summary>
-    public string? ApiKey { get; set; }
-
-    /// <summary>Gets or sets a value indicating whether the incoming bearer token may be forwarded.</summary>
-    public bool ForwardAuthorizationHeader { get; set; }
-
-    /// <summary>Gets or sets the request timeout in seconds.</summary>
-    public int TimeoutSeconds { get; set; } = 120;
-}
-
 public sealed record OpenAiChatMessage(
     string Role,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] object? Content = null,

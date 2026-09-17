@@ -5,7 +5,6 @@ using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
 using Esi.AI.Studio.Services;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Options;
 
 namespace Esi.AI.Studio.Controllers;
 
@@ -14,8 +13,6 @@ namespace Esi.AI.Studio.Controllers;
 public sealed class OpenAiCompatibleController(
     ModelRuntime modelRuntime,
     ILocalModelCatalog localModelCatalog,
-    IOmniRouteClient omniRouteClient,
-    IOptions<OmniRouteOptions> omniRouteOptions,
     OpenAiCompatibleBackendMiddleware backendMiddleware,
     DataService? dataService = null,
     ProviderTraceStore? providerTraceStore = null) : ControllerBase
@@ -26,15 +23,6 @@ public sealed class OpenAiCompatibleController(
     [HttpGet("models")]
     public async Task<IActionResult> ListModels(CancellationToken cancellationToken)
     {
-        if (omniRouteOptions.Value.Enabled)
-        {
-            var upstreamModels = await omniRouteClient.ListModelsAsync(cancellationToken).ConfigureAwait(false);
-            if (upstreamModels.Succeeded)
-                return Ok(upstreamModels.Models);
-
-            return StatusCode(upstreamModels.StatusCode, CreateError("OmniRoute model discovery failed.", "upstream_error"));
-        }
-
         var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         if (dataService is not null)
         {
@@ -204,15 +192,12 @@ public sealed class OpenAiCompatibleController(
             "Request empfangen",
             "POST /v1/chat/completions",
             SerializeTracePayload(request)).ConfigureAwait(false);
-        var validationError = ValidateRequest(request, omniRouteOptions.Value.Enabled);
+        var validationError = ValidateRequest(request);
         if (validationError is not null)
             return BadRequest(validationError);
 
         try
         {
-            if (omniRouteOptions.Value.Enabled)
-                return await ForwardToOmniRouteAsync(requestId, request!, cancellationToken).ConfigureAwait(false);
-
             if (request!.Stream)
             {
                 await StreamCompletionAsync(
@@ -252,8 +237,8 @@ public sealed class OpenAiCompatibleController(
         }
         catch (HttpRequestException)
         {
-            await TraceAsync(requestId, "Backend", "error", "Upstream nicht erreichbar", "OmniRoute konnte nicht erreicht werden").ConfigureAwait(false);
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, CreateError("OmniRoute is unavailable.", "upstream_error"));
+            await TraceAsync(requestId, "Backend", "error", "Backend nicht erreichbar", "Das lokale Backend konnte nicht erreicht werden").ConfigureAwait(false);
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, CreateError("The local backend is unavailable.", "backend_error"));
         }
         catch (ArgumentException exception)
         {
@@ -286,31 +271,6 @@ public sealed class OpenAiCompatibleController(
             await WriteSseErrorAsync(exception.Message, cancellationToken).ConfigureAwait(false);
             return new EmptyResult();
         }
-    }
-
-    private async Task<IActionResult> ForwardToOmniRouteAsync(string requestId, OpenAiChatRequest request, CancellationToken cancellationToken)
-    {
-        await TraceAsync(requestId, "Routing", "out", "An OmniRoute geroutet", "OpenAI-kompatibler Upstream", SerializeTracePayload(request)).ConfigureAwait(false);
-        using var upstreamResponse = await omniRouteClient.CreateChatCompletionAsync(
-            request,
-            Request.Headers.Authorization.ToString(),
-            cancellationToken).ConfigureAwait(false);
-
-        if (!upstreamResponse.IsSuccessStatusCode)
-            return StatusCode((int)upstreamResponse.StatusCode, CreateError("OmniRoute chat completion failed.", "upstream_error"));
-
-        Response.StatusCode = (int)upstreamResponse.StatusCode;
-        if (upstreamResponse.Content.Headers.ContentType is not null)
-            Response.ContentType = upstreamResponse.Content.Headers.ContentType.ToString();
-        if (upstreamResponse.Headers.CacheControl is not null)
-            Response.Headers.CacheControl = upstreamResponse.Headers.CacheControl.ToString();
-        if (request.Stream)
-            Response.Headers["X-Accel-Buffering"] = "no";
-
-        await upstreamResponse.Content.CopyToAsync(Response.Body, cancellationToken).ConfigureAwait(false);
-        await TraceAsync(requestId, "Backend", "in", "Antwort von OmniRoute", $"HTTP {(int)upstreamResponse.StatusCode} · {upstreamResponse.Content.Headers.ContentType}").ConfigureAwait(false);
-        await TraceAsync(requestId, "API", "out", "Antwort an Client", $"HTTP {(int)upstreamResponse.StatusCode}").ConfigureAwait(false);
-        return new EmptyResult();
     }
 
     private async Task StreamCompletionAsync(
