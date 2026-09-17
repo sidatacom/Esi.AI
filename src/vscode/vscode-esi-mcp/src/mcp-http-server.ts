@@ -2,12 +2,13 @@ import * as crypto from "node:crypto";
 import * as http from "node:http";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { CallToolRequestSchema, InitializeRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { CallToolRequestSchema, GetPromptRequestSchema, InitializeRequestSchema, ListPromptsRequestSchema, ListResourcesRequestSchema, ListResourceTemplatesRequestSchema, ListToolsRequestSchema, ReadResourceRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { isAllowedHttpRequest } from "./http-security.js";
 import { normalizeBindHosts, normalizePort } from "./config.js";
 import { createMcpRequestHandler } from "./mcp/server.js";
 import type { SessionManager } from "./terminal/session-manager.js";
 import type { DebugManager } from "./debug/manager.js";
+import type { MsAccessClient } from "./mcp/msaccess-client.js";
 
 type RequestHandler = (method: string, params?: unknown) => Promise<unknown>;
 type ClientSession = {
@@ -44,10 +45,15 @@ async function readBody(request: http.IncomingMessage): Promise<unknown> {
 }
 
 function createMcpSdkServer(requestHandler: RequestHandler): Server {
-  const server = new Server({ name: "EsiMCP", version: "1.0.30" }, { capabilities: { tools: {} } });
+  const server = new Server({ name: "EsiMCP", version: "1.0.32" }, { capabilities: { tools: {}, resources: {}, prompts: {} } });
   server.setRequestHandler(InitializeRequestSchema, (request) => requestHandler("initialize", request.params) as never);
   server.setRequestHandler(ListToolsRequestSchema, () => requestHandler("tools/list") as never);
   server.setRequestHandler(CallToolRequestSchema, (request) => requestHandler("tools/call", request.params) as never);
+  server.setRequestHandler(ListResourcesRequestSchema, (request) => requestHandler("resources/list", request.params) as never);
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, (request) => requestHandler("resources/templates/list", request.params) as never);
+  server.setRequestHandler(ReadResourceRequestSchema, (request) => requestHandler("resources/read", request.params) as never);
+  server.setRequestHandler(ListPromptsRequestSchema, (request) => requestHandler("prompts/list", request.params) as never);
+  server.setRequestHandler(GetPromptRequestSchema, (request) => requestHandler("prompts/get", request.params) as never);
   return server;
 }
 
@@ -135,6 +141,6 @@ export async function startMcpHttpServer(options: McpHttpServerOptions = {}): Pr
   };
 }
 
-export function createConfiguredMcpRequestHandler(sessionManager: SessionManager, debugManager: DebugManager): RequestHandler {
-  return createMcpRequestHandler(sessionManager, debugManager);
+export function createConfiguredMcpRequestHandler(sessionManager: SessionManager, debugManager: DebugManager, msAccessClient?: MsAccessClient): RequestHandler {
+  return createMcpRequestHandler(sessionManager, debugManager, msAccessClient);
 }

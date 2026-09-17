@@ -1,4 +1,3 @@
-  handler: (params: unknown, sessionManager: SessionManager, debugManager?: DebugManager) => Promise<McpToolResponse>;
 import { log, logError } from "../utils/logger.js";
 import type { SessionManager } from "../terminal/session-manager.js";
 import type { DebugManager } from "../debug/manager.js";
@@ -6,7 +5,9 @@ import type { McpToolResponse } from "../types/index.js";
 import { VSCODE_DEBUG_TOOLS } from "./tools/vscode-debug.js";
 import { VSCODE_TERMINAL_TOOLS } from "./tools/vscode-terminal.js";
 import { CSHARP_DEVKIT_TOOLS } from "./tools/csharp-devkit.js";
+import { MSACCESS_TOOLS } from "./tools/msaccess.js";
 import { toJsonSchema } from "./tools/schemas.js";
+import type { MsAccessClient } from "./msaccess-client.js";
 
 interface ToolDefinition {
   name: string;
@@ -16,6 +17,7 @@ interface ToolDefinition {
     params: unknown,
     sessionManager: SessionManager,
     debugManager?: DebugManager,
+    msAccessClient?: MsAccessClient,
   ) => Promise<McpToolResponse>;
 }
 
@@ -45,6 +47,16 @@ TOOLS.push(...CSHARP_DEVKIT_TOOLS.map((tool) => ({
   handler: async (params: unknown, sessionManager: SessionManager, debugManager?: DebugManager) => tool.handler(params, debugManager, sessionManager),
 })));
 
+TOOLS.push(...MSACCESS_TOOLS.map((tool) => ({
+  name: tool.name,
+  description: tool.description,
+  inputSchema: toJsonSchema(tool.schema),
+  handler: async (params: unknown, _sessionManager: SessionManager, _debugManager?: DebugManager, msAccessClient?: MsAccessClient) => {
+    if (!msAccessClient) throw new Error("Microsoft Access MCP client is unavailable");
+    return tool.handler(params, msAccessClient);
+  },
+})));
+
 export const TOOL_DEFINITIONS = TOOLS;
 
 /**
@@ -54,6 +66,7 @@ export const TOOL_DEFINITIONS = TOOLS;
 export function createMcpRequestHandler(
   sessionManager: SessionManager,
   debugManager?: DebugManager,
+  msAccessClient?: MsAccessClient,
 ): (method: string, params?: unknown) => Promise<unknown> {
   return async (method: string, params?: unknown): Promise<unknown> => {
     log(`MCP request: ${method}`);
@@ -64,10 +77,12 @@ export function createMcpRequestHandler(
         protocolVersion: "2024-11-05",
         capabilities: {
           tools: {},
+          resources: {},
+          prompts: {},
         },
         serverInfo: {
           name: "EsiMCP",
-          version: "1.0.30",
+          version: "1.0.32",
         },
       };
     }
@@ -99,7 +114,7 @@ export function createMcpRequestHandler(
       }
 
       try {
-        const result = await tool.handler(args, sessionManager, debugManager);
+        const result = await tool.handler(args, sessionManager, debugManager, msAccessClient);
         return result;
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : String(err);
@@ -111,6 +126,13 @@ export function createMcpRequestHandler(
           ...(errorCode ? { errorCode } : {}),
         };
       }
+    }
+
+    if (["resources/list", "resources/templates/list", "resources/read", "prompts/list", "prompts/get"].includes(method)) {
+      if (!msAccessClient) {
+        return { error: { code: -32000, message: "Microsoft Access MCP client is unavailable" } };
+      }
+      return msAccessClient.call(method, (params ?? {}) as Record<string, unknown>);
     }
 
     // Handle notifications (no response needed)

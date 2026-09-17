@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.32] - 2026-09-17
+
+### Added
+- Publish the current EsiMCP Access tools, resources, prompts, and documentation
+
+## [1.0.31] - 2026-09-17
+
+### Added
+- Wrap the Microsoft Access MCP submodule through namespaced list and execute commands
+
 ## [1.0.30] - 2026-09-13
 
 ### Added

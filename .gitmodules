@@ -23,3 +23,6 @@
 	path = origins/sidatacom/fluentui-blazor
 	url = https://github.com/sidatacom/fluentui-blazor.git
 	branch = dev-v5
+[submodule "origins/brickly26/MS-Access-mcp"]
+	path = origins/brickly26/MS-Access-mcp
+	url = https://github.com/brickly26/MS-Access-mcp.git

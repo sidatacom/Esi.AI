@@ -1,8 +1,8 @@
 {
   "name": "vscode-esi-mcp",
   "displayName": "EsiMCP",
-  "description": "Direct local HTTP MCP server for visible VS Code terminals and Debug MCP controls.",
-  "version": "1.0.30",
+  "description": "Direct local HTTP MCP server for VS Code terminals, debugging, C# Dev Kit, and Microsoft Access MCP operations.",
+  "version": "1.0.32",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
@@ -21,7 +21,8 @@
     "copilot",
     "model-context-protocol",
     "ai-tools",
-    "debug"
+    "debug",
+    "microsoft-access"
   ],
   "mcpName": "io.github.sidatacom/vscode-esi-mcp",
   "icon": "icon.png",
@@ -164,6 +165,38 @@
           "type": "number",
           "default": 300000,
           "description": "Auto-close idle sessions after this many milliseconds (0 = disabled)"
+        },
+        "esimcp.msAccessServerCommand": {
+          "type": "string",
+          "default": "dotnet",
+          "description": "Command used to start the Microsoft Access MCP server"
+        },
+        "esimcp.msAccessServerArguments": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "Arguments for the Microsoft Access MCP server; empty uses the bundled submodule project"
+        },
+        "esimcp.msAccessServerProject": {
+          "type": "string",
+          "default": "origins/brickly26/MS-Access-mcp/MS.Access.MCP.Official/MS.Access.MCP.Official.csproj",
+          "description": "Relative or absolute project path used by the default dotnet server command"
+        },
+        "esimcp.msAccessServerWorkingDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Working directory for the Microsoft Access MCP server"
+        },
+        "esimcp.msAccessDatabasePath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Access database path passed through ACCESS_DATABASE_PATH"
+        },
+        "esimcp.msAccessTimeoutMs": {
+          "type": "number",
+          "default": 120000,
+          "minimum": 1000,
+          "description": "Timeout for Microsoft Access MCP requests in milliseconds"
         }
       }
     }

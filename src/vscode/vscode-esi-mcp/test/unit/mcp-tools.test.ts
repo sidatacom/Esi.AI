@@ -22,6 +22,8 @@ describe("EsiMCP tool catalog", () => {
       "vscode_debug_execute_command",
       "csharp_devkit_list_commands",
       "csharp_devkit_execute_command",
+      "msaccess_list_commands",
+      "msaccess_execute_command",
     ]);
     expect(result.tools.every((tool) => tool.description.startsWith("EsiMCP "))).toBe(true);
   });

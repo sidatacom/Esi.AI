@@ -38,9 +38,10 @@ The Studio backend page brings together model configuration, GPU routing, backen
 
 - `src/Esi.AI/`: Esi.AI Studio, shared models and contracts, native runtime integrations, and tests.
 - `src/vscode/vscode-esi-ai-studio/`: VS Code language-model provider for Esi.AI Studio.
-- `src/vscode/vscode-esi-mcp/`: VS Code extension and MCP server components for debugging and terminal control.
+- `src/vscode/vscode-esi-mcp/`: VS Code extension and MCP server components for debugging, terminal control, and the Microsoft Access wrapper.
 - `origins/litellm/`: LiteLLM source submodule.
 - `origins/localai/`: LocalAI source submodule.
+- `origins/brickly26/MS-Access-mcp/`: Microsoft Access MCP server source submodule wrapped by EsiMCP.
 - `origins/sidatacom/`: Local forks of LLamaSharp, OpenVINO-CSharp-API, dotLLM, and Fluent UI Blazor.
 
 ## Referenced projects and greetings

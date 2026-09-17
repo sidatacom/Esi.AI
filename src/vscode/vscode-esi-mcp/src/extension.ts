@@ -4,10 +4,12 @@ import { SessionManager } from "./terminal/session-manager.js";
 import { DebugManager } from "./debug/manager.js";
 import { createConfiguredMcpRequestHandler, startMcpHttpServer, type McpHttpServer } from "./mcp-http-server.js";
 import { normalizeBindHosts, normalizePort } from "./config.js";
+import { MsAccessClient } from "./mcp/msaccess-client.js";
 
 let mcpHttpServer: McpHttpServer | undefined;
 let sessionManager: SessionManager | undefined;
 let debugManager: DebugManager | undefined;
+let msAccessClient: MsAccessClient | undefined;
 let statusBarItem: vscode.StatusBarItem | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
@@ -15,6 +17,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   log("EsiMCP extension activating...");
   sessionManager = new SessionManager();
   debugManager = new DebugManager();
+  msAccessClient = new MsAccessClient();
   sessionManager.attachDebugManager(debugManager);
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   statusBarItem.text = "$(terminal) EsiMCP: 0 sessions";
@@ -29,7 +32,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     port,
     bindHost: normalizeBindHosts(config.get("bindHost", ["127.0.0.1", "::1"])),
     timeoutInSeconds: config.get<number>("timeoutInSeconds", 30),
-    requestHandler: createConfiguredMcpRequestHandler(sessionManager, debugManager),
+    requestHandler: createConfiguredMcpRequestHandler(sessionManager, debugManager, msAccessClient),
   });
   context.subscriptions.push({ dispose: () => { void deactivate(); } });
   log(`EsiMCP direct HTTP server listening on port ${port}`);
@@ -43,5 +46,7 @@ export async function deactivate(): Promise<void> {
   sessionManager = undefined;
   debugManager?.dispose();
   debugManager = undefined;
+  msAccessClient?.dispose();
+  msAccessClient = undefined;
   disposeLogger();
 }

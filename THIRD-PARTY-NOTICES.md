@@ -9,6 +9,7 @@ Esi.AI is distributed under the Apache License, Version 2.0. This license applie
 | LLamaSharp | `origins/sidatacom/LLamaSharp` | MIT | Copyright (c) 2025 SciSharp STACK. The complete license is included in the component's `LICENSE` file. Source: https://github.com/SciSharp/LLamaSharp |
 | OpenVINO-CSharp-API | `origins/sidatacom/OpenVINO-CSharp-API` | Apache-2.0 | Copyright and license terms are included in the component's `LICENSE.txt` file. Source: https://github.com/guojin-yan/OpenVINO-CSharp-API |
 | dotLLM | `origins/sidatacom/dotLLM` | GPL-3.0 | Copyright and license terms are included in the component's `LICENSE` file. Source: https://github.com/sidatacom/dotLLM |
+| MS-Access-mcp | `origins/brickly26/MS-Access-mcp` | See upstream repository | Microsoft Access MCP server source and license terms are included in the component. Source: https://github.com/brickly26/MS-Access-mcp |
 
 ## Optional external engines
 

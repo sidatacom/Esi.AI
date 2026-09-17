@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/vscode-esi-mcp.svg)](https://npmjs.org/package/vscode-esi-mcp)
 
-MCP server that executes commands in **visible VSCode terminal tabs** with full output capture. Unlike inline execution, every command runs in a real terminal you can see, scroll, and interact with.
+Direct local HTTP MCP server for visible VS Code terminals, debugging, C# Dev Kit commands, and Microsoft Access MCP operations.
 
 ## Key Features
 
@@ -10,6 +10,8 @@ MCP server that executes commands in **visible VSCode terminal tabs** with full 
 - **Session Reuse**: The `run` tool automatically reuses idle sessions, creating new terminals only when needed.
 - **Long-Running Support**: Fire-and-forget execution with `waitForCompletion: false`, then poll output incrementally with `read`.
 - **Subagent Isolation**: Tag sessions with `agentId` to keep parallel agent workloads separated.
+- **Debug Lifecycle**: Start, inspect, stop, restart, and wait for readiness or debug events through allowlisted commands.
+- **Microsoft Access**: Proxy the upstream `MS-Access-mcp` server with 360 tools, 13 resources, 9 resource templates, and 9 prompts.
 
 ## Requirements
 
@@ -68,14 +70,26 @@ Available command IDs include `debug.start`, `debug.active.session`, `debug.stop
 `debug.restart` stops the active session and starts it again with a newly observed VS Code session ID. It accepts an optional `rebuildTaskName` that must exactly match a task from `tasks.json`, for example `{ "rebuildTaskName": "build" }`.
 Each entry returned by `vscode_debug_list_commands` also includes `argumentsSchema` with required fields, types, defaults, and descriptions.
 
-### C# Dev Kit
+### C# Dev Kit and Microsoft Access
 
 | Tool | Description |
 |------|-------------|
 | `csharp_devkit_list_commands` | List the commands declared by the installed Microsoft C# Dev Kit, including ID, title, keyboard shortcuts, menu contexts, and registration status. |
 | `csharp_devkit_execute_command` | Execute one command from the installed C# Dev Kit command manifest. The `commandId` must be declared by `ms-dotnettools.csdevkit`; optional arguments are forwarded to VS Code. |
+| `msaccess_list_commands` | List the tools exposed by the configured `MS-Access-mcp` stdio server, including the upstream Access schemas. |
+| `msaccess_execute_command` | Execute one upstream Access tool by `commandId`, forwarding its JSON arguments. |
 
 The C# Dev Kit tools expose only commands declared by the installed extension. Arbitrary VS Code command IDs are rejected.
+
+The Access wrapper also forwards the upstream MCP `resources/list`, `resources/templates/list`, `resources/read`, `prompts/list`, and `prompts/get` methods. Use the upstream list responses as the source of truth for exact schemas and arguments. These are MCP resource and prompt methods, not additional `msaccess_execute_command` IDs.
+
+The Access server provides:
+
+- 360 tools covering database lifecycle, tables, fields, queries, relationships, forms, reports, DAO recordsets, VBA, macros, metadata, DoCmd operations, security, printing, controls, dependencies, and pyodbc compatibility.
+- 13 static resources and 9 URI templates for schema, table data, controls, query SQL, VBA code, properties, indexes, and relationships.
+- 9 prompt templates for schema analysis, query optimization, debugging, normalization, data dictionaries, migration, performance, security, and index optimization.
+
+The upstream server requires Windows, Microsoft Access, and a compatible .NET runtime for COM/DAO operations. The EsiMCP submodule is located at `origins/brickly26/MS-Access-mcp`.
 The C# Dev Kit list includes `argumentsSchema` as a positional array. The extension manifest does not publish command-specific parameter metadata for declared commands, so those entries are intentionally generic; the virtual active-session, stop, and restart commands accept no arguments.
 
 For a new Esi.Web launch, dispatch `vscode_debug_execute_command` with `debug.start` and
@@ -109,9 +123,9 @@ PASS src/index.test.ts (5 tests)
 
 For builds, deployments, or any command that takes a while:
 
-```
-> Start 
 pm run build` without waiting, then check progress
+```
+> Start `npm run build` without waiting, then check progress
 ```
 
 The agent will:
@@ -127,9 +141,9 @@ For commands that need user input:
 > Run npm init and answer the prompts
 ```
 
-The agent will:
-1. Call `run` with 
 pm init`
+The agent will:
+1. Call `run` with `npm init`
 2. Call `read` to see the prompt
 3. Call `input` to send the answer
 
@@ -157,6 +171,12 @@ The extension reads configuration from VS Code settings under `esimcp.*`. Use di
 | `esimcp.debugConfigurationName` | string | empty | Default VS Code launch configuration used by `debug.start` |
 | `esimcp.debugReadyString` | string | `Now ready on:` | Text observed in live VS Code shell output by `debug.check.host.readyness` |
 | `esimcp.debugHostReadinessTimeoutSeconds` | number | 60 | Timeout for `debug.check.host.readyness` in seconds |
+| `esimcp.msAccessServerCommand` | string | `dotnet` | Executable used to start the Access MCP server |
+| `esimcp.msAccessServerArguments` | string[] | `[]` | Explicit server arguments; replaces the default `dotnet run` arguments when set |
+| `esimcp.msAccessServerProject` | string | `origins/brickly26/MS-Access-mcp/MS.Access.MCP.Official/MS.Access.MCP.Official.csproj` | Access MCP project used by the default command |
+| `esimcp.msAccessServerWorkingDirectory` | string | workspace root | Working directory for the Access MCP process |
+| `esimcp.msAccessDatabasePath` | string | empty | Optional path passed through `ACCESS_DATABASE_PATH` |
+| `esimcp.msAccessTimeoutMs` | number | 120000 | Timeout for Access MCP requests in milliseconds |
 
 For debugging, an explicit `configurationName` supplied to `debug.start` takes precedence over this setting. If neither is supplied, `testName` is used when present; otherwise EsiMCP creates a debug configuration from `fileFullPath`. `debug.start` reports debugger attachment; use `debug.check.host.readyness` separately for host readiness.
 
@@ -274,11 +294,13 @@ This commonly happens with commands that produce heavy TUI output (progress bars
 3. Commands execute in real VS Code terminals using the Shell Integration API
 4. Output is stored in circular buffers with pagination support for efficient reading
 
-## Latest Changes (1.0.7)
+## Latest Changes (1.0.31)
 
-- Added `debug_wait_for_event` for debugger pause, exception, continue, and termination events
-- Included available DAP exception details in paused events
-- Preserved events until the agent retrieves them
+- Added the `MS-Access-mcp` submodule and configurable stdio bridge
+- Added `msaccess_list_commands` and `msaccess_execute_command`
+- Forwarded Access MCP resources and prompt templates
+- Advertised `tools`, `resources`, and `prompts` capabilities during initialization
+- Added Access server and database path configuration
 
 See [CHANGELOG.md](CHANGELOG.md) for full history.
 
