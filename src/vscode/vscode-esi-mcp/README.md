@@ -96,10 +96,11 @@ For a new Esi.Web launch, dispatch `vscode_debug_execute_command` with `debug.st
 `debug.check.host.readyness` in the same parallel tool-call batch. The backend owns
 `debug.start`; the frontend must invoke `debug.check.host.readyness` immediately and keep
 the blocking call open until it returns.
-The readiness tool reads live shell execution output, not terminal scrollback. A result of
-`{ "ready": true }` confirms the readiness string was observed. `{ "ready": false }` means
-only that the timeout expired. `Canceled: Canceled` is external cancellation, not a timeout;
-stop the workflow and do not continue to browser actions.
+The readiness tool reads live shell execution output when available and can also probe the
+configured `esimcp.debugHostReadinessUrl` for an active debug session. A result of
+`{ "ready": true }` confirms either the readiness string or the configured host endpoint was
+observed. `{ "ready": false }` means only that the timeout expired. `Canceled: Canceled` is
+external cancellation, not a timeout; stop the workflow and do not continue to browser actions.
 
 ## Usage Patterns
 
@@ -171,6 +172,7 @@ The extension reads configuration from VS Code settings under `esimcp.*`. Use di
 | `esimcp.debugConfigurationName` | string | empty | Default VS Code launch configuration used by `debug.start` |
 | `esimcp.debugReadyString` | string | `Now ready on:` | Text observed in live VS Code shell output by `debug.check.host.readyness` |
 | `esimcp.debugHostReadinessTimeoutSeconds` | number | 60 | Timeout for `debug.check.host.readyness` in seconds |
+| `esimcp.debugHostReadinessUrl` | string | empty | Optional HTTP or HTTPS endpoint probed while the active debug session starts |
 | `esimcp.msAccessServerCommand` | string | `dotnet` | Executable used to start the Access MCP server |
 | `esimcp.msAccessServerArguments` | string[] | `[]` | Explicit server arguments; replaces the default `dotnet run` arguments when set |
 | `esimcp.msAccessServerProject` | string | `origins/brickly26/MS-Access-mcp/MS.Access.MCP.Official/MS.Access.MCP.Official.csproj` | Access MCP project used by the default command |

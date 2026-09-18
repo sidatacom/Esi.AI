@@ -24,7 +24,7 @@ export class MsAccessClient {
     this.initialization = this.sendRequest(process, "initialize", {
       protocolVersion: "2024-11-05",
       capabilities: {},
-      clientInfo: { name: "EsiMCP", version: "1.0.32" },
+      clientInfo: { name: "EsiMCP", version: "1.0.36" },
     }).then(() => undefined).finally(() => { this.initialization = undefined; });
     return this.initialization;
   }

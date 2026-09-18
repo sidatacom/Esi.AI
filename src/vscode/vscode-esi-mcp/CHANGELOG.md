@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.36] - 2026-09-18
+
+### Fixed
+- Probe the configured debug host when integrated-terminal output is unavailable
+
+## [1.0.35] - 2026-09-18
+
+### Fixed
+- Accept the runtime debug session name returned by VS Code
+
+## [1.0.34] - 2026-09-18
+
+### Fixed
+- Return the debug session ID from the VS Code debug start command
+
+## [1.0.33] - 2026-09-18
+
+### Fixed
+- Accept readiness detected from an active dotnet terminal while a debug session is selected
+
 ## [1.0.32] - 2026-09-17
 
 ### Added

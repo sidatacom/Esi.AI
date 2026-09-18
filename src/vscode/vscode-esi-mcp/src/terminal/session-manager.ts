@@ -11,6 +11,7 @@ import { log, logError } from "../utils/logger.js";
 
 export const DEBUG_SESSION_EXCEPTION_ERROR_CODE = "DEBUG_SESSION_EXCEPTION";
 const MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS = 64 * 1024;
+const ESI_WEB_DEBUG_TERMINAL_NAME = "Esi.Web.dll";
 
 export class DebugSessionExceptionError extends Error {
   readonly code = DEBUG_SESSION_EXCEPTION_ERROR_CODE;
@@ -37,18 +38,26 @@ interface OutputWaiterState {
   settled: boolean;
 }
 
+interface DebugReadinessState {
+  sessionId: string;
+  terminal: vscode.Terminal | null;
+  ready: boolean;
+  buffer: string;
+}
+
 type DebugReadinessSource = Pick<DebugManager, "getActiveSessionId" | "onDebugEvent"> & Partial<Pick<DebugManager, "onDebugOutput">>;
 
 export class SessionManager {
   private sessions = new Map<string, TerminalSession>();
   private outputWaiters = new Set<OutputWaiterState>();
-  private debugHostReadyBySession = new Map<string, boolean>();
+  private debugReadinessBySession = new Map<string, DebugReadinessState>();
   private debugConsoleOutputBySession = new Map<string, string>();
-  private debugHostReadyTerminal: vscode.Terminal | null = null;
-  private debugHostReadyRecentOutputByTerminal = new Map<vscode.Terminal, string>();
   private debugEventDisposable: vscode.Disposable | null = null;
   private debugOutputDisposable: vscode.Disposable | null = null;
   private terminalOutputDisposable: vscode.Disposable | null = null;
+  private debugLaunchInProgress = false;
+  private debugLaunchTerminals = new Set<vscode.Terminal>();
+  private debugReadinessByTerminal = new Map<vscode.Terminal, { ready: boolean; buffer: string }>();
   private onSessionsChangedEmitter = new vscode.EventEmitter<void>();
   readonly onSessionsChanged = this.onSessionsChangedEmitter.event;
   private idleReaperInterval: ReturnType<typeof setInterval> | null = null;
@@ -60,10 +69,15 @@ export class SessionManager {
 
     // Listen for terminals being closed externally
     vscode.window.onDidCloseTerminal((terminal) => {
-      this.debugHostReadyRecentOutputByTerminal.delete(terminal);
-      if (this.debugHostReadyTerminal === terminal) {
-        this.debugHostReadyTerminal = null;
+      this.debugLaunchTerminals.delete(terminal);
+      for (const state of this.debugReadinessBySession.values()) {
+        if (state.terminal === terminal) {
+          state.terminal = null;
+          state.ready = false;
+          state.buffer = "";
+        }
       }
+      this.debugReadinessByTerminal.delete(terminal);
       for (const [id, session] of this.sessions) {
         if (session.getTerminal() === terminal) {
           log(`Terminal closed externally for session ${id}`);
@@ -74,6 +88,44 @@ export class SessionManager {
         }
       }
     });
+    vscode.window.onDidOpenTerminal((terminal) => {
+      if (this.debugLaunchInProgress) {
+        log(`Debug launch terminal opened: name=${terminal.name}`);
+        this.debugLaunchTerminals.add(terminal);
+      }
+    });
+  }
+
+  prepareDebugHostReadiness(): void {
+    this.debugLaunchInProgress = true;
+    this.debugLaunchTerminals.clear();
+    this.debugReadinessByTerminal.clear();
+    this.resetDebugHostReadiness();
+  }
+
+  bindDebugHostReadiness(session: vscode.DebugSession): void {
+    const terminal = [...this.debugLaunchTerminals].find((candidate) => this.isEsiWebDebugTerminal(candidate)) ?? null;
+    const existing = this.debugReadinessBySession.get(session.id);
+    const terminalState = terminal ? this.debugReadinessByTerminal.get(terminal) : undefined;
+    this.debugReadinessBySession.set(session.id, {
+      sessionId: session.id,
+      terminal,
+      ready: existing?.ready === true || terminalState?.ready === true,
+      buffer: `${existing?.buffer ?? ""}${terminalState?.buffer ?? ""}`.slice(-MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS),
+    });
+    if (terminal) this.debugReadinessByTerminal.delete(terminal);
+    this.debugLaunchInProgress = false;
+    this.debugLaunchTerminals.clear();
+    log(`Bound debug readiness: session=${session.id}, terminal=${terminal?.name ?? "none"}`);
+  }
+
+  private isEsiWebDebugTerminal(terminal: vscode.Terminal | null): terminal is vscode.Terminal {
+    return terminal?.name === ESI_WEB_DEBUG_TERMINAL_NAME && terminal.exitStatus === undefined;
+  }
+
+  cancelPendingDebugHostReadiness(): void {
+    this.debugLaunchInProgress = false;
+    this.debugLaunchTerminals.clear();
   }
 
   private captureTerminalOutput(): void {
@@ -93,25 +145,31 @@ export class SessionManager {
     });
   }
 
-  private isActiveDotnetTerminal(terminal: vscode.Terminal): boolean {
-    return terminal.name.startsWith("dotnet:")
-      && terminal.exitStatus === undefined
-      && vscode.window.terminals.includes(terminal);
-  }
-
   private updateDebugHostReadiness(terminal: vscode.Terminal | undefined, chunk: string): void {
     const readyString = this.getDebugReadyString();
-    if (!readyString || !terminal) return;
-    const active = this.isActiveDotnetTerminal(terminal);
-    log(`Terminal output: terminal=${terminal.name}, activeDotnet=${active}, length=${chunk.length}`);
-    if (!active) return;
-
-    const output = `${this.debugHostReadyRecentOutputByTerminal.get(terminal) ?? ""}${chunk}`;
-    if (output.includes(readyString)) {
-      this.debugHostReadyTerminal = terminal;
-      log(`Debug host readiness latched from terminal: terminal=${terminal.name}`);
+    if (!readyString || !terminal || !this.isEsiWebDebugTerminal(terminal)) return;
+    const normalizedChunk = stripAnsi(chunk);
+    log(`Terminal output: terminal=${terminal.name}, length=${chunk.length}, normalizedLength=${normalizedChunk.length}, sessions=${[...this.debugReadinessBySession.keys()].join(",") || "none"}`);
+    const pendingState = this.debugReadinessByTerminal.get(terminal) ?? { ready: false, buffer: "" };
+    pendingState.buffer = `${pendingState.buffer}${normalizedChunk}`.slice(-MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS);
+    pendingState.ready = pendingState.buffer.includes(readyString);
+    this.debugReadinessByTerminal.set(terminal, pendingState);
+    log(`Terminal readiness candidate: terminal=${terminal.name}, pendingBufferLength=${pendingState.buffer.length}, matched=${pendingState.ready}, tail=${JSON.stringify(pendingState.buffer.slice(-160))}`);
+    for (const state of this.debugReadinessBySession.values()) {
+      if (!state.terminal) {
+        state.terminal = terminal;
+        log(`Late-bound debug readiness terminal: session=${state.sessionId}, terminal=${terminal.name}`);
+      }
+      if (state.terminal !== terminal) {
+        log(`Terminal readiness skipped session=${state.sessionId}: sameTerminal=${state.terminal === terminal}, boundTerminal=${state.terminal?.name ?? "none"}`);
+        continue;
+      }
+      state.buffer = pendingState.buffer;
+      if (state.buffer.includes(readyString)) {
+        state.ready = true;
+        log(`Debug host readiness latched from terminal: session=${state.sessionId}, terminal=${terminal.name}`);
+      }
     }
-    this.debugHostReadyRecentOutputByTerminal.set(terminal, output.slice(-(readyString.length - 1)));
   }
 
   private updateDebugHostReadinessFromDebugOutput(session: vscode.DebugSession, chunk: string): void {
@@ -119,11 +177,29 @@ export class SessionManager {
     if (!readyString) return;
 
     const normalizedChunk = stripAnsi(chunk);
+    const existingState = this.debugReadinessBySession.get(session.id) ?? {
+      sessionId: session.id,
+      terminal: null,
+      ready: false,
+      buffer: "",
+    };
+    existingState.buffer = `${existingState.buffer}${normalizedChunk}`.slice(-MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS);
+    existingState.ready = existingState.buffer.includes(readyString);
+    this.debugReadinessBySession.set(session.id, existingState);
+
     const output = `${this.debugConsoleOutputBySession.get(session.id) ?? ""}${normalizedChunk}`;
     this.debugConsoleOutputBySession.set(session.id, output.slice(-MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS));
-    if (output.includes(readyString)) {
+    if (existingState.ready) {
       for (let currentSession: vscode.DebugSession | undefined = session; currentSession; currentSession = currentSession.parentSession) {
-        this.debugHostReadyBySession.set(currentSession.id, true);
+        const state = this.debugReadinessBySession.get(currentSession.id) ?? {
+          sessionId: currentSession.id,
+          terminal: null,
+          ready: false,
+          buffer: "",
+        };
+        state.buffer = `${state.buffer}${normalizedChunk}`.slice(-MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS);
+        state.ready = true;
+        this.debugReadinessBySession.set(currentSession.id, state);
       }
       log(`Debug host readiness latched from debug output: session=${session.id}`);
     } else if (normalizedChunk.toLowerCase().includes("ready")) {
@@ -137,33 +213,13 @@ export class SessionManager {
     this.debugOutputDisposable?.dispose();
     this.debugEventDisposable = debugManager.onDebugEvent((event) => {
       if (event.type === "terminated") {
-        this.debugHostReadyBySession.delete(event.sessionId);
+        this.debugReadinessBySession.delete(event.sessionId);
         this.debugConsoleOutputBySession.delete(event.sessionId);
       }
     });
     this.debugOutputDisposable = debugManager.onDebugOutput((session, output) => {
       this.updateDebugHostReadinessFromDebugOutput(session, output);
     });
-  }
-
-  private scanActiveDotnetTerminalsForReadiness(): void {
-    const activeTerminals = new Set(vscode.window.terminals.filter((terminal) => this.isActiveDotnetTerminal(terminal)));
-    for (const terminal of this.debugHostReadyRecentOutputByTerminal.keys()) {
-      if (!activeTerminals.has(terminal)) this.debugHostReadyRecentOutputByTerminal.delete(terminal);
-    }
-
-    if (this.debugHostReadyTerminal && !activeTerminals.has(this.debugHostReadyTerminal)) {
-      this.debugHostReadyTerminal = null;
-    }
-
-    const readyString = this.getDebugReadyString();
-    if (!readyString) return;
-    for (const terminal of activeTerminals) {
-      if (this.debugHostReadyRecentOutputByTerminal.get(terminal)?.includes(readyString)) {
-        this.debugHostReadyTerminal = terminal;
-        return;
-      }
-    }
   }
 
   private notifyOutputWaiters(chunk: string): void {
@@ -271,36 +327,20 @@ export class SessionManager {
   resetDebugHostReadiness(sessionId?: string): void {
     log(`Resetting debug host readiness: session=${sessionId ?? "all"}`);
     if (sessionId) {
-      this.debugHostReadyBySession.delete(sessionId);
+      this.debugReadinessBySession.delete(sessionId);
       this.debugConsoleOutputBySession.delete(sessionId);
     } else {
-      this.debugHostReadyBySession.clear();
+      this.debugReadinessBySession.clear();
       this.debugConsoleOutputBySession.clear();
-      this.debugHostReadyTerminal = null;
-      this.debugHostReadyRecentOutputByTerminal.clear();
+      this.debugReadinessByTerminal.clear();
     }
   }
 
   async waitForDebugHostReadiness(debugManager?: DebugReadinessSource, requestedSessionId?: string): Promise<boolean> {
     const timeoutMs = this.getDebugHostReadinessTimeoutMs();
     const startedAt = Date.now();
-    const sessionId = requestedSessionId ?? debugManager?.getActiveSessionId() ?? undefined;
-    log(`Waiting for debug host readiness: requestedSession=${requestedSessionId ?? "none"}, activeSession=${debugManager?.getActiveSessionId() ?? "none"}, selectedSession=${sessionId ?? "none"}`);
-
-    if (debugManager && !sessionId) {
-      log("Readiness check ended: no active debug session");
-      return false;
-    }
-    if (sessionId && debugManager && debugManager.getActiveSessionId() !== sessionId) {
-      log(`Readiness check ended: selected session is no longer active: session=${sessionId}`);
-      return false;
-    }
-
-    this.scanActiveDotnetTerminalsForReadiness();
-    if (this.isDebugHostReady(sessionId)) {
-      log(`Readiness already latched: session=${sessionId ?? "terminal"}`);
-      return true;
-    }
+    let sessionId = requestedSessionId;
+    log(`Waiting for debug host readiness: requestedSession=${requestedSessionId ?? "none"}, activeSession=${debugManager?.getActiveSessionId() ?? "none"}`);
 
     return new Promise<boolean>((resolve, reject) => {
       let settled = false;
@@ -322,13 +362,24 @@ export class SessionManager {
         log(`Readiness check finished: session=${sessionId ?? "terminal"}, ready=${ready}, elapsedMs=${Date.now() - startedAt}`);
         resolve(ready);
       };
-      const checkReadiness = () => {
-        if (sessionId && debugManager && debugManager.getActiveSessionId() !== sessionId) {
+      const checkReadiness = async () => {
+        const activeSessionId = debugManager?.getActiveSessionId() ?? undefined;
+        if (requestedSessionId) {
+          if (debugManager && activeSessionId !== requestedSessionId) {
+            log(`Readiness check observed requested session change: session=${requestedSessionId}`);
+            finish();
+            return;
+          }
+          sessionId = requestedSessionId;
+        } else if (activeSessionId) {
+          sessionId = activeSessionId;
+        }
+
+        if (sessionId && debugManager && activeSessionId !== sessionId) {
           log(`Readiness check observed session change: session=${sessionId}`);
           finish();
           return;
         }
-        this.scanActiveDotnetTerminalsForReadiness();
         if (this.isDebugHostReady(sessionId)) {
           log(`Readiness check observed latch: session=${sessionId ?? "terminal"}`);
           finish();
@@ -342,25 +393,25 @@ export class SessionManager {
           return;
         }
 
-        pollTimer = setTimeout(checkReadiness, Math.min(1000, remainingMs));
+        pollTimer = setTimeout(() => { void checkReadiness(); }, Math.min(1000, remainingMs));
       };
 
       debugEventDisposable = debugManager?.onDebugEvent((event) => {
         if (event.type === "paused" && event.reason === "exception") finish(new DebugSessionExceptionError(event));
         if (event.type === "terminated" && event.sessionId === sessionId) {
           log(`Readiness check observed session termination: session=${sessionId}`);
-          this.debugHostReadyBySession.delete(event.sessionId);
+          this.debugReadinessBySession.delete(event.sessionId);
           this.debugConsoleOutputBySession.delete(event.sessionId);
           finish();
         }
       });
       timeoutTimer = setTimeout(() => finish(), timeoutMs);
-      checkReadiness();
+      void checkReadiness();
     });
   }
 
   private isDebugHostReady(sessionId: string | undefined): boolean {
-    return sessionId ? this.debugHostReadyBySession.get(sessionId) === true : this.debugHostReadyTerminal !== null;
+    return sessionId !== undefined && this.debugReadinessBySession.get(sessionId)?.ready === true;
   }
 
   getDebugConsoleDiagnostics(sessionId: string): { sessionId: string; bufferedCharacters: number; readinessStringSeen: boolean; output: string; lastLine: string } {

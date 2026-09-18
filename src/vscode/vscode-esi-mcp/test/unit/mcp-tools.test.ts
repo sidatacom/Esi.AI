@@ -46,6 +46,25 @@ describe("EsiMCP tool catalog", () => {
     });
   });
 
+  it("returns the started debug session ID through the VS Code debug tool", async () => {
+    const startDebugging = vi.fn().mockResolvedValue({ started: true, sessionId: "session-started" });
+    const handler = createMcpRequestHandler(
+      { prepareDebugHostReadiness: vi.fn(), bindDebugHostReadiness: vi.fn(), cancelPendingDebugHostReadiness: vi.fn() } as unknown as SessionManager,
+      { startDebugging } as unknown as DebugManager,
+    );
+
+    const result = await handler("tools/call", {
+      name: "vscode_debug_execute_command",
+      arguments: {
+        commandId: "debug.start",
+        arguments: { workingDirectory: "D:/Git/Esi.Copilot" },
+      },
+    }) as { content: Array<{ text: string }> };
+
+    expect(JSON.parse(result.content[0].text)).toEqual({ started: true, sessionId: "session-started" });
+    expect(startDebugging).toHaveBeenCalledOnce();
+  });
+
   it("returns immediately when debug.restart has no active session", async () => {
     const restartDebugging = vi.fn().mockResolvedValue(false);
     const debugManager = {

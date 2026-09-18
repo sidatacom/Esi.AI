@@ -12,7 +12,8 @@ type DapVariable = { name: string; value?: string; evaluateName?: string; variab
 type DapResponse = { scopes?: Array<{ name?: string; variablesReference?: number }>; variables?: DapVariable[]; result?: unknown; value?: unknown; body?: { exceptionId?: string; description?: string; breakMode?: string } };
 type DapBreakpoint = { id?: number; verified?: boolean; line?: number; column?: number; message?: string };
 type DebugStackItemDetails = { source?: { uri?: vscode.Uri }; range?: { start?: { line?: number } } };
-export type DebugStartLifecycle = { onAcceptedStart?: () => void; onEnd?: () => void };
+export type DebugStartLifecycle = { onAcceptedStart?: () => void; onStarted?: (session: vscode.DebugSession) => void; onEnd?: () => void };
+export type DebugStartResult = { started: boolean; sessionId: string | null };
 export type DebugEvent = {
   id: number;
   type: "paused" | "continued" | "terminated";
@@ -127,8 +128,8 @@ export class DebugManager {
     return { setting, value: this.redact(value, setting) };
   }
 
-  async startDebugging(input: { workingDirectory: string; fileFullPath?: string; testName?: string; configurationName?: string }, lifecycle?: DebugStartLifecycle): Promise<boolean> {
-    if (this.debugStartInProgress || this.getDebugSession()) return false;
+  async startDebugging(input: { workingDirectory: string; fileFullPath?: string; testName?: string; configurationName?: string }, lifecycle?: DebugStartLifecycle): Promise<DebugStartResult> {
+    if (this.debugStartInProgress || this.getDebugSession()) return { started: false, sessionId: null };
     this.debugStartInProgress = true;
 
     try {
@@ -137,16 +138,18 @@ export class DebugManager {
       if (input.configurationName?.trim()) {
         const configurationName = input.configurationName.trim();
 
-        const sessionStarted = this.waitForDebugSession(configurationName);
+        const sessionStarted = this.waitForDebugSession(configurationName, true);
         try {
           const started = await vscode.debug.startDebugging(folder, configurationName);
           if (!started) {
             sessionStarted.cancel();
-            return false;
+            return { started: false, sessionId: null };
           }
 
           await sessionStarted.promise;
-          return true;
+          const session = this.getDebugSession(configurationName) ?? vscode.debug.activeDebugSession;
+          if (session) lifecycle?.onStarted?.(session);
+          return { started: true, sessionId: session?.id ?? null };
         } catch (error) {
           sessionStarted.cancel();
           throw error;
@@ -154,20 +157,24 @@ export class DebugManager {
       }
       if (input.testName?.trim()) {
         await vscode.commands.executeCommand("testing.run", { tests: [input.testName.trim()], debug: true });
-        return true;
+        const session = vscode.debug.activeDebugSession;
+        if (session) lifecycle?.onStarted?.(session);
+        return { started: true, sessionId: session?.id ?? null };
       }
       const configuredName = vscode.workspace.getConfiguration("esimcp").get<string>("debugConfigurationName", "").trim();
       if (configuredName) {
-        const sessionStarted = this.waitForDebugSession(configuredName);
+        const sessionStarted = this.waitForDebugSession(configuredName, true);
         try {
           const started = await vscode.debug.startDebugging(folder, configuredName);
           if (!started) {
             sessionStarted.cancel();
-            return false;
+            return { started: false, sessionId: null };
           }
 
           await sessionStarted.promise;
-          return true;
+          const session = this.getDebugSession(configuredName) ?? vscode.debug.activeDebugSession;
+          if (session) lifecycle?.onStarted?.(session);
+          return { started: true, sessionId: session?.id ?? null };
         } catch (error) {
           sessionStarted.cancel();
           throw error;
@@ -179,10 +186,12 @@ export class DebugManager {
 
       const configuration = await this.createDefaultConfiguration(input.fileFullPath.trim());
       const started = await vscode.debug.startDebugging(folder, configuration);
-      if (!started) return false;
+      if (!started) return { started: false, sessionId: null };
 
       await this.waitForDebugSession(configuration.name);
-      return true;
+      const session = this.getDebugSession(configuration.name) ?? vscode.debug.activeDebugSession;
+      if (session) lifecycle?.onStarted?.(session);
+      return { started: true, sessionId: session?.id ?? null };
     } finally {
       try {
         lifecycle?.onEnd?.();
@@ -555,7 +564,7 @@ export class DebugManager {
     }
   }
 
-  private waitForDebugSession(configurationName: string): { promise: Promise<void>; cancel(): void } {
+  private waitForDebugSession(configurationName: string, acceptAnyStartedSession = false): { promise: Promise<void>; cancel(): void } {
     const existingSession = this.getDebugSession(configurationName);
     if (existingSession) return { promise: Promise.resolve(), cancel: () => undefined };
 
@@ -571,7 +580,9 @@ export class DebugManager {
       disposables.forEach((disposable) => disposable.dispose());
       error ? rejectPromise(error) : resolvePromise();
     };
-    const matches = (session: vscode.DebugSession) => session.name === configurationName || session.name.startsWith(`${configurationName} `);
+    const matches = (session: vscode.DebugSession) => acceptAnyStartedSession
+      || session.name === configurationName
+      || session.name.startsWith(`${configurationName} `);
     const promise = new Promise<void>((resolve, reject) => {
       resolvePromise = resolve;
       rejectPromise = reject;

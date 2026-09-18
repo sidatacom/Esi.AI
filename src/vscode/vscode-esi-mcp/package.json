@@ -2,7 +2,7 @@
   "name": "vscode-esi-mcp",
   "displayName": "EsiMCP",
   "description": "Direct local HTTP MCP server for VS Code terminals, debugging, C# Dev Kit, and Microsoft Access MCP operations.",
-  "version": "1.0.32",
+  "version": "1.0.36",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
@@ -79,6 +79,11 @@
           "default": 60,
           "description": "Timeout for debug_check_host_readyness in seconds",
           "minimum": 1
+        },
+        "esimcp.debugHostReadinessUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Optional HTTP or HTTPS URL to probe while waiting for debug host readiness"
         },
         "esimcp.debugConfigurationName": {
           "type": "string",

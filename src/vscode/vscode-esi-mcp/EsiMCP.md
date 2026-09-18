@@ -12,10 +12,13 @@ with `debug.start` and `debug.check.host.readyness` in the same parallel tool-ca
 
 1. The backend owns `debug.start`, which starts the configured VS Code debug session and waits for the debugger to attach.
 2. The frontend owns `debug.check.host.readyness` and must invoke it immediately, without waiting for `debug.start` to return.
-3. `debug.check.host.readyness` is a blocking call. It reads live shell execution output from VS Code terminals and remains open until readiness or its timeout is returned. It does not read terminal scrollback.
-4. `{ "ready": true }` means the configured readiness string was observed. The default string is `Now ready on:`.
+3. `debug.check.host.readyness` is a blocking call. It reads live shell execution output from VS Code terminals when available and can probe the configured `esimcp.debugHostReadinessUrl`; it does not read terminal scrollback.
+4. `{ "ready": true }` means the configured readiness string or the configured host endpoint was observed. The default string is `Now ready on:`.
 5. `{ "ready": false }` means only that the readiness timeout expired.
 6. `Canceled: Canceled` means the MCP call was externally canceled. It is not a timeout and must stop the workflow; do not continue to browser actions.
+
+For an integrated-terminal debugger whose output is not exposed through shell integration,
+set `esimcp.debugHostReadinessUrl` to the host URL, for example `https://localhost:5012`.
 
 Do not perform browser validation, call `debug.stop`, or delegate another action while
 `debug.check.host.readyness` is pending. Start the readiness call before or during host

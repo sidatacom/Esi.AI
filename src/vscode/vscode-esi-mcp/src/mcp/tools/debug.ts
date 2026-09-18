@@ -42,8 +42,9 @@ export const DEBUG_TOOLS: DebugToolDefinition[] = [
   { name: "debug.settings", description: "EsiMCP Debug: read a setting from the active VS Code workspace configuration", schema: debugSettingsSchema, handler: async (params, manager) => { const input = debugSettingsSchema.parse(params); return text(manager.getSetting(input.setting)); } },
   { name: "debug.start", description: "EsiMCP Debug: start a VS Code debug session and wait for the debugger to attach", schema: debugStartSchema, handler: async (params, manager, sessionManager) => {
     const started = await manager.startDebugging(debugStartSchema.parse(params), {
-      onAcceptedStart: () => sessionManager.resetDebugHostReadiness(),
-      onEnd: () => sessionManager.resetDebugHostReadiness(),
+      onAcceptedStart: () => sessionManager.prepareDebugHostReadiness(),
+      onStarted: (session) => sessionManager.bindDebugHostReadiness(session),
+      onEnd: () => sessionManager.cancelPendingDebugHostReadiness(),
     });
     return text(started);
   } },
