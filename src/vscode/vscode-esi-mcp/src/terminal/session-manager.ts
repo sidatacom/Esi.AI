@@ -42,6 +42,7 @@ interface DebugReadinessState {
   sessionId: string;
   terminal: vscode.Terminal | null;
   ready: boolean;
+  failed: boolean;
   buffer: string;
 }
 
@@ -57,7 +58,7 @@ export class SessionManager {
   private terminalOutputDisposable: vscode.Disposable | null = null;
   private debugLaunchInProgress = false;
   private debugLaunchTerminals = new Set<vscode.Terminal>();
-  private debugReadinessByTerminal = new Map<vscode.Terminal, { ready: boolean; buffer: string }>();
+  private debugReadinessByTerminal = new Map<vscode.Terminal, { ready: boolean; failed: boolean; buffer: string }>();
   private onSessionsChangedEmitter = new vscode.EventEmitter<void>();
   readonly onSessionsChanged = this.onSessionsChangedEmitter.event;
   private idleReaperInterval: ReturnType<typeof setInterval> | null = null;
@@ -111,6 +112,7 @@ export class SessionManager {
       sessionId: session.id,
       terminal,
       ready: existing?.ready === true || terminalState?.ready === true,
+      failed: existing?.failed === true || terminalState?.failed === true,
       buffer: `${existing?.buffer ?? ""}${terminalState?.buffer ?? ""}`.slice(-MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS),
     });
     if (terminal) this.debugReadinessByTerminal.delete(terminal);
@@ -150,9 +152,10 @@ export class SessionManager {
     if (!readyString || !terminal || !this.isEsiWebDebugTerminal(terminal)) return;
     const normalizedChunk = stripAnsi(chunk);
     log(`Terminal output: terminal=${terminal.name}, length=${chunk.length}, normalizedLength=${normalizedChunk.length}, sessions=${[...this.debugReadinessBySession.keys()].join(",") || "none"}`);
-    const pendingState = this.debugReadinessByTerminal.get(terminal) ?? { ready: false, buffer: "" };
+    const pendingState = this.debugReadinessByTerminal.get(terminal) ?? { ready: false, failed: false, buffer: "" };
     pendingState.buffer = `${pendingState.buffer}${normalizedChunk}`.slice(-MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS);
     pendingState.ready = pendingState.buffer.includes(readyString);
+    pendingState.failed = pendingState.failed || this.containsStartupFailure(pendingState.buffer);
     this.debugReadinessByTerminal.set(terminal, pendingState);
     log(`Terminal readiness candidate: terminal=${terminal.name}, pendingBufferLength=${pendingState.buffer.length}, matched=${pendingState.ready}, tail=${JSON.stringify(pendingState.buffer.slice(-160))}`);
     for (const state of this.debugReadinessBySession.values()) {
@@ -165,6 +168,7 @@ export class SessionManager {
         continue;
       }
       state.buffer = pendingState.buffer;
+      state.failed = pendingState.failed;
       if (state.buffer.includes(readyString)) {
         state.ready = true;
         log(`Debug host readiness latched from terminal: session=${state.sessionId}, terminal=${terminal.name}`);
@@ -181,10 +185,12 @@ export class SessionManager {
       sessionId: session.id,
       terminal: null,
       ready: false,
+      failed: false,
       buffer: "",
     };
     existingState.buffer = `${existingState.buffer}${normalizedChunk}`.slice(-MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS);
     existingState.ready = existingState.buffer.includes(readyString);
+    existingState.failed = existingState.failed || this.containsStartupFailure(existingState.buffer);
     this.debugReadinessBySession.set(session.id, existingState);
 
     const output = `${this.debugConsoleOutputBySession.get(session.id) ?? ""}${normalizedChunk}`;
@@ -195,10 +201,12 @@ export class SessionManager {
           sessionId: currentSession.id,
           terminal: null,
           ready: false,
+          failed: false,
           buffer: "",
         };
         state.buffer = `${state.buffer}${normalizedChunk}`.slice(-MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS);
         state.ready = true;
+        state.failed = existingState.failed;
         this.debugReadinessBySession.set(currentSession.id, state);
       }
       log(`Debug host readiness latched from debug output: session=${session.id}`);
@@ -386,6 +394,12 @@ export class SessionManager {
           return;
         }
 
+        if (this.hasDebugHostStartupFailed(sessionId)) {
+          log(`Readiness check observed startup failure: session=${sessionId ?? "none"}`);
+          finish();
+          return;
+        }
+
         const remainingMs = timeoutMs - (Date.now() - startedAt);
         if (remainingMs <= 0) {
           log(`Readiness check timed out: session=${sessionId ?? "terminal"}, timeoutMs=${timeoutMs}`);
@@ -412,6 +426,14 @@ export class SessionManager {
 
   private isDebugHostReady(sessionId: string | undefined): boolean {
     return sessionId !== undefined && this.debugReadinessBySession.get(sessionId)?.ready === true;
+  }
+
+  private hasDebugHostStartupFailed(sessionId: string | undefined): boolean {
+    return sessionId !== undefined && this.debugReadinessBySession.get(sessionId)?.failed === true;
+  }
+
+  private containsStartupFailure(output: string): boolean {
+    return /(?:LaunchException thrown:|Unhandled exception\s*[:.]|Host terminated unexpectedly|Application startup exception)/i.test(output);
   }
 
   getDebugConsoleDiagnostics(sessionId: string): { sessionId: string; bufferedCharacters: number; readinessStringSeen: boolean; output: string; lastLine: string } {

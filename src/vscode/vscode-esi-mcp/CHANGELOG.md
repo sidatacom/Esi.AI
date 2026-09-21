@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.37] - 2026-09-21
+
+### Fixed
+- End debug host readiness immediately when startup exceptions appear in Debug Console output
+
 ## [1.0.36] - 2026-09-18
 
 ### Fixed

@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk.Razor">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>Esi.AI.Workflow</RootNamespace>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\origins\sidatacom\elsa-studio\src\framework\Elsa.Studio.Core\Elsa.Studio.Core.csproj" />
+    <ProjectReference Include="..\..\..\origins\sidatacom\elsa-studio\src\framework\Elsa.Studio.DomInterop\Elsa.Studio.DomInterop.csproj" />
+    <ProjectReference Include="..\..\..\origins\sidatacom\elsa-studio\src\modules\Elsa.Studio.Workflows.Core\Elsa.Studio.Workflows.Core.csproj" />
+    <ProjectReference Include="..\..\..\origins\sidatacom\elsa-studio\src\modules\Elsa.Studio.Workflows.Designer\Elsa.Studio.Workflows.Designer.csproj" />
+    <ProjectReference Include="..\..\..\origins\sidatacom\elsa-studio\src\modules\Elsa.Studio.Workflows\Elsa.Studio.Workflows.csproj" />
+  </ItemGroup>
+
+</Project>

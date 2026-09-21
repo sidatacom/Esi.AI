@@ -1,0 +1,64 @@
+@namespace Esi.AI.Workflow
+@using Elsa.Api.Client.Resources.WorkflowDefinitions.Models
+@using Elsa.Studio.Workflows.ActivityPickers.Accordion
+@using Elsa.Studio.Workflows.Components.WorkflowDefinitionEditor.Components
+@using Elsa.Studio.Workflows.Models
+@using Orientation = Radzen.Orientation
+@using MudBlazor
+
+<div class="esi-ai-elsa-designer" style="height:100%; min-height:100%;">
+    <MudPopoverProvider />
+    <MudDialogProvider />
+    <MudSnackbarProvider />
+    <CascadingValue Value="dragDropManager">
+        <RadzenSplitter Orientation="Orientation.Horizontal" Style="height:100%;">
+            <RadzenSplitterPane Size="18%" Min="180px">
+                @activityPickerComponentProvider.GetActivityPickerComponent()
+            </RadzenSplitterPane>
+            <RadzenSplitterPane Size="82%">
+                <WorkflowDefinitionWorkspace @ref="workspace"
+                                             WorkflowDefinition="workflowDefinition"
+                                             SelectedWorkflowDefinition="workflowDefinition"
+                                             ActivitySelected="OnActivitySelectedAsync" />
+            </RadzenSplitterPane>
+        </RadzenSplitter>
+    </CascadingValue>
+</div>
+
+@code {
+    private readonly DragDropManager dragDropManager = new();
+    private readonly AccordionActivityPickerComponentProvider activityPickerComponentProvider = new();
+    private WorkflowDefinitionWorkspace? workspace;
+    private WorkflowDefinition workflowDefinition = new();
+
+    /// <summary>Gets or sets the Esi.AI workflow JSON shown by the designer.</summary>
+    [Parameter] public string DefinitionJson { get; set; } = "{}";
+
+    /// <summary>Gets or sets whether the workflow can be edited.</summary>
+    [Parameter] public bool IsReadOnly { get; set; }
+
+    /// <summary>Raised when the Elsa graph has been changed by the user.</summary>
+    [Parameter] public EventCallback<string> DefinitionJsonChanged { get; set; }
+
+    protected override void OnParametersSet()
+    {
+        var flowchart = ElsaFlowchartAdapter.ToElsaFlowchart(DefinitionJson);
+        workflowDefinition = new WorkflowDefinition
+        {
+            DefinitionId = "esi-ai-flow",
+            Id = "esi-ai-flow-v1",
+            Name = "Esi.AI workflow",
+            Root = flowchart,
+            IsReadonly = IsReadOnly
+        };
+    }
+
+    private async Task OnActivitySelectedAsync(JsonObject activity)
+    {
+        if (workspace is null || !DefinitionJsonChanged.HasDelegate)
+            return;
+
+        var definitionJson = ElsaFlowchartAdapter.FromElsaFlowchart(workspace.GetSelectedDefinition()?.Root ?? new(), DefinitionJson);
+        await DefinitionJsonChanged.InvokeAsync(definitionJson);
+    }
+}

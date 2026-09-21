@@ -431,4 +431,24 @@ describe("SessionManager terminal recovery", () => {
     manager.dispose();
   });
 
+  it("returns not ready when startup fails before a DAP exception event is published", async () => {
+    let outputListener: ((session: { id: string; name: string }, output: string) => void) | undefined;
+    const debugManager = {
+      getActiveSessionId: () => "session-1",
+      onDebugEvent: vi.fn(() => ({ dispose: vi.fn() })),
+      onDebugOutput: vi.fn((listener: (session: { id: string; name: string }, output: string) => void) => {
+        outputListener = listener;
+        return { dispose: vi.fn() };
+      }),
+    };
+    const manager = new SessionManager();
+    manager.attachDebugManager(debugManager);
+    const readiness = manager.waitForDebugHostReadiness(debugManager, "session-1");
+
+    outputListener?.({ id: "session-1", name: "C#: Esi.AI.Studio" }, "LaunchException thrown: 'System.AggregateException' in Microsoft.Extensions.DependencyInjection.dll");
+
+    await expect(readiness).resolves.toBe(false);
+    manager.dispose();
+  });
+
 });

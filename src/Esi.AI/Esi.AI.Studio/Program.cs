@@ -13,6 +13,7 @@ using Esi.AI.Studio.Client.Services;
 using Esi.AI.Studio.Contracts;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
+using Esi.AI.Workflow;
 using Microsoft.FluentUI.AspNetCore.Components;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -46,6 +47,7 @@ builder.Services.AddRazorComponents()
     .AddInteractiveWebAssemblyComponents()
     .AddAuthenticationStateSerialization();
 builder.Services.AddFluentUIComponents();
+builder.Services.AddEsiAiWorkflowDesigner();
 builder.Services.AddScoped<IClientStateStore, ClientStateStore>();
 builder.Services.AddControllers();
 builder.Services.AddSignalR(options =>

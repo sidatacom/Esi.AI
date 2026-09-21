@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Microsoft.FluentUI.AspNetCore.Components;
+using Esi.AI.Workflow;
 using Esi.AI.Studio.Contracts;
 using Esi.AI.Studio.Client.Services;
 
@@ -13,6 +14,7 @@ builder.Services.AddAuthorizationCore();
 builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddAuthenticationStateDeserialization();
 builder.Services.AddFluentUIComponents();
+builder.Services.AddEsiAiWorkflowDesigner();
 builder.Services.AddScoped<IClientStateStore, ClientStateStore>();
 builder.Services.AddScoped<SignalRDataService>();
 builder.Services.AddScoped<IDataService>(services => services.GetRequiredService<SignalRDataService>());

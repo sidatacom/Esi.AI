@@ -11,6 +11,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Esi.AI.Workflow\Esi.AI.Workflow.csproj" />
     <ProjectReference Include="..\Esi.AI.Studio.Contracts\Esi.AI.Studio.Contracts.csproj" />
     <ProjectReference Include="..\Esi.AI.Models\Esi.AI.Models.csproj" />
     <ProjectReference Include="..\..\..\origins\sidatacom\fluentui-blazor\src\Core\Microsoft.FluentUI.AspNetCore.Components.csproj" Watch="false" />
