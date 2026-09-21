@@ -248,8 +248,8 @@
         public string Kind { get; } = kind;
         public string Icon { get; } = icon;
         public int Offset { get; init; }
-        public string Left => kind switch { "trigger" => "5%", "route" => "37%", "backend" => Offset == 0 ? "69%" : $"{69 + (Offset - 2) * 18}%", _ => "37%" };
-        public string Top => kind switch { "trigger" => "38%", "route" => "38%", "backend" => Offset == 0 ? "38%" : "68%", _ => "68%" };
+        public string Left => Kind switch { "trigger" => "5%", "route" => "37%", "backend" => Offset == 0 ? "69%" : $"{69 + (Offset - 2) * 18}%", _ => "37%" };
+        public string Top => Kind switch { "trigger" => "38%", "route" => "38%", "backend" => Offset == 0 ? "38%" : "68%", _ => "68%" };
     }
 
     private sealed record Activity(string Name, string Description, string Kind, string Icon);
