@@ -192,7 +192,7 @@ public sealed class OpenAiCompatibleController(
             "Request empfangen",
             "POST /v1/chat/completions",
             SerializeTracePayload(request)).ConfigureAwait(false);
-        var validationError = ValidateRequest(request);
+        var validationError = ValidateRequest(request, allowToolCalls: true);
         if (validationError is not null)
             return BadRequest(validationError);
 

@@ -180,7 +180,7 @@ builder.Services.AddSingleton<ModelLibraryService>(services =>
         services.GetRequiredService<IHttpClientFactory>().CreateClient("HuggingFace"),
         services.GetRequiredService<IHubContext<DataHub>>(),
         services.GetRequiredService<IDbContextFactory<ApplicationDbContext>>(),
-        services.GetRequiredService<ILocalModelScanner>()));
+        localModelScanner: services.GetRequiredService<ILocalModelScanner>()));
 builder.Services.AddSingleton<ILocalModelCatalog>(services => services.GetRequiredService<ModelLibraryService>());
 builder.Services.AddSingleton<IModelDirectoryCatalog>(services => services.GetRequiredService<ModelLibraryService>());
 builder.Services.AddSingleton<IHuggingFaceCatalog>(services => services.GetRequiredService<ModelLibraryService>());
@@ -218,10 +218,10 @@ else
     // The default HSTS value is 30 days. You may want to change this for production scenarios, see https://aka.ms/aspnetcore-hsts.
     app.UseHsts();
 
-    app.UseHttpsRedirection();    
+    app.UseHttpsRedirection();
 }
 
-app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);   
+app.UseStatusCodePagesWithReExecute("/not-found", createScopeForStatusCodePages: true);
 
 app.UseAntiforgery();
 
