@@ -85,7 +85,8 @@ public sealed class ApplicationSettingsService(
                         "/home/llm/LocalAI/models/llama-cpp/models"],
                 modelLibraryDefaults.SearchLimit,
                 modelLibraryDefaults.MaxParallelDownloads,
-                modelLibraryDefaults.MaxParallelFileDownloads));
+                modelLibraryDefaults.MaxParallelFileDownloads,
+                modelLibraryDefaults.HuggingFaceToken));
 
     private static void Validate(ApplicationSettings settings)
     {

@@ -151,6 +151,62 @@ async function listCommands(): Promise<McpToolResponse> {
   });
 }
 
+async function findProjectForActiveEditor(): Promise<vscode.Uri | undefined> {
+  const activeDocument = vscode.window.activeTextEditor?.document.uri;
+  if (!activeDocument || activeDocument.scheme !== "file") return undefined;
+
+  const workspaceRoots = (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath);
+  let directory = path.dirname(activeDocument.fsPath);
+  while (workspaceRoots.some((root) => directory === root || directory.startsWith(`${root}${path.sep}`))) {
+    const projectFiles = (await fs.readdir(directory, { withFileTypes: true }))
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".csproj"))
+      .map((entry) => path.join(directory, entry.name));
+    if (projectFiles.length === 1) return vscode.Uri.file(projectFiles[0]);
+
+    const parent = path.dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+
+  return undefined;
+}
+
+async function resolveProjectLaunchArguments(argumentsValue: unknown[] | undefined): Promise<unknown[]> {
+  if (argumentsValue && argumentsValue.length > 0) return argumentsValue;
+
+  const projectUri = await findProjectForActiveEditor();
+  if (projectUri) return [projectUri];
+
+  const projects = await vscode.workspace.findFiles("**/*.csproj", "**/{bin,obj,node_modules}/**");
+  if (projects.length === 1) return [projects[0]];
+
+  throw new Error("C# Dev Kit project launch requires a project URI; select a project in Solution Explorer or pass its file URI as the first argument");
+}
+
+async function executeHotReloadSilently(command: string, argumentsValue: unknown[]): Promise<unknown> {
+  const windowApi = vscode.window as unknown as Record<string, unknown>;
+  const messageMethods = ["showErrorMessage", "showWarningMessage", "showInformationMessage"] as const;
+  const suppressedMessages: Array<{ method: string; message: string }> = [];
+  const originalMethods = new Map<string, unknown>();
+
+  for (const method of messageMethods) {
+    const original = windowApi[method];
+    if (typeof original !== "function") continue;
+    originalMethods.set(method, original);
+    windowApi[method] = (message: unknown) => {
+      suppressedMessages.push({ method, message: String(message) });
+      return Promise.resolve(undefined);
+    };
+  }
+
+  try {
+    const result = await vscode.commands.executeCommand(command, ...argumentsValue);
+    return { result, suppressedMessages };
+  } finally {
+    for (const [method, original] of originalMethods) windowApi[method] = original;
+  }
+}
+
 async function executeCommand(params: unknown, debugManager?: DebugManager, sessionManager?: SessionManager): Promise<McpToolResponse> {
   const input = csharpDevKitCommandSchema.parse(params);
   const command = (await getCSharpDevKitCommands()).find((item) => item.command === input.commandId);
@@ -190,7 +246,12 @@ async function executeCommand(params: unknown, debugManager?: DebugManager, sess
     throw new Error(`C# Dev Kit command '${command.command}' is not registered in the current workspace`);
   }
 
-  const result = await vscode.commands.executeCommand(command.command, ...(input.arguments ?? []));
+  const argumentsValue = input.commandId === "csdevkit.debug.projectDebugLaunch"
+    ? await resolveProjectLaunchArguments(input.arguments)
+    : input.arguments ?? [];
+  const result = input.commandId === "csdevkit.debug.hotReload"
+    ? await executeHotReloadSilently(command.command, argumentsValue)
+    : await vscode.commands.executeCommand(command.command, ...argumentsValue);
   return text({ commandId: command.command, result });
 }
 

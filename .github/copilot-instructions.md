@@ -1,5 +1,12 @@
 # Copilot Instructions
 
+## Verbindliches Skill-Routing
+
+- Vor jedem Starten, Stoppen, Neustarten oder Prüfen von `Esi.AI.Studio`, jeder C#-Dev-Kit-Debugsession, jedem Hot-Reload-Lauf und jeder anschließenden Browserprüfung muss der Skill `vscode-debug` geladen und vollständig befolgt werden.
+- Das gilt auch dann, wenn der Benutzer nur indirekt von Starten, Testen, Browserprüfung, Port `7010`, Debugging, Hot Reload oder C# Dev Kit spricht.
+- Vor dem ersten Lifecycle-Toolaufruf muss die Skilldatei `.github/skills/vscode-debug/SKILL.md` gelesen werden. Erst danach dürfen C#-Dev-Kit- oder Browser-Tools verwendet werden.
+- Bei Konflikten zwischen einer allgemeinen Vorgehensweise und `vscode-debug` hat `vscode-debug` für Debug-, Start-, Restart-, Hot-Reload- und Browser-Lifecycle Vorrang.
+
 ## Root-Cause-Regel
 
 - Probleme werden an ihrer Ursache gelöst, nicht durch symptomatische Patches, Workarounds oder zusätzliche Fallbacks.

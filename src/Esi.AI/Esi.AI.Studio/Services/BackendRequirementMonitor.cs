@@ -154,7 +154,7 @@ public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequi
             await Task.Delay(TimeSpan.FromSeconds(1) - elapsed, cancellationToken).ConfigureAwait(false);
 
         lastPublishedAtUtc = DateTimeOffset.UtcNow;
-        await hubContext.Clients.All.SendAsync("BackendRequirementStateUpdated", state, cancellationToken).ConfigureAwait(false);
+        await hubContext.Clients.All.SendAsync("BackendRequirement_Update", state, cancellationToken).ConfigureAwait(false);
     }
 
     private static BackendRequirementSnapshot CreateBundledSnapshot(ConfigurationBackend backend, string vendor) =>

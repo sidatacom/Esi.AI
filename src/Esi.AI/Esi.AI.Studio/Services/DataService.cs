@@ -45,10 +45,10 @@ public sealed class DataService(
 
     #region BackendRequirements
 
-    public Task<BackendRequirementState> GetBackendRequirementStateAsync(CancellationToken cancellationToken = default) =>
+    public Task<BackendRequirementState> BackendRequirement_ReadAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(requirementMonitor?.Current ?? new BackendRequirementState([], DateTimeOffset.MinValue));
 
-    public Task<BackendRequirementState> RefreshBackendRequirementStateAsync(CancellationToken cancellationToken = default) =>
+    public Task<BackendRequirementState> BackendRequirement_UpdateAsync(CancellationToken cancellationToken = default) =>
         requirementMonitor?.RefreshAsync(cancellationToken) ??
         Task.FromResult(new BackendRequirementState([], DateTimeOffset.MinValue));
 
@@ -91,6 +91,16 @@ public sealed class DataService(
             if (string.IsNullOrWhiteSpace(entity.HuggingFaceModelId) && downloadedModelIds.TryGetValue(model.Path, out var huggingFaceModelId))
             {
                 entity.HuggingFaceModelId = huggingFaceModelId;
+                entity.UpdatedAtUtc = now;
+            }
+
+            if (!entity.IsManuallyConfigured && entity.HuggingFaceSynchronizedAtUtc is null && !string.IsNullOrWhiteSpace(entity.HuggingFaceModelId))
+            {
+                var huggingFaceMetadata = await huggingFaceCatalog.GetHuggingFaceModelMetadataAsync(entity.HuggingFaceModelId, cancellationToken);
+                entity.CompatibleBackendsJson = JsonSerializer.Serialize(ModelBackendCompatibility.FromHuggingFace(huggingFaceMetadata.LibraryName, huggingFaceMetadata.Tags));
+                entity.CapabilitiesJson = JsonSerializer.Serialize(ModelBackendCompatibility.CapabilitiesFromHuggingFace(huggingFaceMetadata.PipelineTag, huggingFaceMetadata.Tags));
+                entity.HuggingFaceRevision = huggingFaceMetadata.Revision;
+                entity.HuggingFaceSynchronizedAtUtc = now;
                 entity.UpdatedAtUtc = now;
             }
 
@@ -279,6 +289,9 @@ public sealed class DataService(
     public Task ModelDownload_DeleteCompletedAsync(CancellationToken cancellationToken = default) =>
         downloadManager.DeleteCompletedDownloadsAsync(cancellationToken);
 
+    public Task ModelDownload_DeleteFailedAsync(CancellationToken cancellationToken = default) =>
+        downloadManager.DeleteFailedDownloadsAsync(cancellationToken);
+
     public DownloadStatus? ModelDownload_Read(Guid id)
     {
         var status = downloadManager.GetDownload(id);
@@ -333,6 +346,71 @@ public sealed class DataService(
     #endregion
 
     #region ModelSettings
+
+    #region FlowDefinitions
+
+    public async Task<IReadOnlyList<FlowDefinition>> FlowDefinition_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var definitions = await db.FlowDefinitions.AsNoTracking()
+            .OrderBy(definition => definition.Name)
+            .ToArrayAsync(cancellationToken);
+        return definitions.Select(ToFlowDefinition).ToArray();
+    }
+
+    public Task<FlowDefinition> FlowDefinition_CreateAsync(FlowDefinition definition, CancellationToken cancellationToken = default) =>
+        FlowDefinition_SaveAsync(definition with { Id = Guid.Empty }, cancellationToken);
+
+    public Task<FlowDefinition> FlowDefinition_UpdateAsync(FlowDefinition definition, CancellationToken cancellationToken = default) =>
+        FlowDefinition_SaveAsync(definition, cancellationToken);
+
+    public async Task FlowDefinition_DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var definition = await db.FlowDefinitions.SingleOrDefaultAsync(item => item.Id == id, cancellationToken)
+            ?? throw new KeyNotFoundException("The flow definition was not found.");
+        db.FlowDefinitions.Remove(definition);
+        await db.SaveChangesAsync(cancellationToken);
+    }
+
+    private async Task<FlowDefinition> FlowDefinition_SaveAsync(FlowDefinition definition, CancellationToken cancellationToken)
+    {
+        var name = definition.Name.Trim();
+        if (string.IsNullOrWhiteSpace(name))
+            throw new ArgumentException("A flow name is required.", nameof(definition));
+        if (string.IsNullOrWhiteSpace(definition.DefinitionJson))
+            throw new ArgumentException("A flow definition is required.", nameof(definition));
+
+        using var document = JsonDocument.Parse(definition.DefinitionJson);
+        if (document.RootElement.ValueKind != JsonValueKind.Object)
+            throw new ArgumentException("The flow definition must be a JSON object.", nameof(definition));
+
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var duplicateName = await db.FlowDefinitions.AnyAsync(item => item.Name == name && item.Id != definition.Id, cancellationToken);
+        if (duplicateName)
+            throw new InvalidOperationException($"A flow named '{name}' already exists.");
+
+        var now = DateTime.UtcNow;
+        var entity = definition.Id == Guid.Empty
+            ? new FlowDefinitionEntity { Id = Guid.NewGuid(), CreatedAtUtc = now }
+            : await db.FlowDefinitions.SingleOrDefaultAsync(item => item.Id == definition.Id, cancellationToken)
+                ?? throw new KeyNotFoundException("The flow definition was not found.");
+        entity.Name = name;
+        entity.Version = definition.Version < 1 ? 1 : definition.Version;
+        entity.IsPublished = definition.IsPublished;
+        entity.DefinitionJson = definition.DefinitionJson;
+        entity.UpdatedAtUtc = now;
+        if (db.Entry(entity).State == EntityState.Detached)
+            db.FlowDefinitions.Add(entity);
+
+        await db.SaveChangesAsync(cancellationToken);
+        return ToFlowDefinition(entity);
+    }
+
+    private static FlowDefinition ToFlowDefinition(FlowDefinitionEntity entity) =>
+        new(entity.Id, entity.Name, entity.Version, entity.IsPublished, entity.DefinitionJson, entity.CreatedAtUtc, entity.UpdatedAtUtc);
+
+    #endregion
 
     public Task<ApplicationSettings> ApplicationSettings_ReadAsync(CancellationToken cancellationToken = default) =>
         effectiveApplicationSettings.ReadAsync(cancellationToken);
@@ -816,26 +894,8 @@ public sealed class DataService(
         if (request.Backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
             throw new ArgumentException("A vLLM or SGLang backend is required.", nameof(request));
 
-        try
-        {
-            await modelRuntime.LoadAsync(request, cancellationToken);
-            return modelRuntime.LoadedModel_Read();
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            var status = modelRuntime.LoadedModel_Read();
-            return status with
-            {
-                ModelPath = request.ModelPath,
-                Backend = request.Backend == ConfigurationBackend.Sglang ? "SGLang" : "vLLM",
-                LoadLog = exception.Message,
-                IsModelLoaded = false
-            };
-        }
+        await modelRuntime.LoadAsync(request, cancellationToken);
+        return modelRuntime.LoadedModel_Read();
     }
 
     public async Task<ModelLoadStatus> LoadDotLlmModelAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default)

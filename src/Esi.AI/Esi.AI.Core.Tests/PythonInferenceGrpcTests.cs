@@ -24,7 +24,16 @@ public sealed class PythonInferenceGrpcTests
             TensorParallelSize: 2,
             TrustRemoteCode: false,
             EnforceEager: true,
-            Devices: ["cuda:0", "cuda:1"]);
+            Devices: ["cuda:0", "cuda:1"],
+            Quantization: "gptq",
+            DType: "float16",
+            KvCacheDType: "fp8",
+            SpeculativeConfigJson: "{\"method\":\"mtp\",\"num_speculative_tokens\":4}",
+            MaxNumSeqs: 1,
+            MaxNumBatchedTokens: 8192,
+            EnablePrefixCaching: true,
+            EnableXpuGraph: true,
+            EnableBf16MtpDraft: true);
 
         var grpcRequest = PythonInferenceGrpcMapper.ToGrpcRequest(request);
 
@@ -35,6 +44,15 @@ public sealed class PythonInferenceGrpcTests
         Assert.AreEqual(.75f, grpcRequest.GpuMemoryUtilization, .001f);
         Assert.IsFalse(grpcRequest.TrustRemoteCode);
         Assert.IsTrue(grpcRequest.EnforceEager);
+        Assert.AreEqual("gptq", grpcRequest.Quantization);
+        Assert.AreEqual("float16", grpcRequest.Dtype);
+        Assert.AreEqual("fp8", grpcRequest.KvCacheDtype);
+        Assert.AreEqual("{\"method\":\"mtp\",\"num_speculative_tokens\":4}", grpcRequest.SpeculativeConfigJson);
+        Assert.AreEqual((uint)1, grpcRequest.MaxNumSeqs);
+        Assert.AreEqual((uint)8192, grpcRequest.MaxNumBatchedTokens);
+        Assert.IsTrue(grpcRequest.EnablePrefixCaching);
+        Assert.IsTrue(grpcRequest.EnableXpuGraph);
+        Assert.IsTrue(grpcRequest.EnableBf16MtpDraft);
         CollectionAssert.AreEqual(new[] { "cuda:0", "cuda:1" }, grpcRequest.Devices.ToArray());
     }
 

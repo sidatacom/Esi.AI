@@ -20,6 +20,15 @@ internal static class PythonInferenceGrpcMapper
             TrustRemoteCode = request.TrustRemoteCode,
             EnforceEager = request.EnforceEager,
             Device = request.Device,
+            Quantization = request.Quantization,
+            Dtype = request.DType,
+            KvCacheDtype = request.KvCacheDType,
+            SpeculativeConfigJson = request.SpeculativeConfigJson,
+            MaxNumSeqs = request.MaxNumSeqs,
+            MaxNumBatchedTokens = request.MaxNumBatchedTokens,
+            EnablePrefixCaching = request.EnablePrefixCaching,
+            EnableXpuGraph = request.EnableXpuGraph,
+            EnableBf16MtpDraft = request.EnableBf16MtpDraft,
         };
         var devices = request.Devices is { Count: > 0 } ? request.Devices : [request.Device];
         grpcRequest.Devices.AddRange(devices.Where(device => !string.IsNullOrWhiteSpace(device)));

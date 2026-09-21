@@ -20,10 +20,23 @@ Speicher und ermittelt das Startprojekt aus dem Solution-/Projektmodell.
 
 ## Server starten
 
-1. Pruefe, dass kein alter Studio-Prozess Port `7010` belegt.
-2. Waehle im Solution Explorer das Serverprojekt `Esi.AI.Studio`.
-3. Starte **Start New Instance** oder den C#-Dev-Kit-Befehl
-  `csdevkit.debug.projectDebugLaunch`.
+1. Oeffne den Workspace `Esi.AI.code-workspace` in VS Code und warte, bis der
+  C# Dev Kit Solution Explorer die Projekte geladen hat.
+2. Pruefe, dass kein alter Studio-Prozess Port `7010` belegt.
+3. Klicke im Solution Explorer mit der rechten Maustaste auf
+  `src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj` und waehle **Start New
+  Instance**. Dadurch ist das Startprojekt eindeutig gesetzt und VS Code
+  erzeugt die Debugkonfiguration fuer genau dieses Projekt.
+4. Alternativ: **C# › Select Startup Project** aus der Command Palette ausfuehren,
+  `Esi.AI.Studio` waehlen und danach **Run and Debug** beziehungsweise
+  **Start New Instance** verwenden.
+
+EsiMCP ermittelt bei einem parameterlosen `csdevkit.debug.projectDebugLaunch` das
+Projekt aus dem aktiven Editor. Für direkte C#-Dev-Kit-Aufrufe muss weiterhin ein
+aktives C#-Projekt beziehungsweise Startup-Projekt ausgewählt oder der
+vollständige Datei-URI als Argument übergeben werden. Ein mehrdeutiger oder
+fehlender Projektkontext wird jetzt als klare Fehlermeldung zurückgegeben und
+nicht mehr als `undefined ... scheme` an C# Dev Kit weitergereicht.
 
 C# Dev Kit baut das Projektmodell selbst und startet die dynamische Debugsession.
 Fuer einen Lauf ohne Debugger steht `csdevkit.debug.noDebugProjectLaunch` zur
@@ -44,8 +57,6 @@ Studio ist anschliessend unter <http://localhost:7010> erreichbar.
 
 `Properties/launchSettings.json` bleibt die Stelle fuer ASP.NET-/Blazor-Profile:
 
-| Einstellung | Zweck |
-| --- | --- |
 | Einstellung | Zweck |
 | --- | --- |
 | `applicationUrl` | Lokale HTTP-/HTTPS-Listener, einschliesslich Port `7010` |

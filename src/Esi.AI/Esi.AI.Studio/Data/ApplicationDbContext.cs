@@ -14,6 +14,7 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 	public DbSet<ChatMessageEntity> ChatMessages => Set<ChatMessageEntity>();
 	public DbSet<ModelDownloadEntity> ModelDownloads => Set<ModelDownloadEntity>();
 	public DbSet<ModelMetadataEntity> ModelMetadata => Set<ModelMetadataEntity>();
+	public DbSet<FlowDefinitionEntity> FlowDefinitions => Set<FlowDefinitionEntity>();
 
 	protected override void OnModelCreating(ModelBuilder modelBuilder)
 	{
@@ -22,5 +23,6 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 		modelBuilder.Entity<ModelSettingsEntity>().HasIndex(entity => entity.Backend).IsUnique();
 		modelBuilder.Entity<ModelEntity>().ToTable("Models");
 		modelBuilder.Entity<ModelMetadataEntity>().HasIndex(entity => entity.ModelPath).IsUnique();
+		modelBuilder.Entity<FlowDefinitionEntity>().HasIndex(entity => entity.Name).IsUnique();
 	}
 }

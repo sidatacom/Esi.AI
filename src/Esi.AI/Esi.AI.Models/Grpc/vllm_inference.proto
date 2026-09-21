@@ -30,6 +30,15 @@ message LoadModelRequest {
   bool enforce_eager = 7;
   string device = 8;
   repeated string devices = 9;
+  string quantization = 10;
+  string dtype = 11;
+  string kv_cache_dtype = 12;
+  string speculative_config_json = 13;
+  uint32 max_num_seqs = 14;
+  uint32 max_num_batched_tokens = 15;
+  bool enable_prefix_caching = 16;
+  bool enable_xpu_graph = 17;
+  bool enable_bf16_mtp_draft = 18;
 }
 
 message UnloadModelRequest {}

@@ -44,6 +44,10 @@ gestartet werden.
 
 ### 2. Studio starten
 
+Wenn kein Argument übergeben wird, ermittelt EsiMCP das Projekt aus dem aktiven
+Editor. Befindet sich der aktive Editor nicht unter einem eindeutigen C#-Projekt,
+muss der vollständige Datei-URI wie im folgenden Beispiel übergeben werden.
+
 ```json
 {
   "commandId": "csdevkit.debug.projectDebugLaunch",

@@ -16,6 +16,7 @@ public interface IModelDownloadManager
     Task CancelDownloadAsync(Guid downloadId, CancellationToken cancellationToken = default);
 
     Task DeleteCompletedDownloadsAsync(CancellationToken cancellationToken = default);
+    Task DeleteFailedDownloadsAsync(CancellationToken cancellationToken = default);
 
     ModelDownloadStatus? GetDownload(Guid downloadId);
 

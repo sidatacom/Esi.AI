@@ -1,6 +1,6 @@
 ---
 name: vscode-debug
-description: "Use when starting, stopping, restarting, or validating a VS Code or .NET debug session, including Esi.AI Studio, Blazor Interactive Auto, WebAssembly debugging, Hot Reload, debug ports, and browser checks."
+description: "MANDATORY for Esi.AI Studio and any C# Dev Kit lifecycle task: use when starting, stopping, restarting, or validating Esi.AI Studio; using Start New Instance, csdevkit.debug.projectDebugLaunch, C# Dev Kit, Run and Debug, Hot Reload, port 7010, Blazor Interactive Auto, WebAssembly debugging, localhost browser checks, or testing the Studio UI in a browser. Load this skill before the first lifecycle or browser tool call."
 ---
 
 # VS Code Debug
@@ -78,7 +78,7 @@ The verified result is `{"stopped":true}`. Confirm the stop by checking that the
 
 ### Restart, readiness, and diagnostics sequence
 
-C# Dev Kit 3.20.199 now exposes these lifecycle and diagnostic commands through the EsiMCP C# Dev Kit bridge. They are virtual commands in the extension command list (`registered: false`) and must be invoked through `csharp_devkit_execute_command`:
+C# Dev Kit 3.20.207 exposes these lifecycle and diagnostic commands through the EsiMCP C# Dev Kit bridge. They are virtual commands in the extension command list (`registered: false`) and must be invoked through `csharp_devkit_execute_command`:
 
 - `csdevkit.debug.active.session`
 - `csdevkit.debug.check.host.readyness`
@@ -94,6 +94,10 @@ C# Dev Kit 3.20.199 now exposes these lifecycle and diagnostic commands through 
 6. Confirm a reachable browser page before browser checks.
 
 For structured diagnostics, call `{ "commandId": "csdevkit.debug.output.diagnostics", "arguments": [{ "sessionId": "<active-session-id>" }] }`. The response includes `sessionId`, `bufferedCharacters`, `readinessStringSeen`, `output`, and `lastLine`. Use `lastLine` as the concise answer when the user asks for the last Debug Console line; use `output` to investigate the surrounding messages. If no session is active, the command returns `null`, so first call `csdevkit.debug.active.session` and do not infer a console failure from `null`. The readiness command returned `{ "ready": true }`; these are the C# Dev Kit bridge checks, distinct from the legacy EsiMCP host-readiness helper.
+
+### Troubleshooting the missing `scheme` error
+
+The error `Cannot read properties of undefined (reading 'scheme')` occurs before Studio starts when `csdevkit.debug.projectDebugLaunch` receives a URI string or an incomplete URI object. Pass the complete serialized VS Code file URI object shown above, or select `Esi.AI.Studio` in Solution Explorer and use **Start New Instance**. Do not replace the C# Dev Kit launch with `dotnet run`; after retrying, verify both the active session ID and `{ "ready": true }`.
 
 ### Verified Razor Hot Reload check
 

@@ -360,18 +360,42 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         OpenVinoModelLoadStatus openVinoStatus,
         ModelLoadStatus pythonStatus,
         ModelLoadStatus dotLlmStatus) =>
-        pendingModels.Values.Select(pending => new LoadedModelStatus(
-            pending.ModelPath,
-            pending.Backend,
-            pending.Runtime,
-            0,
-            0,
-            0,
-            [],
-            null,
-            GetPendingLoadLog(pending.Backend, llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus),
-            true,
-            false)).ToArray();
+        pendingModels.Values
+            .Where(pending => !IsAlreadyLoaded(pending, llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus))
+            .Select(pending => new LoadedModelStatus(
+                pending.ModelPath,
+                pending.Backend,
+                pending.Runtime,
+                0,
+                0,
+                0,
+                [],
+                null,
+                GetPendingLoadLog(pending.Backend, llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus),
+                true,
+                false)).ToArray();
+
+    private static bool IsAlreadyLoaded(
+        PendingModel pending,
+        ModelLoadStatus llamaStatus,
+        OpenVinoModelLoadStatus openVinoStatus,
+        ModelLoadStatus pythonStatus,
+        ModelLoadStatus dotLlmStatus)
+    {
+        if (pending.Backend == ConfigurationBackend.OpenVino)
+            return openVinoStatus.IsModelLoaded && string.Equals(openVinoStatus.ModelPath, pending.ModelPath, StringComparison.OrdinalIgnoreCase);
+
+        var loadedModels = pending.Backend switch
+        {
+            ConfigurationBackend.Llama => llamaStatus.LoadedModels,
+            ConfigurationBackend.Vllm or ConfigurationBackend.Sglang => pythonStatus.LoadedModels,
+            ConfigurationBackend.DotLlm => dotLlmStatus.LoadedModels,
+            _ => []
+        };
+        return loadedModels.Any(model =>
+            model.Backend == pending.Backend &&
+            string.Equals(model.ModelPath, pending.ModelPath, StringComparison.OrdinalIgnoreCase));
+    }
 
     private static string GetPendingLoadLog(
         ConfigurationBackend backend,

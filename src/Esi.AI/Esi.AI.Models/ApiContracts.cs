@@ -47,7 +47,8 @@ public sealed record ModelLibrarySettings(
     IReadOnlyList<string>? Directories = null,
     int SearchLimit = 20,
     int MaxParallelDownloads = 3,
-    int MaxParallelFileDownloads = 2);
+    int MaxParallelFileDownloads = 2,
+    string? HuggingFaceToken = null);
 
 /// <summary>Configures the inference deadline formula for one backend family.</summary>
 public sealed record InferenceTimeoutSettings(
@@ -94,7 +95,15 @@ public sealed record BackendPrerequisiteDiagnostics(
     string BackendName,
     bool IsReady,
     IReadOnlyList<BackendPrerequisiteCheck> Checks,
-    string? Error = null);
+    string? Error = null,
+    IReadOnlyList<BackendAcceleratorDevice>? AvailableDevices = null);
+
+/// <summary>Describes one accelerator reported by a Python backend runtime.</summary>
+public sealed record BackendAcceleratorDevice(
+    string Route,
+    string Label,
+    string Vendor,
+    string Driver);
 
 /// <summary>Describes one bounded diagnostic operation executed by the backend worker.</summary>
 public sealed record BackendWorkerRequest(
@@ -573,7 +582,16 @@ public sealed record PythonInferenceLoadRequest(
     float TopP = .9f,
     bool EnforceEager = false,
     string Device = "cuda:0",
-    IReadOnlyList<string>? Devices = null);
+    IReadOnlyList<string>? Devices = null,
+    string Quantization = "",
+    string DType = "",
+    string KvCacheDType = "",
+    string SpeculativeConfigJson = "",
+    uint MaxNumSeqs = 0,
+    uint MaxNumBatchedTokens = 0,
+    bool EnablePrefixCaching = false,
+    bool EnableXpuGraph = false,
+    bool EnableBf16MtpDraft = false);
 
 public sealed record DotLlmLoadRequest(
     string ModelPath,

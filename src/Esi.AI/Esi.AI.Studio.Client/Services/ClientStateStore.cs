@@ -1,88 +1,149 @@
 using Esi.AI.Models;
+using Esi.AI.Studio.Client.State;
 
 namespace Esi.AI.Studio.Client.Services;
 
 /// <summary>Central client-side snapshot for SignalR-backed collection state.</summary>
 public interface IClientStateStore
 {
-    ModelLoadStatus LoadedModels { get; }
+    SignalRClientState State { get; }
 
-    IReadOnlyDictionary<Guid, ModelDownloadUpdate> Downloads { get; }
+    ActiveModelsSignalRState ActiveModels { get; }
 
-    BackendRequirementState BackendRequirements { get; }
+    DownloadsState Downloads { get; }
 
-    IReadOnlyDictionary<string, BackendRuntimeStatus> BackendRuntimes { get; }
+    BackendRequirementsState BackendRequirements { get; }
+
+    BackendRuntimesState BackendRuntimes { get; }
 
     event Action? Changed;
 
-    void ApplyLoadedModels(ModelLoadStatus status);
+    void LoadedModel_Read(ModelLoadStatus status);
+    void LoadedModel_Create(ModelLoadStatus status);
+    void LoadedModel_Update(ModelLoadStatus status);
+    void LoadedModel_Delete(ModelLoadStatus status);
 
-    void ApplyDownload(ModelDownloadUpdate update);
+    void ModelDownload_Read(IEnumerable<ModelDownloadUpdate> updates);
+    void ModelDownload_Create(ModelDownloadUpdate update);
+    void ModelDownload_Update(ModelDownloadUpdate update);
+    void ModelDownload_Delete(ModelDownloadUpdate update);
 
-    void RemoveDownload(ModelDownloadUpdate update);
+    void BackendRequirement_Read(BackendRequirementState state);
+    void BackendRequirement_Update(BackendRequirementState state);
 
-    void ApplyBackendRequirements(BackendRequirementState state);
+    void BackendRuntime_Read(IEnumerable<BackendRuntimeStatus> statuses);
+    void BackendRuntime_Create(BackendRuntimeStatus status);
+    void BackendRuntime_Update(BackendRuntimeStatus status);
+    void BackendRuntime_Delete(BackendRuntimeStatus status);
 
-    void ApplyBackendRuntime(BackendRuntimeStatus status);
-
-    void RemoveBackendRuntime(BackendRuntimeStatus status);
 }
 
 /// <summary>Reconciles SignalR create/update/delete messages into one immutable-facing snapshot.</summary>
 public sealed class ClientStateStore : IClientStateStore
 {
-    private readonly Dictionary<Guid, ModelDownloadUpdate> downloads = [];
-    private readonly Dictionary<string, BackendRuntimeStatus> backendRuntimes = new(StringComparer.OrdinalIgnoreCase);
-
-    public ModelLoadStatus LoadedModels { get; private set; } = new(null, string.Empty, 0, 0, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), false, []);
-
-    public IReadOnlyDictionary<Guid, ModelDownloadUpdate> Downloads => downloads;
-
-    public BackendRequirementState BackendRequirements { get; private set; } = new([], DateTimeOffset.MinValue);
-
-    public IReadOnlyDictionary<string, BackendRuntimeStatus> BackendRuntimes => backendRuntimes;
+    public SignalRClientState State { get; } = new();
+    public ActiveModelsSignalRState ActiveModels => State.ActiveModels;
+    public DownloadsState Downloads => State.Downloads;
+    public BackendRequirementsState BackendRequirements => State.BackendRequirements;
+    public BackendRuntimesState BackendRuntimes => State.BackendRuntimes;
 
     public event Action? Changed;
 
-    public void ApplyLoadedModels(ModelLoadStatus status)
+    public void LoadedModel_Read(ModelLoadStatus status)
     {
         ArgumentNullException.ThrowIfNull(status);
-        LoadedModels = status;
+        ActiveModels.Read(status);
         NotifyChanged();
     }
 
-    public void ApplyDownload(ModelDownloadUpdate update)
+    public void LoadedModel_Create(ModelLoadStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        ActiveModels.Create(status);
+        NotifyChanged();
+    }
+
+    public void LoadedModel_Update(ModelLoadStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        ActiveModels.Update(status);
+        NotifyChanged();
+    }
+
+    public void LoadedModel_Delete(ModelLoadStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        ActiveModels.Delete(status);
+        NotifyChanged();
+    }
+
+    public void ModelDownload_Read(IEnumerable<ModelDownloadUpdate> updates)
+    {
+        ArgumentNullException.ThrowIfNull(updates);
+        Downloads.Read(updates);
+        NotifyChanged();
+    }
+
+    public void ModelDownload_Create(ModelDownloadUpdate update)
     {
         ArgumentNullException.ThrowIfNull(update);
-        downloads[update.Download.Id] = update;
+        Downloads.Create(update);
         NotifyChanged();
     }
 
-    public void RemoveDownload(ModelDownloadUpdate update)
+    public void ModelDownload_Update(ModelDownloadUpdate update)
     {
         ArgumentNullException.ThrowIfNull(update);
-        downloads.Remove(update.Download.Id);
+        Downloads.Update(update);
         NotifyChanged();
     }
 
-    public void ApplyBackendRequirements(BackendRequirementState state)
+    public void ModelDownload_Delete(ModelDownloadUpdate update)
+    {
+        ArgumentNullException.ThrowIfNull(update);
+        Downloads.Delete(update);
+        NotifyChanged();
+    }
+
+    public void BackendRequirement_Read(BackendRequirementState state)
     {
         ArgumentNullException.ThrowIfNull(state);
-        BackendRequirements = state;
+        BackendRequirements.Read(state);
         NotifyChanged();
     }
 
-    public void ApplyBackendRuntime(BackendRuntimeStatus status)
+    public void BackendRequirement_Update(BackendRequirementState state)
     {
-        ArgumentNullException.ThrowIfNull(status);
-        backendRuntimes[status.PackageId] = status;
+        ArgumentNullException.ThrowIfNull(state);
+        BackendRequirements.Update(state);
         NotifyChanged();
     }
 
-    public void RemoveBackendRuntime(BackendRuntimeStatus status)
+    public void BackendRuntime_Read(IEnumerable<BackendRuntimeStatus> statuses)
+    {
+        ArgumentNullException.ThrowIfNull(statuses);
+        BackendRuntimes.Read(statuses);
+        NotifyChanged();
+    }
+
+    public void BackendRuntime_Create(BackendRuntimeStatus status)
     {
         ArgumentNullException.ThrowIfNull(status);
-        backendRuntimes.Remove(status.PackageId);
+        BackendRuntimes.Create(status);
+        NotifyChanged();
+    }
+
+    public void BackendRuntime_Update(BackendRuntimeStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        BackendRuntimes.Update(status);
+        NotifyChanged();
+    }
+
+    public void BackendRuntime_Delete(BackendRuntimeStatus status)
+    {
+        ArgumentNullException.ThrowIfNull(status);
+        BackendRuntimes.Delete(status);
         NotifyChanged();
     }
 

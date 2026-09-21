@@ -2,6 +2,7 @@
 @rendermode InteractiveAuto
 @implements IAsyncDisposable
 @using Esi.AI.Models
+@using Esi.AI.Studio.Client.State
 @using Esi.AI.Studio.Contracts
 @inject IDataService DataService
 @inject IApplicationSettingsEvents ApplicationSettingsEvents
@@ -26,6 +27,32 @@
         <p class="settings-message settings-message-error" role="alert">@errorMessage</p>
     }
 
+    <section class="settings-panel" aria-labelledby="workflow-definitions-heading">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">WORKFLOWS</p>
+                <h2 id="workflow-definitions-heading">Workflow definitions</h2>
+            </div>
+        </div>
+        <p class="settings-note">Gespeicherte Flow-Definitionen aus der Datenbank. Die JSON-Struktur lässt sich pro Workflow aufklappen.</p>
+        @if (flowDefinitions.Count == 0)
+        {
+            <p class="settings-note">Noch keine Workflows gespeichert.</p>
+        }
+        else
+        {
+            <div class="workflow-definition-list">
+                @foreach (var definition in flowDefinitions)
+                {
+                    <details class="workflow-definition">
+                        <summary><strong>@definition.Name</strong><span>v@definition.Version · @(definition.IsPublished ? "Published" : "Draft")</span></summary>
+                        <textarea rows="14" readonly>@definition.DefinitionJson</textarea>
+                    </details>
+                }
+            </div>
+        }
+    </section>
+
     <section class="settings-panel" aria-labelledby="inference-timeout-heading">
         <div class="section-heading">
             <div>
@@ -39,9 +66,9 @@
             {
                 <div class="backend-timeout-row">
                     <strong>@timeout.Backend</strong>
-                    <label class="field-group"><span>Basiszeit (s)</span><input type="number" min="0" step="1" @bind="timeout.BaseSeconds" /></label>
-                    <label class="field-group"><span>Pro Tool (s)</span><input type="number" min="0" step="0.1" @bind="timeout.SecondsPerTool" /></label>
-                    <label class="field-group"><span>Pro Prefill-Token (s)</span><input type="number" min="0" step="0.001" @bind="timeout.SecondsPerPrefillToken" /></label>
+                    <label class="field-group"><span>Basiszeit (s)</span><input type="number" min="0" step="1" @bind="timeout.BaseSeconds" @bind:event="oninput" /></label>
+                    <label class="field-group"><span>Pro Tool (s)</span><input type="number" min="0" step="0.1" @bind="timeout.SecondsPerTool" @bind:event="oninput" /></label>
+                    <label class="field-group"><span>Pro Prefill-Token (s)</span><input type="number" min="0" step="0.001" @bind="timeout.SecondsPerPrefillToken" @bind:event="oninput" /></label>
                 </div>
             }
         </div>
@@ -81,6 +108,24 @@
         </div>
         <button class="secondary-button" type="button" @onclick="AddPackage">Paket hinzufügen</button>
     </section>
+
+    <section class="settings-panel" aria-labelledby="model-library-heading">
+        <div class="section-heading">
+            <div>
+                <p class="eyebrow">MODEL LIBRARY</p>
+                <h2 id="model-library-heading">Hugging Face</h2>
+            </div>
+        </div>
+        <p class="settings-note">Für geschützte Repositories benötigt der Modelldownload einen Hugging-Face-Token mit Read-Berechtigung. Der Wert wird lokal gespeichert und nicht ins Repository geschrieben.</p>
+        <label class="field-group" for="hugging-face-token">
+            <span>Hugging-Face-Token</span>
+            <input id="hugging-face-token" type="password" autocomplete="new-password" @bind="form.HuggingFaceToken" placeholder="@(form.HasHuggingFaceToken ? "Gespeicherter Token bleibt unverändert" : "hf_...")" />
+        </label>
+        @if (form.HasHuggingFaceToken)
+        {
+            <label class="checkbox-group"><input type="checkbox" @bind="form.ClearHuggingFaceToken" /> Gespeicherten Token entfernen</label>
+        }
+    </section>
 </div>
 
 <style>
@@ -99,6 +144,7 @@
     .runtime-options, .package-grid { display: grid; gap: .75rem; grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: .75rem; }
     .field-wide { grid-column: 1 / -1; }
     .source-row-header { display: flex; justify-content: space-between; gap: 1rem; align-items: center; }
+    .workflow-definition-list { display: grid; gap: .75rem; }.workflow-definition { border-top: 1px solid #ebe7df; padding-top: .75rem; }.workflow-definition summary { display: flex; justify-content: space-between; gap: 1rem; cursor: pointer; }.workflow-definition summary span { color: #5e625f; font-size: .85rem; }.workflow-definition textarea { box-sizing: border-box; width: 100%; margin-top: .7rem; resize: vertical; border: 1px solid #c9c4bb; padding: .7rem; background: #faf9f6; font: .78rem/1.45 monospace; }
     .checkbox-group { display: flex; align-items: center; gap: .5rem; font-weight: 700; }
     .secondary-button { border: 1px solid #176b5b; background: transparent; color: #176b5b; padding: .55rem .8rem; font: inherit; font-weight: 700; }
     .backend-timeout-row { display: grid; grid-template-columns: 7rem repeat(3, minmax(0, 1fr)); align-items: end; gap: 1rem; padding: .85rem 0; border-top: 1px solid #ebe7df; }
@@ -108,9 +154,11 @@
 </style>
 
 @code {
+    private readonly SettingsPageState pageState = new();
     private readonly SettingsForm form = new();
     private bool isSaving;
     private BackendRuntimeForm runtimeOptions = new();
+    private IReadOnlyList<FlowDefinition> flowDefinitions = [];
     private string? message;
     private string? errorMessage;
 
@@ -126,15 +174,45 @@
         {
             var settingsTask = DataService.ApplicationSettings_ReadAsync();
             var runtimeTask = DataService.BackendRuntimePackage_ReadAsync();
-            await Task.WhenAll(settingsTask, runtimeTask);
+            var flowTask = DataService.FlowDefinition_ReadAsync();
+            await Task.WhenAll(settingsTask, runtimeTask, flowTask);
             Apply(await settingsTask);
             runtimeOptions.Apply(await runtimeTask);
+            flowDefinitions = await EnsureDefaultFlowDefinitionsAsync(await flowTask);
         }
         catch (Exception exception)
         {
             errorMessage = exception.Message;
         }
     }
+
+    private async Task<IReadOnlyList<FlowDefinition>> EnsureDefaultFlowDefinitionsAsync(IReadOnlyList<FlowDefinition> definitions)
+    {
+        var result = definitions.ToList();
+        foreach (var (name, definitionJson) in DefaultFlowDefinitions)
+        {
+            if (result.Any(definition => definition.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                continue;
+
+            var now = DateTime.UtcNow;
+            result.Add(await DataService.FlowDefinition_CreateAsync(new FlowDefinition(
+                Guid.Empty,
+                name,
+                1,
+                false,
+                definitionJson,
+                now,
+                now)));
+        }
+
+        return result.OrderBy(definition => definition.Name).ToArray();
+    }
+
+    private static readonly (string Name, string DefinitionJson)[] DefaultFlowDefinitions =
+    [
+        ("Chat request router", """{"nodes":[{"Name":"Incoming chat request","Detail":"POST /v1/chat/completions","Kind":"trigger"},{"Name":"Route by model","Detail":"model + request shape","Kind":"route"},{"Name":"Local chat backend","Detail":"Loaded local model","Kind":"backend"}]}"""),
+        ("Vision request router", """{"nodes":[{"Name":"Incoming vision request","Detail":"image + messages","Kind":"trigger"},{"Name":"Check image capability","Detail":"vision model required","Kind":"guard"},{"Name":"Vision backend","Detail":"Multimodal local model","Kind":"backend"}]}""")
+    ];
 
     private async Task SaveAsync()
     {
@@ -143,6 +221,12 @@
         errorMessage = null;
         try
         {
+            if (form.Backends.Any(backend => !backend.IsValid))
+            {
+                errorMessage = "Alle Zeitbudgets müssen endlich und nicht negativ sein.";
+                return;
+            }
+
             Apply(await DataService.ApplicationSettings_UpdateAsync(form.ToContract()));
             runtimeOptions.Apply(await DataService.BackendRuntimePackage_UpdateAsync(runtimeOptions.ToContract()));
             message = "Settings gespeichert.";
@@ -183,8 +267,20 @@
         public List<BackendSettingsForm> Backends { get; } = BackendNames
             .Select(backend => new BackendSettingsForm(backend))
             .ToList();
+        public ModelLibrarySettings ModelLibrary { get; private set; } = new();
 
-        public ApplicationSettings ToContract() => new(Backends.Select(item => item.ToContract()).ToArray());
+        public string? HuggingFaceToken { get; set; }
+        public bool HasHuggingFaceToken { get; private set; }
+        public bool ClearHuggingFaceToken { get; set; }
+
+        public ApplicationSettings ToContract() => new(
+            Backends.Select(item => item.ToContract()).ToArray(),
+            ModelLibrary: ModelLibrary with
+            {
+                HuggingFaceToken = ClearHuggingFaceToken
+                    ? null
+                    : string.IsNullOrWhiteSpace(HuggingFaceToken) ? existingHuggingFaceToken : HuggingFaceToken.Trim()
+            });
 
         public void Apply(ApplicationSettings settings)
         {
@@ -193,7 +289,15 @@
                 var form = Backends.FirstOrDefault(item => string.Equals(item.Backend, backend.Backend, StringComparison.OrdinalIgnoreCase));
                 form?.Apply(backend);
             }
+
+            existingHuggingFaceToken = settings.ModelLibrary?.HuggingFaceToken;
+            HasHuggingFaceToken = !string.IsNullOrWhiteSpace(existingHuggingFaceToken);
+            HuggingFaceToken = null;
+            ClearHuggingFaceToken = false;
+            ModelLibrary = settings.ModelLibrary ?? new ModelLibrarySettings();
         }
+
+        private string? existingHuggingFaceToken;
     }
 
     private static IReadOnlyList<string> BackendNames { get; } = ["Llama", "OpenVINO", "vLLM", "SGLang", "dotLLM"];
@@ -204,6 +308,9 @@
         public double BaseSeconds { get; set; } = 120;
         public double SecondsPerTool { get; set; } = 1;
         public double SecondsPerPrefillToken { get; set; } = .01;
+        public bool IsValid => double.IsFinite(BaseSeconds) && BaseSeconds >= 0
+            && double.IsFinite(SecondsPerTool) && SecondsPerTool >= 0
+            && double.IsFinite(SecondsPerPrefillToken) && SecondsPerPrefillToken >= 0;
 
         public void Apply(InferenceTimeoutSettings settings)
         {

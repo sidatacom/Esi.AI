@@ -5,6 +5,12 @@ namespace Esi.AI.Studio.Services;
 
 internal sealed class ServerModelDownloadEvents : IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents, IApplicationSettingsEvents
 {
+    public event Func<IReadOnlyList<ModelDownloadUpdate>, Task>? ModelDownload_Read
+    {
+        add { }
+        remove { }
+    }
+
     public event Func<ModelDownloadUpdate, Task>? ModelDownload_Create
     {
         add { }
@@ -29,6 +35,12 @@ internal sealed class ServerModelDownloadEvents : IModelDownloadEvents, IModelRu
         remove { }
     }
 
+    public event Func<ModelLoadStatus, Task>? LoadedModel_Read
+    {
+        add { }
+        remove { }
+    }
+
     public event Func<ModelLoadStatus, Task>? LoadedModel_Update
     {
         add { }
@@ -41,7 +53,19 @@ internal sealed class ServerModelDownloadEvents : IModelDownloadEvents, IModelRu
         remove { }
     }
 
-    public event Func<BackendRequirementState, Task>? BackendRequirementStateUpdated
+    public event Func<BackendRequirementState, Task>? BackendRequirement_Read
+    {
+        add { }
+        remove { }
+    }
+
+    public event Func<BackendRequirementState, Task>? BackendRequirement_Update
+    {
+        add { }
+        remove { }
+    }
+
+    public event Func<IReadOnlyList<BackendRuntimeStatus>, Task>? BackendRuntime_Read
     {
         add { }
         remove { }

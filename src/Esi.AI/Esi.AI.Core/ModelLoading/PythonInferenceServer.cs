@@ -119,7 +119,7 @@ public sealed class PythonInferenceServer : IDisposable
                 "--grpc-port", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
             })
                 startInfo.ArgumentList.Add(argument);
-            ApplyDeviceEnvironment(startInfo, devices, pythonExecutable);
+            ApplyDeviceEnvironment(startInfo, devices, pythonExecutable, request.EnableXpuGraph, request.EnableBf16MtpDraft);
 
             if (!IsExecutable(pythonExecutable))
                 throw new InvalidOperationException($"The Python executable '{pythonExecutable}' was not found or is not executable.");
@@ -341,7 +341,12 @@ public sealed class PythonInferenceServer : IDisposable
             || (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
     }
 
-    private static void ApplyDeviceEnvironment(ProcessStartInfo startInfo, IReadOnlyList<string> devices, string pythonExecutable)
+    private static void ApplyDeviceEnvironment(
+        ProcessStartInfo startInfo,
+        IReadOnlyList<string> devices,
+        string pythonExecutable,
+        bool enableXpuGraph,
+        bool enableBf16MtpDraft)
     {
         var routes = devices
             .Where(device => !string.IsNullOrWhiteSpace(device))
@@ -371,9 +376,17 @@ public sealed class PythonInferenceServer : IDisposable
                 _ = ParseDeviceOrdinal(route, "xpu", devices);
 
             startInfo.Environment["CUDA_VISIBLE_DEVICES"] = "";
-            startInfo.Environment["ONEAPI_DEVICE_SELECTOR"] = "level_zero:gpu";
-            startInfo.Environment.Remove("ZE_AFFINITY_MASK");
+            startInfo.Environment["ONEAPI_DEVICE_SELECTOR"] = "level_zero:0";
+            startInfo.Environment["ZE_FLAT_DEVICE_HIERARCHY"] = "COMPOSITE";
+            startInfo.Environment["ZE_AFFINITY_MASK"] = "0";
+            startInfo.Environment["PYTORCH_ALLOC_CONF"] = "expandable_segments:True";
+            startInfo.Environment["VLLM_XPU_ENABLE_XPU_GRAPH"] = enableXpuGraph ? "1" : "0";
+            startInfo.Environment["B70_MTP_BF16_DRAFT"] = enableBf16MtpDraft ? "1" : "0";
             startInfo.Environment["VLLM_TARGET_DEVICE"] = "xpu";
+            startInfo.Environment["CCL_ZE_IPC_EXCHANGE"] = "sockets";
+            startInfo.Environment["CCL_ATL_TRANSPORT"] = "ofi";
+            startInfo.Environment["FI_PROVIDER"] = "tcp";
+            startInfo.Environment["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn";
             ConfigureXpuCommunicationEnvironment(startInfo, pythonExecutable);
             return;
         }
@@ -402,12 +415,28 @@ public sealed class PythonInferenceServer : IDisposable
             File.CreateSymbolicLink(compatibilityLoaderPath, loaderPath);
 
         startInfo.Environment["CCL_ROOT"] = environmentRoot;
-        var currentLibraryPath = startInfo.Environment.TryGetValue("LD_LIBRARY_PATH", out var configuredLibraryPath)
-            ? configuredLibraryPath
-            : null;
-        startInfo.Environment["LD_LIBRARY_PATH"] = string.IsNullOrWhiteSpace(currentLibraryPath)
-            ? environmentLibraryDirectory
-            : string.Join(Path.PathSeparator, environmentLibraryDirectory, currentLibraryPath);
+        startInfo.Environment.Remove("ZE_ENABLE_ALT_DRIVERS");
+        startInfo.Environment.Remove("UR_ADAPTERS_FORCE_LOAD");
+        startInfo.Environment.Remove("ZES_ENABLE_SYSMAN");
+        startInfo.Environment["LD_LIBRARY_PATH"] = environmentLibraryDirectory;
+        ConfigureOclocEnvironment(startInfo);
+    }
+
+    private static void ConfigureOclocEnvironment(ProcessStartInfo startInfo)
+    {
+        var oclocRoot = Environment.GetEnvironmentVariable("ESI_OCLOC_ROOT");
+        if (string.IsNullOrWhiteSpace(oclocRoot))
+            oclocRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "opt", "intel-ocloc");
+
+        var oclocBinDirectory = Path.Combine(oclocRoot, "usr", "bin");
+        var oclocLibraryDirectory = Path.Combine(oclocRoot, "usr", "lib", "x86_64-linux-gnu");
+        if (!File.Exists(Path.Combine(oclocLibraryDirectory, "libocloc.so")) || !Directory.Exists(oclocBinDirectory))
+            return;
+
+        var currentPath = startInfo.Environment["PATH"] ?? Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
+        startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, oclocBinDirectory, currentPath);
+        var currentLibraryPath = startInfo.Environment["LD_LIBRARY_PATH"] ?? Environment.GetEnvironmentVariable("LD_LIBRARY_PATH") ?? string.Empty;
+        startInfo.Environment["LD_LIBRARY_PATH"] = string.Join(Path.PathSeparator, oclocLibraryDirectory, currentLibraryPath);
     }
 
     private static string? FindLevelZeroLoader()

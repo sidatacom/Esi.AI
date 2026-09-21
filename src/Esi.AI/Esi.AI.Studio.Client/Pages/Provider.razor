@@ -3,6 +3,7 @@
 @implements IAsyncDisposable
 
 @using Esi.AI.Models
+@using Esi.AI.Studio.Client.State
 @inject IDataService DataService
 @inject IProviderTraceEvents ProviderTraceEvents
 @inject NavigationManager NavigationManager
@@ -159,12 +160,13 @@
 </style>
 
 @code {
+    private readonly ProviderPageState pageState = new();
     private bool isRefreshing;
     private string? errorMessage;
     private readonly List<ProviderTraceEntry> providerTraceEntries = [];
 
-    private IReadOnlyList<LoadedModelStatus> LoadedModels => StateStore.LoadedModels.LoadedModels;
-    private bool IsConnected => !string.IsNullOrWhiteSpace(StateStore.LoadedModels.Backend) || LoadedModels.Count > 0;
+    private IReadOnlyList<LoadedModelStatus> LoadedModels => StateStore.ActiveModels.Loaded;
+    private bool IsConnected => !string.IsNullOrWhiteSpace(StateStore.ActiveModels.Snapshot.Backend) || LoadedModels.Count > 0;
     private IReadOnlyList<ProviderTraceEntry> ProviderTraceEntries => providerTraceEntries;
 
     protected override async Task OnInitializedAsync()
@@ -180,7 +182,7 @@
         errorMessage = null;
         try
         {
-            StateStore.ApplyLoadedModels(await DataService.LoadedModel_ReadAsync());
+            StateStore.LoadedModel_Read(await DataService.LoadedModel_ReadAsync());
             MergeProviderTrace(await DataService.ProviderTrace_ReadAsync());
         }
         catch (Exception exception)

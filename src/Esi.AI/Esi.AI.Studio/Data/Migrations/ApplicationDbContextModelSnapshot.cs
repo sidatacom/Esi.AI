@@ -195,6 +195,40 @@ namespace Esi.AI.Studio.Migrations
                     b.ToTable("ChatMessages");
                 });
 
+            modelBuilder.Entity("Esi.AI.Studio.Data.FlowDefinitionEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("DefinitionJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsPublished")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Name")
+                        .IsUnique();
+
+                    b.ToTable("FlowDefinitions");
+                });
+
             modelBuilder.Entity("Esi.AI.Studio.Data.ModelConfigurationEntity", b =>
                 {
                     b.Property<Guid>("Id")

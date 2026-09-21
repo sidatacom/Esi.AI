@@ -149,17 +149,19 @@ public sealed class PythonBackendProvisioner
         var cudaAvailable = false;
         var xpuAvailable = false;
         var xpuRouteSelected = IsXpuRoute(devices);
+        IReadOnlyList<BackendAcceleratorDevice> availableDevices = [];
         if (pythonAvailable)
         {
             cudaAvailable = await HasAcceleratorAsync(executable, "cuda", timeout, cancellationToken).ConfigureAwait(false);
             xpuAvailable = await HasAcceleratorAsync(executable, "xpu", timeout, cancellationToken).ConfigureAwait(false);
+            availableDevices = await DiscoverDevicesAsync(executable, timeout, cancellationToken).ConfigureAwait(false);
         }
         checks.Add(new("cuda-runtime", xpuRouteSelected ? "CUDA accelerator (optional)" : "CUDA accelerator", cudaAvailable,
             cudaAvailable ? "PyTorch reports a CUDA accelerator." : "PyTorch did not report an available CUDA accelerator.", false, xpuRouteSelected));
         checks.Add(new("xpu-runtime", xpuRouteSelected ? "Intel XPU accelerator" : "Intel XPU accelerator (optional)", xpuAvailable,
             xpuAvailable ? "PyTorch reports an Intel XPU accelerator." : "PyTorch did not report an available Intel XPU accelerator.", false, !xpuRouteSelected));
 
-        return new(backend, definition.DisplayName, checks.Where(check => !check.IsOptional).All(check => check.IsAvailable), checks, null);
+        return new(backend, definition.DisplayName, checks.Where(check => !check.IsOptional).All(check => check.IsAvailable), checks, null, availableDevices);
     }
 
     /// <summary>Returns the default isolated environment path for a backend.</summary>
@@ -176,11 +178,18 @@ public sealed class PythonBackendProvisioner
         CancellationToken cancellationToken,
         string applicationDirectory)
     {
-        if (!await HasDependenciesAsync(pythonExecutable, definition, timeout, cancellationToken, applicationDirectory).ConfigureAwait(false))
+        var modules = string.Join(",", definition.RequiredModules.Select(module => $"'{module}'"));
+        var pythonDirectory = Path.Combine(applicationDirectory, "Python");
+        var bootstrap = definition.RequiresVllmXpuBootstrap
+            ? $"import sys; sys.path.insert(0, {JsonSerializer.Serialize(pythonDirectory)}); import vllm_xpu_bootstrap; vllm_xpu_bootstrap.disable_cuda_platform_probe(); "
+            : string.Empty;
+        var importCheck = $"{bootstrap}import importlib; [importlib.import_module(name) for name in ({modules})]";
+        var result = await RunProcessAsync(pythonExecutable, ["-c", importCheck], timeout, cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode != 0)
         {
             throw new InvalidOperationException(
                 $"The Python executable '{pythonExecutable}' does not provide grpcio, protobuf and {definition.PackageName}. " +
-                "Use Python executable 'python3' for automatic environment preparation or install the backend requirements manually.");
+                $"Import check output: {result.Output} Use Python executable 'python3' for automatic environment preparation or install the backend requirements manually.");
         }
     }
 
@@ -221,6 +230,35 @@ public sealed class PythonBackendProvisioner
         }
     }
 
+    private static async Task<IReadOnlyList<BackendAcceleratorDevice>> DiscoverDevicesAsync(
+        string pythonExecutable,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        const string expression = "import torch; "
+            + "devices=[]; "
+            + "devices.extend((f'cuda:{i}', torch.cuda.get_device_name(i), 'NVIDIA', 'CUDA driver') for i in range(torch.cuda.device_count()) if torch.cuda.is_available()); "
+            + "devices.extend((f'xpu:{i}', torch.xpu.get_device_name(i), 'Intel', 'Level Zero driver') for i in range(torch.xpu.device_count()) if hasattr(torch, 'xpu') and torch.xpu.is_available()); "
+            + "print('\\n'.join('\\t'.join(device) for device in devices))";
+        try
+        {
+            var result = await RunProcessAsync(pythonExecutable, ["-c", expression], timeout, cancellationToken).ConfigureAwait(false);
+            if (result.ExitCode != 0)
+                return [];
+
+            return result.Output
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(line => line.Split('\t', 4, StringSplitOptions.TrimEntries))
+                .Where(parts => parts.Length == 4 && !string.IsNullOrWhiteSpace(parts[0]) && !string.IsNullOrWhiteSpace(parts[1]))
+                .Select(parts => new BackendAcceleratorDevice(parts[0], parts[1], parts[2], parts[3]))
+                .ToArray();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
     private static async Task<bool> CanStartProcessAsync(string executable, TimeSpan timeout, CancellationToken cancellationToken)
     {
         try
@@ -250,6 +288,18 @@ public sealed class PythonBackendProvisioner
         };
         if (!CanExecute(executable))
             return new(-1, $"Executable '{executable}' was not found or is not executable.");
+
+        if (Path.IsPathFullyQualified(executable))
+        {
+            var environmentLibraryDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(executable))!, "..", "lib");
+            if (Directory.Exists(environmentLibraryDirectory))
+            {
+                var currentLibraryPath = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
+                startInfo.Environment["LD_LIBRARY_PATH"] = string.IsNullOrWhiteSpace(currentLibraryPath)
+                    ? environmentLibraryDirectory
+                    : string.Join(Path.PathSeparator, environmentLibraryDirectory, currentLibraryPath);
+            }
+        }
 
         foreach (var argument in arguments)
             startInfo.ArgumentList.Add(argument);

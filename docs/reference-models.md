@@ -2,6 +2,18 @@
 
 These models are intentionally small enough for smoke and integration tests. The model files are not committed to the repository.
 
+## Active browser-test reference family
+
+The active browser test plan uses one logical Qwen2.5 Instruct reference family. A single physical file cannot serve every runtime: LLama requires GGUF, OpenVINO requires OpenVINO IR, and vLLM requires Transformers/Safetensors. Pin the same model revision where a backend conversion supports it and record the conversion revision for each artifact.
+
+| Backend variant | Required format | Test setting |
+| --- | --- | --- |
+| LLama Vulkan, CUDA 12, SYCL 16 | Qwen2.5 Instruct GGUF | `ESI_LLAMA_MODEL_PATH` |
+| OpenVINO configured device | Qwen2.5 Instruct OpenVINO IR | `ESI_OPENVINO_MODEL_PATH` |
+| vLLM NVIDIA / CUDA, Intel / XPU | Qwen2.5 Instruct Transformers/Safetensors | `ESI_VLLM_REFERENCE_MODEL` |
+
+The existing backend-specific entries below are legacy/native reference-test defaults. They must not be reported as the common browser-test reference family until the Qwen2.5 artifacts above are available and pinned. SGLang and dotLLM remain deferred in the browser plan.
+
 | Backend | Reference model | Format | Test setting |
 | --- | --- | --- | --- |
 | LLama | [SmolLM2-135M-Instruct-GGUF](https://huggingface.co/bartowski/SmolLM2-135M-Instruct-GGUF), `SmolLM2-135M-Instruct-Q4_K_M.gguf` | GGUF | `ESI_LLAMA_MODEL_PATH` |

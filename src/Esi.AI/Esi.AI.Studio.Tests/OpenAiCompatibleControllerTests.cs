@@ -243,9 +243,9 @@ public sealed class OpenAiCompatibleControllerTests
             "/models/model",
             [new OpenAiChatMessage("user", "Hello")],
             [new ChatMessage("user", "Hello")],
-            null,
+            null!,
             new ChatGenerationOptions(),
-            new InferenceTimeoutSettings("vLLM", 4, 0, 0));
+            new InferenceTimeoutSettings("vLLM", BaseSeconds: 4, SecondsPerTool: 0, SecondsPerPrefillToken: 0));
         var policy = new InferenceTimeoutPolicy(Options.Create(new InferenceTimeoutOptions
         {
             Backends = new Dictionary<string, InferenceTimeoutBackendOptions>(StringComparer.OrdinalIgnoreCase)

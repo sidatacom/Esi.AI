@@ -13,23 +13,20 @@
 </div>
 
 <div class="studio-navigation">
-    <FluentNav Id="studio-navigation"
-         Width="250px"
-         UseIcons="false"
-         BackgroundColor="transparent"
-         BackgroundColorHover="rgba(255, 255, 255, .08)">
-     <FluentNavItem Href="/" Match="NavLinkMatch.All">Overview</FluentNavItem>
-     <FluentNavItem Href="backends">Backends</FluentNavItem>
-     <FluentNavItem Href="models">Models</FluentNavItem>
-     <FluentNavItem Href="webapi">Web API</FluentNavItem>
-     <FluentNavItem Href="chats">Chats</FluentNavItem>
-     <FluentNavItem Href="provider">Provider</FluentNavItem>
-    <FluentNavItem Href="settings">Settings</FluentNavItem>
-     <FluentNavItem Href="auth">Auth required</FluentNavItem>
+    <nav id="studio-navigation" aria-label="Studio navigation">
+        <NavLink href="/" Match="NavLinkMatch.All" data-enhance-nav="false">Overview</NavLink>
+        <NavLink href="/backends" data-enhance-nav="false">Backends</NavLink>
+        <NavLink href="/models" data-enhance-nav="false">Models</NavLink>
+        <NavLink href="/webapi" data-enhance-nav="false">Web API</NavLink>
+        <NavLink href="/chats" data-enhance-nav="false">Chats</NavLink>
+        <NavLink href="/flow" data-enhance-nav="false">Flow</NavLink>
+        <NavLink href="/provider" data-enhance-nav="false">Provider</NavLink>
+        <NavLink href="/settings" data-enhance-nav="false">Settings</NavLink>
+        <NavLink href="/auth" data-enhance-nav="false">Auth required</NavLink>
 
         <AuthorizeView>
             <Authorized>
-                <FluentNavItem Href="Account/Manage">@context.User.Identity?.Name</FluentNavItem>
+                <NavLink href="/Account/Manage" data-enhance-nav="false">@context.User.Identity?.Name</NavLink>
                 <form action="Account/Logout" method="post" class="studio-logout-form">
                     <AntiforgeryToken />
                     <input type="hidden" name="ReturnUrl" value="@currentUrl" />
@@ -37,11 +34,11 @@
                 </form>
             </Authorized>
             <NotAuthorized>
-                <FluentNavItem Href="Account/Register">Register</FluentNavItem>
-                <FluentNavItem Href="Account/Login">Log in</FluentNavItem>
+                <NavLink href="/Account/Register" data-enhance-nav="false">Register</NavLink>
+                <NavLink href="/Account/Login" data-enhance-nav="false">Log in</NavLink>
             </NotAuthorized>
         </AuthorizeView>
-    </FluentNav>
+    </nav>
 </div>
 
 @code {

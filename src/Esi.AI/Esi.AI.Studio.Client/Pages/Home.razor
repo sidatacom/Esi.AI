@@ -2,6 +2,7 @@
 @rendermode InteractiveAuto
 @implements IAsyncDisposable
 @using Esi.AI.Models
+@using Esi.AI.Studio.Client.State
 @inject IDataService DataService
 @inject IClientStateStore StateStore
 @inject NavigationManager NavigationManager
@@ -153,6 +154,7 @@
 </div>
 
 @code {
+    private readonly HomePageState pageState = new();
     private static readonly DataVizPalette[] ChartPalette =
     [
         DataVizPalette.Color1,
@@ -166,8 +168,8 @@
     private bool isRefreshing;
     private string? errorMessage;
 
-    private IReadOnlyList<LoadedModelStatus> LoadedModels => StateStore.LoadedModels.LoadedModels;
-    private bool IsConnected => LoadedModels.Count > 0 || !string.IsNullOrWhiteSpace(StateStore.LoadedModels.Backend);
+    private IReadOnlyList<LoadedModelStatus> LoadedModels => StateStore.ActiveModels.Loaded;
+    private bool IsConnected => LoadedModels.Count > 0 || !string.IsNullOrWhiteSpace(StateStore.ActiveModels.Snapshot.Backend);
     private int RuntimeCount => LoadedModels.Select(model => model.Runtime).Where(runtime => !string.IsNullOrWhiteSpace(runtime)).Distinct(StringComparer.OrdinalIgnoreCase).Count();
     private int BackendCount => LoadedModels.Select(model => model.Backend).Distinct().Count();
     private string RuntimeSummary => RuntimeCount == 0 ? "no active runtime" : string.Join(" · ", LoadedModels.Select(model => model.Runtime).Where(runtime => !string.IsNullOrWhiteSpace(runtime)).Distinct(StringComparer.OrdinalIgnoreCase));
@@ -213,9 +215,10 @@
     {
         isRefreshing = true;
         errorMessage = null;
+        await InvokeAsync(StateHasChanged);
         try
         {
-            StateStore.ApplyLoadedModels(await DataService.LoadedModel_ReadAsync());
+            StateStore.LoadedModel_Read(await DataService.LoadedModel_ReadAsync());
         }
         catch (Exception exception)
         {

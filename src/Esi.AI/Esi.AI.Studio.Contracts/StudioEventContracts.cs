@@ -7,6 +7,7 @@ namespace Esi.AI.Studio.Contracts;
 /// </summary>
 public interface IModelDownloadEvents
 {
+    event Func<IReadOnlyList<ModelDownloadUpdate>, Task>? ModelDownload_Read;
     event Func<ModelDownloadUpdate, Task>? ModelDownload_Create;
     event Func<ModelDownloadUpdate, Task>? ModelDownload_Update;
     event Func<ModelDownloadUpdate, Task>? ModelDownload_Delete;
@@ -17,6 +18,7 @@ public interface IModelDownloadEvents
 /// </summary>
 public interface IModelRuntimeEvents
 {
+    event Func<ModelLoadStatus, Task>? LoadedModel_Read;
     event Func<ModelLoadStatus, Task>? LoadedModel_Create;
     event Func<ModelLoadStatus, Task>? LoadedModel_Update;
     event Func<ModelLoadStatus, Task>? LoadedModel_Delete;
@@ -27,12 +29,14 @@ public interface IModelRuntimeEvents
 /// </summary>
 public interface IBackendRequirementEvents
 {
-    event Func<BackendRequirementState, Task>? BackendRequirementStateUpdated;
+    event Func<BackendRequirementState, Task>? BackendRequirement_Read;
+    event Func<BackendRequirementState, Task>? BackendRequirement_Update;
 }
 
 /// <summary>Publishes backend runtime installation collection changes to connected clients.</summary>
 public interface IBackendRuntimeEvents
 {
+    event Func<IReadOnlyList<BackendRuntimeStatus>, Task>? BackendRuntime_Read;
     event Func<BackendRuntimeStatus, Task>? BackendRuntime_Create;
     event Func<BackendRuntimeStatus, Task>? BackendRuntime_Update;
     event Func<BackendRuntimeStatus, Task>? BackendRuntime_Delete;

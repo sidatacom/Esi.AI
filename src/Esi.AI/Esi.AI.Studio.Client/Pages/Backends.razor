@@ -4,9 +4,11 @@
 
 @using System.Text.Json
 @using Esi.AI.Models
+@using Esi.AI.Studio.Client.State
 @inject IDataService DataService
 @inject IModelRuntimeEvents RuntimeEvents
 @inject IBackendRequirementEvents RequirementEvents
+@inject IClientStateStore ClientState
 @inject IJSRuntime JsRuntime
 
 <section class="loaded-models global-loaded-models" aria-labelledby="loaded-models-heading">
@@ -585,7 +587,7 @@
             <div class="field-group">
                 <label class="form-label">Accelerator devices</label>
                 <div class="python-device-list">
-                    @foreach (var route in PythonDeviceRoutes.Where(route => route.Backends.Contains(activeBackend)))
+                    @foreach (var route in pythonDeviceRoutes.Where(route => route.Backends.Contains(activeBackend)))
                     {
                         <label class="python-device-option">
                             <input class="form-check-input" type="checkbox"
@@ -615,15 +617,40 @@
     <section class="config-panel">
         <div class="section-heading"><div><p class="eyebrow">PYTHON INFERENCE SERVER</p><h2>Load configuration</h2></div><span class="step-label">01</span></div>
         <div class="field-row">
-            <div class="field-group"><label class="form-label" for="python-model">Model path or Hugging Face ID</label><InputText id="python-model" class="form-control" @bind-Value="pythonForm.ModelPath" placeholder="Qwen/Qwen3.8-Flash-Next" /></div>
-            <div class="field-group"><label class="form-label" for="python-executable">Python executable (optional override)</label><InputText id="python-executable" class="form-control" @bind-Value="pythonForm.PythonExecutable" @bind-Value:after="RefreshBackendPrerequisitesAsync" /></div>
+            <div class="field-group"><label class="form-label" for="python-model">Model path or Hugging Face ID</label><InputText id="python-model" class="form-control" @bind-Value="pythonForm.ModelPath" @bind-Value:after="SaveSettingsAsync" placeholder="Qwen/Qwen3.8-Flash-Next" /></div>
+            <div class="field-group"><label class="form-label" for="python-executable">Python environment</label><InputSelect id="python-executable" class="form-select" @bind-Value="pythonForm.PythonExecutable" @bind-Value:after="HandlePythonExecutableChangedAsync">
+                @foreach (var option in PythonExecutableOptions)
+                {
+                    <option value="@option.Value">@option.Label</option>
+                }
+            </InputSelect></div>
         </div>
         <div class="field-row">
-            <div class="field-group"><label class="form-label" for="python-context">Max model length</label><InputNumber id="python-context" class="form-control" @bind-Value="pythonForm.MaxModelLength" /></div>
-            <div class="field-group"><label class="form-label" for="python-tp">Tensor parallel size</label><InputNumber id="python-tp" class="form-control" @bind-Value="pythonForm.TensorParallelSize" /></div>
-            <div class="field-group"><label class="form-label" for="python-gpu-memory">GPU memory utilization (%)</label><InputNumber id="python-gpu-memory" class="form-control" @bind-Value="pythonForm.GpuMemoryUtilization" /></div>
+            <div class="field-group"><label class="form-label" for="python-context">Max model length</label><InputNumber id="python-context" class="form-control" @bind-Value="pythonForm.MaxModelLength" @bind-Value:after="SaveSettingsAsync" /></div>
+            <div class="field-group"><label class="form-label" for="python-tp">Tensor parallel size</label><InputNumber id="python-tp" class="form-control" @bind-Value="pythonForm.TensorParallelSize" @bind-Value:after="SaveSettingsAsync" /></div>
+            <div class="field-group"><label class="form-label" for="python-gpu-memory">GPU memory utilization (%)</label><InputNumber id="python-gpu-memory" class="form-control" @bind-Value="pythonForm.GpuMemoryUtilization" @bind-Value:after="SaveSettingsAsync" /></div>
         </div>
-        <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.TrustRemoteCode" /> Trust remote code</label>
+        <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.TrustRemoteCode" @bind-Value:after="SaveSettingsAsync" /> Trust remote code</label>
+        @if (activeBackend == BackendTab.Vllm)
+        {
+            <div class="field-row">
+                <div class="field-group"><label class="form-label" for="python-quantization">Quantization</label><InputSelect id="python-quantization" class="form-select" @bind-Value="pythonForm.Quantization" @bind-Value:after="SaveSettingsAsync">
+                    <option value="">Automatic (model config)</option>
+                    <option value="fp8">FP8</option>
+                    <option value="gptq">GPTQ</option>
+                </InputSelect></div>
+                <div class="field-group"><label class="form-label" for="python-dtype">Model dtype</label><InputText id="python-dtype" class="form-control" @bind-Value="pythonForm.DType" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label" for="python-kv-cache-dtype">KV cache dtype</label><InputText id="python-kv-cache-dtype" class="form-control" @bind-Value="pythonForm.KvCacheDType" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+            <div class="field-row">
+                <div class="field-group"><label class="form-label" for="python-mtp-tokens">MTP speculative tokens</label><InputNumber id="python-mtp-tokens" class="form-control" @bind-Value="pythonForm.MtpTokens" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label" for="python-max-seqs">Maximum sequences</label><InputNumber id="python-max-seqs" class="form-control" @bind-Value="pythonForm.MaxNumSeqs" @bind-Value:after="SaveSettingsAsync" /></div>
+                <div class="field-group"><label class="form-label" for="python-batched-tokens">Maximum batched tokens</label><InputNumber id="python-batched-tokens" class="form-control" @bind-Value="pythonForm.MaxNumBatchedTokens" @bind-Value:after="SaveSettingsAsync" /></div>
+            </div>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.EnablePrefixCaching" @bind-Value:after="SaveSettingsAsync" /> Enable prefix caching</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.EnableXpuGraph" @bind-Value:after="SaveSettingsAsync" /> Enable XPU graph mode</label>
+            <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.EnableBf16MtpDraft" @bind-Value:after="SaveSettingsAsync" /> Keep MTP draft layers in BF16</label>
+        }
         @if (!string.IsNullOrWhiteSpace(pythonStatus)) { <p class="mt-3" role="status">@pythonStatus</p> }
     </section>
 
@@ -940,8 +967,9 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 </div>
 
 @code {
+    private readonly BackendPageState pageState = new();
     private BackendTab activeBackend = BackendTab.Llama;
-    private readonly PythonForm pythonForm = new();
+    private PythonState pythonForm => pageState.Python;
     private bool isPythonLoading;
     private string? pythonStatus;
     private readonly Dictionary<ConfigurationBackend, string> backendLoadLogs = [];
@@ -959,8 +987,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private OpenVinoDiagnosticsDto? openVinoDiagnostics;
     private BackendPrerequisiteDiagnostics? backendPrerequisites;
     private BackendRequirementState? backendRequirementState;
-    private readonly OpenVinoBackendState openVinoState = new();
-    private readonly DotLlmForm dotLlmForm = new();
+    private OpenVinoState openVinoState => pageState.OpenVino;
+    private DotLlmState dotLlmForm => pageState.DotLlm;
     private IReadOnlyList<BackendModel> backendModels = [];
     private bool isDotLlmLoading;
     private string? dotLlmStatus;
@@ -1002,7 +1030,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         isCheckingBackendRequirements = true;
         try
         {
-            ApplyBackendRequirementState(await DataService.RefreshBackendRequirementStateAsync());
+            ApplyBackendRequirementState(await DataService.BackendRequirement_UpdateAsync());
             await RefreshMatrixRequirementActionsAsync();
         }
         catch (Exception exception)
@@ -1176,7 +1204,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             backendPrerequisites = currentEntry.Diagnostics;
     }
 
-    private async Task HandleBackendRequirementStateUpdatedAsync(BackendRequirementState state)
+    private async Task HandleBackendRequirementUpdateAsync(BackendRequirementState state)
     {
         await InvokeAsync(() =>
         {
@@ -1189,6 +1217,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     {
         await InvokeAsync(() =>
         {
+            ClientState.LoadedModel_Update(status);
             if (activeBackend == BackendTab.Llama &&
                 !string.Equals(status.Backend, llamaState.Backend, StringComparison.OrdinalIgnoreCase))
             {
@@ -1427,6 +1456,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             try
             {
                 loadStatus = await DataService.LoadedModel_ReadAsync();
+                ClientState.LoadedModel_Read(loadStatus);
             }
             catch (Exception exception)
             {
@@ -1592,6 +1622,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 CurrentPrerequisiteBackend,
                 pythonForm.PythonExecutable,
                 devices: activeBackend == BackendTab.Llama ? GetLlamaPrerequisiteDevices(llamaState.Backend) : pythonForm.SelectedDevices);
+            if (activeBackend is BackendTab.Vllm or BackendTab.Sglang)
+                SyncPythonDevices(backendPrerequisites.AvailableDevices ?? []);
         }
         catch (Exception exception)
         {
@@ -1602,6 +1634,26 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         {
             isCheckingPrerequisites = false;
         }
+    }
+
+    private IReadOnlyList<PythonExecutableOption> PythonExecutableOptions =>
+    [
+        new("python3", "Automatic environment"),
+        new("/home/llm/.venvs/esi-ai-vllm-xpu/bin/python", "Intel XPU (vLLM)")
+    ];
+
+    private async Task HandlePythonExecutableChangedAsync()
+    {
+        if (string.Equals(pythonForm.PythonExecutable, "/home/llm/.venvs/esi-ai-vllm-xpu/bin/python", StringComparison.OrdinalIgnoreCase))
+        {
+            pythonForm.Devices.Clear();
+            pythonForm.Devices.Add("xpu:0");
+            pythonForm.Device = "xpu:0";
+            pythonForm.AdditionalDeviceRoutes = string.Empty;
+        }
+
+        await SaveSettingsAsync();
+        await RefreshBackendPrerequisitesAsync();
     }
 
     private async Task HandleLlamaBackendChangedAsync()
@@ -1802,7 +1854,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         RuntimeEvents.LoadedModel_Create -= HandleLoadedModelChangedAsync;
         RuntimeEvents.LoadedModel_Update -= HandleLoadedModelChangedAsync;
         RuntimeEvents.LoadedModel_Delete -= HandleLoadedModelChangedAsync;
-        RequirementEvents.BackendRequirementStateUpdated -= HandleBackendRequirementStateUpdatedAsync;
+        RequirementEvents.BackendRequirement_Update -= HandleBackendRequirementUpdateAsync;
         return ValueTask.CompletedTask;
     }
 
@@ -1846,6 +1898,8 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         DotLlm
     }
 
+    private sealed record PythonExecutableOption(string Value, string Label);
+
     private sealed record PythonDeviceRoute(string Value, string Label, string Vendor, string Driver, IReadOnlyList<BackendTab> Backends);
 
     private sealed record BackendGpuSupportRow(
@@ -1877,17 +1931,13 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         new("dotLLM", "Not supported", "Not supported", "Not supported", "No", "No", "CPU runtime")
     ];
 
-    private static readonly PythonDeviceRoute[] PythonDeviceRoutes =
-    [
-        new("cuda:0", "NVIDIA GeForce RTX 4070", "NVIDIA", "CUDA driver", [BackendTab.Vllm, BackendTab.Sglang]),
-        new("xpu:1", "Intel Arc Pro B70", "Intel", "xe + Level Zero driver", [BackendTab.Vllm, BackendTab.Sglang])
-    ];
+    private IReadOnlyList<PythonDeviceRoute> pythonDeviceRoutes = [];
 
     private string GetRoutingDeviceCount() => activeBackend switch
     {
         BackendTab.OpenVino => $"{openVinoDiagnostics?.Devices.Count(device => !IsExcludedDevice(device.Name)) ?? 0} available",
         BackendTab.Llama => $"{GetLlamaRoutingDevices().Count} detected",
-        BackendTab.Vllm or BackendTab.Sglang => $"{PythonDeviceRoutes.Count(route => route.Backends.Contains(activeBackend))} available",
+        BackendTab.Vllm or BackendTab.Sglang => $"{pythonDeviceRoutes.Count(route => route.Backends.Contains(activeBackend))} available",
         BackendTab.DotLlm => "1 supported",
         _ => "0 available"
     };
@@ -1999,7 +2049,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         ("256k", 262144), ("512k", 524288), ("1m", 1048576)
     ];
 
-    private readonly LlamaBackendState llamaState = new() { GpuLayerCount = -1, ContextSize = 131072 };
+    private LlamaState llamaState => pageState.Llama;
     private bool isLoading;
     private bool isInitializing = true;
     private string? statusMessage;
@@ -2032,6 +2082,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         try
         {
             loadStatus = await DataService.LoadedModel_ReadAsync();
+            ClientState.LoadedModel_Read(loadStatus);
             isInitializing = false;
             await InvokeAsync(StateHasChanged);
 
@@ -2093,14 +2144,16 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
                 TryApplyProfile(preferredProfile);
             else
                 selectedProfileId = null;
+            if (activeBackend is BackendTab.Vllm or BackendTab.Sglang)
+                await RefreshBackendPrerequisitesAsync();
             var openVinoModelStatus = await DataService.GetOpenVinoModelStatusAsync();
             isOpenVinoModelLoaded = openVinoModelStatus.IsModelLoaded;
             if (openVinoModelStatus.IsModelLoaded && !string.IsNullOrWhiteSpace(openVinoModelStatus.ModelPath))
                 openVinoState.ModelPath = openVinoModelStatus.ModelPath;
             if (openVinoModelStatus.IsModelLoaded && !string.IsNullOrWhiteSpace(openVinoModelStatus.Device))
                 openVinoState.Device = openVinoModelStatus.Device;
-            RequirementEvents.BackendRequirementStateUpdated += HandleBackendRequirementStateUpdatedAsync;
-            ApplyBackendRequirementState(await DataService.GetBackendRequirementStateAsync());
+            RequirementEvents.BackendRequirement_Update += HandleBackendRequirementUpdateAsync;
+            ApplyBackendRequirementState(await DataService.BackendRequirement_ReadAsync());
             await RefreshMatrixRequirementActionsAsync();
             isMatrixExpanded = false;
             isBackendRequirementsExpanded = !IsBackendRequirementsReady;
@@ -2921,9 +2974,24 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
             pythonForm.Devices.RemoveAll(value => string.Equals(value, device, StringComparison.OrdinalIgnoreCase));
         }
 
-        pythonForm.Device = pythonForm.Devices.FirstOrDefault() ?? "cuda:0";
+        pythonForm.Device = pythonForm.Devices.FirstOrDefault() ?? string.Empty;
         await SaveSettingsAsync();
         await RefreshBackendPrerequisitesAsync();
+    }
+
+    private void SyncPythonDevices(IReadOnlyList<BackendAcceleratorDevice> devices)
+    {
+        pythonDeviceRoutes = devices
+            .Select(device => new PythonDeviceRoute(
+                device.Route,
+                device.Label,
+                device.Vendor,
+                device.Driver,
+                [BackendTab.Vllm, BackendTab.Sglang]))
+            .ToArray();
+
+        pythonForm.Devices.RemoveAll(device => !pythonDeviceRoutes.Any(route => string.Equals(route.Value, device, StringComparison.OrdinalIgnoreCase)));
+        pythonForm.Device = pythonForm.Devices.FirstOrDefault() ?? string.Empty;
     }
 
     private void SyncEnabledDevices()
@@ -2965,258 +3033,5 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
     private static bool IsOpenVinoModelPath(string modelPath) =>
         !string.IsNullOrWhiteSpace(modelPath) &&
         !string.Equals(Path.GetExtension(modelPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), ".gguf", StringComparison.OrdinalIgnoreCase);
-
-    private sealed class LlamaBackendState
-    {
-        public LlamaAdvancedState Advanced { get; } = new();
-
-        public string ModelPath { get; set; } = string.Empty;
-
-        public string? MmprojPath { get; set; }
-
-        public string Backend { get; set; } = "Vulkan";
-
-        public int GpuLayerCount { get; set; }
-
-        public uint ContextSize { get; set; }
-
-        public Dictionary<string, BackendDeviceSetting> BackendDevices { get; } = new(StringComparer.OrdinalIgnoreCase);
-    }
-
-    private sealed class LlamaAdvancedState
-    {
-        public int SeqMax { get; set; } = 1;
-        public int RecurrentRollbackSnapshots { get; set; }
-        public bool UseMemorymap { get; set; } = true;
-        public bool UseDirectIO { get; set; }
-        public bool UseMemoryLock { get; set; }
-        public int? Threads { get; set; }
-        public int? BatchThreads { get; set; }
-        public int BatchSize { get; set; } = 512;
-        public int UBatchSize { get; set; } = 512;
-        public bool Embeddings { get; set; }
-        public bool NoKqvOffload { get; set; }
-        public bool FlashAttention { get; set; }
-        public bool VocabOnly { get; set; }
-        public bool OpOffload { get; set; }
-        public bool SwaFull { get; set; }
-        public bool KVUnified { get; set; }
-        public float? RopeFrequencyBase { get; set; }
-        public float? RopeFrequencyScale { get; set; }
-        public float? YarnExtrapolationFactor { get; set; }
-        public float? YarnAttentionFactor { get; set; }
-        public float? YarnBetaFast { get; set; }
-        public float? YarnBetaSlow { get; set; }
-        public int? YarnOriginalContext { get; set; }
-        public string ContextType { get; set; } = "Default";
-        public string? TypeK { get; set; }
-        public string? TypeV { get; set; }
-        public string PoolingType { get; set; } = "Unspecified";
-        public string AttentionType { get; set; } = "Unspecified";
-        public string? YarnScalingType { get; set; }
-        public bool CheckTensors { get; set; }
-        public float Temperature { get; set; } = .75f;
-        public int TopK { get; set; } = 40;
-        public float TopP { get; set; } = .9f;
-        public float MinP { get; set; } = .1f;
-        public float RepeatPenalty { get; set; } = 1f;
-        public float FrequencyPenalty { get; set; }
-        public float PresencePenalty { get; set; }
-        public int PenaltyCount { get; set; } = 64;
-        public int MaxTokens { get; set; } = -1;
-        public int TokensKeep { get; set; }
-        public int Seed { get; set; }
-        public bool DecodeSpecialTokens { get; set; }
-
-        public void Load(LlamaAdvancedSettings? settings)
-        {
-            if (settings is null)
-                return;
-
-            SeqMax = (int)settings.SeqMax;
-            RecurrentRollbackSnapshots = (int)settings.RecurrentRollbackSnapshots;
-            UseMemorymap = settings.UseMemorymap;
-            UseDirectIO = settings.UseDirectIO;
-            UseMemoryLock = settings.UseMemoryLock;
-            Threads = settings.Threads;
-            BatchThreads = settings.BatchThreads;
-            BatchSize = (int)settings.BatchSize;
-            UBatchSize = (int)settings.UBatchSize;
-            Embeddings = settings.Embeddings;
-            NoKqvOffload = settings.NoKqvOffload;
-            FlashAttention = settings.FlashAttention ?? false;
-            VocabOnly = settings.VocabOnly;
-            OpOffload = settings.OpOffload ?? false;
-            SwaFull = settings.SwaFull ?? false;
-            KVUnified = settings.KVUnified ?? false;
-            RopeFrequencyBase = settings.RopeFrequencyBase;
-            RopeFrequencyScale = settings.RopeFrequencyScale;
-            YarnExtrapolationFactor = settings.YarnExtrapolationFactor;
-            YarnAttentionFactor = settings.YarnAttentionFactor;
-            YarnBetaFast = settings.YarnBetaFast;
-            YarnBetaSlow = settings.YarnBetaSlow;
-            YarnOriginalContext = settings.YarnOriginalContext.HasValue ? (int)settings.YarnOriginalContext.Value : null;
-            ContextType = settings.ContextType;
-            TypeK = settings.TypeK;
-            TypeV = settings.TypeV;
-            PoolingType = settings.PoolingType;
-            AttentionType = settings.AttentionType;
-            YarnScalingType = settings.YarnScalingType;
-            CheckTensors = settings.CheckTensors;
-            Temperature = settings.Temperature;
-            TopK = settings.TopK;
-            TopP = settings.TopP;
-            MinP = settings.MinP;
-            RepeatPenalty = settings.RepeatPenalty;
-            FrequencyPenalty = settings.FrequencyPenalty;
-            PresencePenalty = settings.PresencePenalty;
-            PenaltyCount = settings.PenaltyCount;
-            MaxTokens = settings.MaxTokens;
-            TokensKeep = settings.TokensKeep;
-            Seed = settings.Seed > int.MaxValue ? int.MaxValue : (int)settings.Seed;
-            DecodeSpecialTokens = settings.DecodeSpecialTokens;
-        }
-
-        public LlamaAdvancedSettings ToSettings() => new((uint)Math.Max(1, SeqMax), (uint)Math.Max(0, RecurrentRollbackSnapshots), UseMemorymap, UseDirectIO, UseMemoryLock, Threads, BatchThreads, (uint)Math.Max(1, BatchSize), (uint)Math.Max(1, UBatchSize), Embeddings, NoKqvOffload, FlashAttention, VocabOnly, OpOffload, SwaFull, KVUnified, RopeFrequencyBase, RopeFrequencyScale, YarnExtrapolationFactor, YarnAttentionFactor, YarnBetaFast, YarnBetaSlow, YarnOriginalContext.HasValue ? (uint?)Math.Max(1, YarnOriginalContext.Value) : null, ContextType, TypeK, TypeV, PoolingType, AttentionType, YarnScalingType, CheckTensors, Temperature, TopK, TopP, MinP, RepeatPenalty, FrequencyPenalty, PresencePenalty, PenaltyCount, MaxTokens, TokensKeep, (uint)Math.Max(0, Seed), DecodeSpecialTokens);
-    }
-
-    private sealed class PythonForm
-    {
-        public string ModelPath { get; set; } = string.Empty;
-        public string PythonExecutable { get; set; } = "python3";
-        public string? WorkingDirectory { get; set; }
-        public string Device { get; set; } = "cuda:0";
-        public List<string> Devices { get; } = ["cuda:0"];
-        public string AdditionalDeviceRoutes { get; set; } = string.Empty;
-        public IReadOnlyList<string> SelectedDevices => GetDevices();
-        public int? GpuMemoryUtilization { get; set; } = 90;
-        public int MaxModelLength { get; set; } = 2048;
-        public int TensorParallelSize { get; set; } = 1;
-        public bool TrustRemoteCode { get; set; } = true;
-
-        public PythonInferenceLoadRequest ToRequest(ConfigurationBackend backend) => new(
-            ModelPath, backend, PythonExecutable, WorkingDirectory, Port: 8000,
-            GpuMemoryUtilization, (uint)Math.Max(1, MaxModelLength), Math.Max(1, TensorParallelSize),
-            TrustRemoteCode, EnforceEager: true, Device: GetDevices().FirstOrDefault() ?? Device, Devices: GetDevices());
-
-        public void Load(PythonInferenceLoadRequest request)
-        {
-            ModelPath = request.ModelPath;
-            PythonExecutable = request.PythonExecutable;
-            WorkingDirectory = request.WorkingDirectory;
-            Devices.Clear();
-            foreach (var device in request.Devices ?? [])
-            {
-                if (!string.IsNullOrWhiteSpace(device) && !Devices.Contains(device, StringComparer.OrdinalIgnoreCase))
-                    Devices.Add(device.Trim());
-            }
-            if (Devices.Count == 0 && !string.IsNullOrWhiteSpace(request.Device))
-                Devices.Add(request.Device.Trim());
-            Device = Devices.FirstOrDefault() ?? "cuda:0";
-            AdditionalDeviceRoutes = string.Join(", ", Devices.Where(device => !PythonDeviceRoutes.Any(route => string.Equals(route.Value, device, StringComparison.OrdinalIgnoreCase))));
-            Devices.RemoveAll(device => !PythonDeviceRoutes.Any(route => string.Equals(route.Value, device, StringComparison.OrdinalIgnoreCase)));
-            Device = GetDevices().FirstOrDefault() ?? "cuda:0";
-            GpuMemoryUtilization = request.GpuMemoryUtilization;
-            MaxModelLength = (int)Math.Min(int.MaxValue, request.MaxModelLength);
-            TensorParallelSize = request.TensorParallelSize;
-            TrustRemoteCode = request.TrustRemoteCode;
-        }
-
-        public void Reset()
-        {
-            PythonExecutable = "python3";
-            Device = "cuda:0";
-            Devices.Clear();
-            Devices.Add(Device);
-            AdditionalDeviceRoutes = string.Empty;
-            GpuMemoryUtilization = 90;
-            MaxModelLength = 2048;
-            TensorParallelSize = 1;
-            TrustRemoteCode = true;
-        }
-
-        public bool IsDeviceSelected(string device) => Devices.Contains(device, StringComparer.OrdinalIgnoreCase);
-
-        private IReadOnlyList<string> GetDevices() => Devices
-            .Concat(AdditionalDeviceRoutes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-            .Where(device => !string.IsNullOrWhiteSpace(device))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-    }
-
-    private sealed class DotLlmForm
-    {
-        public string ModelPath { get; set; } = string.Empty;
-        public string Device { get; set; } = "cpu";
-        public int? Threads { get; set; }
-        public DotLlmLoadRequest ToRequest() => new(ModelPath, Device, Threads);
-        public void Load(DotLlmLoadRequest request)
-        {
-            ModelPath = request.ModelPath;
-            Device = request.Device;
-            Threads = request.Threads;
-        }
-        public void Reset()
-        {
-            Device = "cpu";
-            Threads = null;
-        }
-    }
-
-    private sealed class OpenVinoBackendState
-    {
-        public string ModelPath { get; set; } = string.Empty;
-        public string Device { get; set; } = "CPU";
-        public Dictionary<string, OpenVinoDeviceSetting> Devices { get; } = new(StringComparer.OrdinalIgnoreCase);
-        public string CacheDirectory { get; set; } = string.Empty;
-        public int MaxNewTokens { get; set; } = 128;
-        public float Temperature { get; set; } = 0.7f;
-        public float TopP { get; set; } = 0.9f;
-        public bool DoSample { get; set; } = true;
-        public int TopK { get; set; } = 50;
-        public float RepetitionPenalty { get; set; } = 1.2f;
-        public int MaxPromptLength { get; set; } = 1024;
-        public int MinResponseLength { get; set; } = 128;
-        public string PrefillHint { get; set; } = "DYNAMIC";
-        public string GenerateHint { get; set; } = "FAST_COMPILE";
-
-        public ModelSettings ToSettings(Guid? configurationId = null) => new(
-            ModelPath, ConfigurationBackend.OpenVino,
-            JsonSerializer.Serialize(new OpenVinoAdvancedState(Device, Devices, CacheDirectory, MaxNewTokens, Temperature, TopP, DoSample, TopK, RepetitionPenalty,
-                new OpenVinoNpuSettings(MaxPromptLength, MinResponseLength, PrefillHint, GenerateHint))), configurationId);
-
-        public void Load(ModelSettings settings)
-        {
-            var data = JsonSerializer.Deserialize<OpenVinoAdvancedState>(settings.ConfigurationJson) ?? throw new JsonException();
-            ModelPath = settings.ModelPath;
-            Device = data.Device;
-            CacheDirectory = data.CacheDirectory;
-            MaxNewTokens = data.MaxNewTokens;
-            Temperature = data.Temperature;
-            TopP = data.TopP;
-            DoSample = data.DoSample;
-            TopK = data.TopK;
-            RepetitionPenalty = data.RepetitionPenalty;
-            MaxPromptLength = data.Npu?.MaxPromptLength ?? 1024;
-            MinResponseLength = data.Npu?.MinResponseLength ?? 128;
-            PrefillHint = data.Npu?.PrefillHint ?? "DYNAMIC";
-            GenerateHint = data.Npu?.GenerateHint ?? "FAST_COMPILE";
-            Devices.Clear();
-            foreach (var device in data.Devices ?? new Dictionary<string, OpenVinoDeviceSetting>(StringComparer.OrdinalIgnoreCase))
-                Devices[device.Key] = device.Value;
-        }
-    }
-
-    private sealed record OpenVinoAdvancedState(
-        string Device,
-        IReadOnlyDictionary<string, OpenVinoDeviceSetting> Devices,
-        string CacheDirectory,
-        int MaxNewTokens,
-        float Temperature,
-        float TopP,
-        bool DoSample,
-        int TopK,
-        float RepetitionPenalty,
-        OpenVinoNpuSettings? Npu);
 
 }

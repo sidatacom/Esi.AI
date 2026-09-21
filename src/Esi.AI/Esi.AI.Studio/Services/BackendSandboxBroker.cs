@@ -95,7 +95,6 @@ public sealed class BackendSandboxBroker
             timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(sandbox.WorkerTimeoutSeconds, 1, 300)));
             var outputTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
             var errorTask = process.StandardError.ReadToEndAsync(timeout.Token);
-            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
             var output = await outputTask.ConfigureAwait(false);
             var error = await errorTask.ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(output))
@@ -107,6 +106,10 @@ public sealed class BackendSandboxBroker
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             return new(false, Error: $"The backend worker exceeded its {sandbox.WorkerTimeoutSeconds}-second limit.");
+        }
+        catch (OperationCanceledException)
+        {
+            return new(false, Error: "The backend worker diagnostic was cancelled.");
         }
         catch (Exception exception) when (exception is not OperationCanceledException)
         {
@@ -130,6 +133,14 @@ public sealed class BackendSandboxBroker
 
     private ProcessStartInfo CreateStartInfo(string systemdRun, BackendWorkerRequest request, BackendSandboxSettings sandbox)
     {
+        var dotnetHost = Environment.ProcessPath;
+        if (string.IsNullOrWhiteSpace(dotnetHost) ||
+            !string.Equals(Path.GetFileNameWithoutExtension(dotnetHost), "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            dotnetHost = FindExecutable("dotnet")
+                ?? throw new InvalidOperationException("The dotnet host executable could not be found for the backend worker.");
+        }
+
         var startInfo = new ProcessStartInfo
         {
             FileName = systemdRun,
@@ -149,7 +160,7 @@ public sealed class BackendSandboxBroker
         startInfo.ArgumentList.Add("-p");
         startInfo.ArgumentList.Add($"TasksMax={sandbox.TaskLimit}");
         startInfo.ArgumentList.Add("--");
-        startInfo.ArgumentList.Add(Environment.ProcessPath ?? "dotnet");
+        startInfo.ArgumentList.Add(dotnetHost);
         startInfo.ArgumentList.Add(workerPath);
         return startInfo;
     }

@@ -1,0 +1,260 @@
+@page "/flow"
+@rendermode InteractiveAuto
+@using Esi.AI.Models
+@using Esi.AI.Studio.Contracts
+@inject IDataService DataService
+
+<div class="flow-shell">
+    <header class="flow-header">
+        <div>
+            <p class="eyebrow">WORKFLOW ROUTING</p>
+            <h1>Flow routing</h1>
+            <p class="lede">Eingehende Chat-Requests werden über den aktiven Workflow an das passende Backend weitergeleitet.</p>
+        </div>
+        <div class="flow-actions">
+            <span class="engine-status"><span class="status-dot"></span> Workflow engine ready</span>
+            <button class="primary-button" type="button" @onclick="AddRoute">Add route</button>
+        </div>
+    </header>
+
+    <section class="flow-toolbar" aria-label="Flow controls">
+        <div class="toolbar-group">
+            <span class="toolbar-label">Workflow</span>
+            <select value="@selectedWorkflow" @onchange="OnWorkflowChangedAsync">
+                <option>Chat request router</option>
+                <option>Vision request router</option>
+                <option>Tool calling router</option>
+            </select>
+            <span class="version-label">v@(currentDefinition?.Version ?? 1) · @(currentDefinition?.IsPublished == true ? "Published" : "Draft")</span>
+        </div>
+        <div class="toolbar-group toolbar-right">
+            <button class="tool-button" type="button" @onclick="FitFlow">Fit view</button>
+            <button class="tool-button" type="button" @onclick="() => SaveFlowAsync()" disabled="@isSaving">@(isSaving ? "Saving..." : "Save draft")</button>
+            <button class="primary-button" type="button" @onclick="PublishFlowAsync" disabled="@isSaving">Publish</button>
+        </div>
+    </section>
+
+    <main class="flow-workspace">
+        <aside class="activity-panel">
+            <div class="panel-heading">
+                <span class="eyebrow">ACTIVITIES</span>
+                <strong>Building blocks</strong>
+            </div>
+            <p class="panel-copy">Ziehe einen Schritt in den Flow, um das Routing zu erweitern.</p>
+            @foreach (var activity in activities)
+            {
+                <button class="activity-item" type="button" @onclick="() => AddActivity(activity)">
+                    <span class="activity-icon @activity.Kind">@activity.Icon</span>
+                    <span><strong>@activity.Name</strong><small>@activity.Description</small></span>
+                    <span class="activity-add">+</span>
+                </button>
+            }
+        </aside>
+
+        <section class="canvas-panel" aria-label="Workflow canvas">
+            <div class="canvas-grid"></div>
+            <div class="canvas-toolbar">
+                <span>@selectedWorkflow</span>
+                <span class="canvas-meta">@nodes.Count nodes · @Math.Max(0, nodes.Count - 1) transitions</span>
+            </div>
+            <div class="flow-canvas" style="--flow-zoom:@(zoom / 100d)">
+                <div class="flow-line line-one"></div>
+                <div class="flow-line line-two"></div>
+                @foreach (var node in nodes)
+                {
+                    <article class="flow-node @node.Kind @(selectedNode == node ? "selected" : string.Empty)" style="left:@node.Left; top:@node.Top" @onclick="() => SelectNode(node)">
+                        <div class="node-topline"><span class="node-icon">@node.Icon</span><span class="node-kind">@node.Kind</span></div>
+                        <strong>@node.Name</strong>
+                        <span>@node.Detail</span>
+                        <span class="node-port port-in"></span>
+                        <span class="node-port port-out"></span>
+                    </article>
+                }
+            </div>
+            <div class="canvas-zoom"><button type="button" @onclick="ZoomOut" aria-label="Zoom out">-</button><span>@zoom%</span><button type="button" @onclick="ZoomIn" aria-label="Zoom in">+</button></div>
+            @if (!string.IsNullOrWhiteSpace(statusMessage))
+            {
+                <div class="save-status">@statusMessage</div>
+            }
+        </section>
+
+        <aside class="inspector-panel">
+            <div class="panel-heading"><span class="eyebrow">INSPECTOR</span><strong>@(selectedNode?.Name ?? "Select a node")</strong></div>
+            @if (selectedNode is null)
+            {
+                <p class="panel-copy">Wähle einen Knoten aus, um seine Routing-Konfiguration zu bearbeiten.</p>
+            }
+            else
+            {
+                <label>Display name<input @bind="selectedNode.Name" /></label>
+                <label>Route target<select @bind="selectedNode.Detail"><option>Loaded local model</option><option>OmniRoute upstream</option><option>Vision backend</option>@foreach (var configuration in modelConfigurations)
+                    {
+                        <option value="@configuration.Name">@configuration.Name</option>
+                    }</select></label>
+                <label>Condition<textarea rows="4">request.messages.Any()</textarea></label>
+                <details class="json-details">
+                    <summary>Definition JSON</summary>
+                    <textarea class="json-textarea" rows="12" readonly>@BuildDefinitionJson()</textarea>
+                </details>
+                <button class="danger-button" type="button" @onclick="RemoveSelectedNode">Remove node</button>
+            }
+        </aside>
+    </main>
+</div>
+
+<style>
+    .flow-shell { min-height: calc(100vh - 5rem); padding: 1.4rem 1.25rem 2rem; color: #203033; }
+    .flow-header, .flow-toolbar, .toolbar-group, .flow-actions, .canvas-toolbar { display: flex; align-items: center; gap: 1rem; }
+    .flow-header { justify-content: space-between; margin: 0 auto 1.25rem; max-width: 1500px; }
+    .flow-header h1 { margin: .25rem 0 .4rem; font-size: clamp(1.8rem, 3vw, 2.8rem); }
+    .flow-header .lede { max-width: 42rem; margin: 0; }
+    .flow-actions { flex-wrap: wrap; justify-content: flex-end; }
+    .engine-status { display: inline-flex; align-items: center; gap: .45rem; color: #35675e; font-size: .82rem; font-weight: 700; }
+    .status-dot { width: .55rem; height: .55rem; border-radius: 50%; background: #38a169; box-shadow: 0 0 0 .2rem #d7f2e4; }
+    .primary-button, .tool-button, .danger-button, .activity-item, .canvas-zoom button { border: 1px solid #b7c7c2; background: #fff; color: #254b4b; cursor: pointer; font: inherit; }
+    .primary-button { padding: .65rem 1rem; border-color: #236b70; background: #236b70; color: #fff; font-weight: 700; }
+    .flow-toolbar { justify-content: space-between; max-width: 1500px; margin: 0 auto 1rem; padding: .7rem .9rem; border: 1px solid #d6dfdb; background: #f7faf8; }
+    .toolbar-label, .version-label, .canvas-meta { color: #667976; font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+    .flow-toolbar select, .inspector-panel input, .inspector-panel select, .inspector-panel textarea { border: 1px solid #c4d0cc; background: #fff; color: #203033; font: inherit; padding: .5rem .6rem; }
+    .toolbar-right { margin-left: auto; }.tool-button { padding: .5rem .8rem; }
+    .flow-workspace { display: grid; grid-template-columns: 15rem minmax(32rem, 1fr) 16rem; max-width: 1500px; min-height: 38rem; margin: 0 auto; border: 1px solid #cbd8d3; background: #fff; }
+    .activity-panel, .inspector-panel { padding: 1rem; background: #f7faf8; }.activity-panel { border-right: 1px solid #d6dfdb; }.inspector-panel { border-left: 1px solid #d6dfdb; }
+    .panel-heading { display: grid; gap: .25rem; }.panel-copy { color: #667976; font-size: .8rem; line-height: 1.45; }
+    .activity-item { display: grid; grid-template-columns: 1.7rem 1fr auto; align-items: center; gap: .55rem; width: 100%; margin-top: .55rem; padding: .65rem .55rem; text-align: left; }.activity-item strong, .activity-item small { display: block; }.activity-item small { margin-top: .15rem; color: #667976; font-size: .7rem; }.activity-add { color: #236b70; font-size: 1.2rem; }
+    .activity-icon, .node-icon { display: grid; place-items: center; width: 1.55rem; height: 1.55rem; color: #fff; font-size: .75rem; font-weight: 800; }.trigger { background: #cc6b38; }.route { background: #236b70; }.backend { background: #6571a8; }.guard { background: #8c6d3f; }
+    .canvas-panel { position: relative; min-width: 0; overflow: hidden; background: #edf3f0; }.canvas-grid { position: absolute; inset: 0; opacity: .65; background-image: linear-gradient(#d6e2de 1px, transparent 1px), linear-gradient(90deg, #d6e2de 1px, transparent 1px); background-size: 28px 28px; }
+    .canvas-toolbar { position: relative; justify-content: space-between; padding: .75rem 1rem; border-bottom: 1px solid #d0ddd8; background: rgba(255,255,255,.9); font-weight: 700; }.flow-canvas { position: relative; height: 31rem; transform: scale(var(--flow-zoom, 1)); transform-origin: center; }.flow-line { position: absolute; height: 2px; background: #78918a; transform-origin: left center; }.line-one { left: 22%; top: 48%; width: 21%; }.line-two { left: 53%; top: 48%; width: 20%; }.flow-node { position: absolute; z-index: 1; display: grid; gap: .3rem; width: 11.5rem; padding: .8rem; border: 1px solid #b8c9c3; border-top: 3px solid #236b70; background: #fff; box-shadow: 0 8px 18px rgba(35,75,75,.1); cursor: pointer; }.flow-node.selected, .flow-node:hover { border-color: #236b70; box-shadow: 0 0 0 3px rgba(35,107,112,.15); }.flow-node.trigger { left: 5%; top: 38%; }.flow-node.route { left: 37%; top: 38%; }.flow-node.backend { left: 69%; top: 38%; }.node-topline { display: flex; align-items: center; gap: .4rem; }.node-kind { color: #71837e; font-size: .65rem; text-transform: uppercase; }.flow-node strong { font-size: .9rem; }.flow-node > span:last-of-type { color: #667976; font-size: .73rem; }.node-port { position: absolute; top: calc(50% - .25rem); width: .5rem; height: .5rem; border: 2px solid #fff; border-radius: 50%; background: #236b70; }.port-in { left: -.3rem; }.port-out { right: -.3rem; }
+    .canvas-zoom { position: absolute; right: 1rem; bottom: 1rem; display: flex; align-items: center; gap: .35rem; padding: .3rem; border: 1px solid #cbd8d3; background: #fff; }.canvas-zoom button { width: 1.7rem; height: 1.7rem; }.canvas-zoom span { min-width: 2.6rem; text-align: center; font-size: .75rem; }
+    .save-status { position: absolute; left: 1rem; bottom: 1rem; padding: .45rem .7rem; border: 1px solid #b9d5c8; background: #f1faf4; color: #35675e; font-size: .75rem; }
+    .inspector-panel label { display: grid; gap: .35rem; margin-top: 1rem; color: #667976; font-size: .75rem; font-weight: 700; }.danger-button { margin-top: 1.25rem; padding: .55rem .7rem; color: #a13e35; border-color: #dfb4ad; }
+    .json-details { margin-top: 1rem; border-top: 1px solid #d6dfdb; padding-top: .75rem; }.json-details summary { cursor: pointer; color: #35675e; font-size: .75rem; font-weight: 700; }.json-textarea { width: 100%; box-sizing: border-box; margin-top: .6rem; resize: vertical; font-family: monospace !important; font-size: .7rem !important; }
+    @@media (max-width: 1000px) { .flow-workspace { grid-template-columns: 13rem minmax(25rem, 1fr); }.inspector-panel { grid-column: 1 / -1; border-top: 1px solid #d6dfdb; border-left: 0; min-height: 12rem; }.inspector-panel label { display: inline-grid; width: 31%; margin-right: 1rem; vertical-align: top; } }
+    @@media (max-width: 680px) { .flow-shell { padding: 1rem .75rem; }.flow-header, .flow-toolbar { align-items: stretch; flex-direction: column; }.flow-actions, .toolbar-right { justify-content: flex-start; margin-left: 0; }.flow-workspace { display: block; min-height: 0; }.activity-panel, .inspector-panel { border: 0; border-bottom: 1px solid #d6dfdb; }.canvas-panel { min-height: 34rem; }.flow-canvas { min-width: 39rem; }.canvas-panel { overflow-x: auto; }.inspector-panel label { display: grid; width: auto; margin-right: 0; } }
+</style>
+
+@code {
+    private string selectedWorkflow = "Chat request router";
+    private int zoom = 100;
+    private FlowNode? selectedNode;
+    private FlowDefinition? currentDefinition;
+    private string? statusMessage;
+    private bool isSaving;
+    private IReadOnlyList<ModelConfiguration> modelConfigurations = [];
+    private readonly List<FlowNode> nodes =
+    [
+        new("Incoming request", "POST /v1/chat/completions", "trigger", "IN"),
+        new("Route by capability", "model + request shape", "route", "IF"),
+        new("Local backend", "Loaded local model", "backend", "OUT")
+    ];
+    private readonly Activity[] activities =
+    [
+        new("Backend", "Forward to a model", "backend", "B"),
+        new("Condition", "Match request data", "guard", "?"),
+        new("Transform", "Normalize payload", "route", "T")
+    ];
+
+    private void AddRoute() => nodes.Add(new("Fallback route", "OmniRoute upstream", "backend", "OUT") { Offset = nodes.Count });
+    private void AddActivity(Activity activity) => nodes.Add(new(activity.Name, activity.Description, activity.Kind, activity.Icon));
+    private void SelectNode(FlowNode node) => selectedNode = node;
+    private void RemoveSelectedNode() { if (selectedNode is not null && nodes.Count > 1) { nodes.Remove(selectedNode); selectedNode = null; } }
+    private void FitFlow() => zoom = 100;
+    protected override async Task OnInitializedAsync()
+    {
+        modelConfigurations = await DataService.ModelConfiguration_ReadAsync();
+        await LoadWorkflowAsync();
+    }
+
+    private async Task OnWorkflowChangedAsync(ChangeEventArgs args)
+    {
+        selectedWorkflow = args.Value?.ToString() ?? "Chat request router";
+        await LoadWorkflowAsync();
+    }
+
+    private async Task LoadWorkflowAsync()
+    {
+        var definitions = await DataService.FlowDefinition_ReadAsync();
+        currentDefinition = definitions.FirstOrDefault(definition => definition.Name == selectedWorkflow);
+        if (currentDefinition is not null)
+            LoadDefinition(currentDefinition.DefinitionJson);
+        else
+            ResetNodes();
+    }
+
+    private Task PublishFlowAsync() => SaveFlowAsync(true);
+
+    private async Task SaveFlowAsync(bool publish = false)
+    {
+        isSaving = true;
+        statusMessage = null;
+        try
+        {
+            var definition = new FlowDefinition(
+                currentDefinition?.Id ?? Guid.Empty,
+                selectedWorkflow,
+                currentDefinition is null ? 1 : currentDefinition.Version + 1,
+                publish || currentDefinition?.IsPublished == true,
+                BuildDefinitionJson(),
+                currentDefinition?.CreatedAtUtc ?? DateTime.UtcNow,
+                DateTime.UtcNow);
+            currentDefinition = currentDefinition is null
+                ? await DataService.FlowDefinition_CreateAsync(definition)
+                : await DataService.FlowDefinition_UpdateAsync(definition);
+            statusMessage = "Flow saved";
+        }
+        catch (Exception exception)
+        {
+            statusMessage = $"Save failed: {exception.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private void LoadDefinition(string definitionJson)
+    {
+        var savedNodes = System.Text.Json.JsonSerializer.Deserialize<SavedFlowDocument>(
+            definitionJson,
+            new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })?.Nodes;
+        if (savedNodes is null || savedNodes.Length == 0)
+        {
+            ResetNodes();
+            return;
+        }
+        nodes.Clear();
+        foreach (var (node, index) in savedNodes.Select((node, index) => (node, index)))
+            nodes.Add(new(node.Name, node.Detail, node.Kind, node.Kind) { Offset = index });
+    }
+
+    private void ResetNodes()
+    {
+        nodes.Clear();
+        nodes.Add(new("Incoming request", "POST /v1/chat/completions", "trigger", "IN"));
+        nodes.Add(new("Route by capability", "model + request shape", "route", "IF"));
+        nodes.Add(new("Local backend", "Loaded local model", "backend", "OUT"));
+        selectedNode = null;
+    }
+
+    private string BuildDefinitionJson() => System.Text.Json.JsonSerializer.Serialize(
+        new { nodes = nodes.Select(node => new { node.Name, node.Detail, node.Kind }).ToArray() },
+        new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+    private void ZoomIn() => zoom = Math.Min(140, zoom + 10);
+    private void ZoomOut() => zoom = Math.Max(60, zoom - 10);
+
+    private sealed class FlowNode(string name, string detail, string kind, string icon)
+    {
+        public string Name { get; set; } = name;
+        public string Detail { get; set; } = detail;
+        public string Kind { get; } = kind;
+        public string Icon { get; } = icon;
+        public int Offset { get; init; }
+        public string Left => kind switch { "trigger" => "5%", "route" => "37%", "backend" => Offset == 0 ? "69%" : $"{69 + (Offset - 2) * 18}%", _ => "37%" };
+        public string Top => kind switch { "trigger" => "38%", "route" => "38%", "backend" => Offset == 0 ? "38%" : "68%", _ => "68%" };
+    }
+
+    private sealed record Activity(string Name, string Description, string Kind, string Icon);
+
+    private sealed record SavedFlowNode(string Name, string Detail, string Kind);
+
+    private sealed record SavedFlowDocument(SavedFlowNode[] Nodes);
+}

@@ -26,6 +26,7 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
     private readonly ConcurrentDictionary<Guid, DownloadOperation> downloadOperations = new();
     private readonly Channel<DownloadOperation> downloadQueue = Channel.CreateUnbounded<DownloadOperation>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly CancellationTokenSource queueCancellation = new();
+    private readonly SemaphoreSlim persistenceLock = new(1, 1);
     private readonly SemaphoreSlim downloadSlots;
     private readonly SemaphoreSlim fileDownloadSlots;
     private readonly ConcurrentDictionary<string, ModelMemoryProfile> modelMemoryProfiles = new(StringComparer.OrdinalIgnoreCase);
@@ -36,13 +37,16 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
         HttpClient httpClient,
         IHubContext<DataHub> hubContext,
         IDbContextFactory<ApplicationDbContext> dbContextFactory,
+        IOptions<ModelLibraryOptions>? configuredOptions = null,
         ILocalModelScanner? localModelScanner = null)
     {
         this.httpClient = httpClient;
         this.hubContext = hubContext;
         this.dbContextFactory = dbContextFactory;
         this.localModelScanner = localModelScanner ?? new LocalModelScanner();
-        this.options = ReadPersistedOptions(dbContextFactory, new ModelLibraryOptions());
+        this.options = ReadPersistedOptions(dbContextFactory, configuredOptions?.Value ?? new ModelLibraryOptions());
+        if (!string.IsNullOrWhiteSpace(this.options.HuggingFaceToken))
+            this.httpClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", this.options.HuggingFaceToken);
         downloadSlots = new(Math.Max(1, this.options.MaxParallelDownloads));
         fileDownloadSlots = new(Math.Max(1, this.options.MaxParallelFileDownloads));
         queueWorker = ProcessDownloadQueueAsync(queueCancellation.Token);
@@ -78,6 +82,12 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
             .Select(app => app.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray() ?? [];
+        if (IsRepositoryId(request.Query))
+        {
+            var modelId = request.Query!.Trim();
+            var repository = await ResolveRepositoryAsync(modelId, cancellationToken);
+            return [new HuggingFaceModelInfo(modelId, modelId.Split('/')[0], 0, 0, null, repository.LibraryName, repository.PipelineTag, repository.Tags)];
+        }
         if (libraries.Length > 1 || apps.Length > 1)
         {
             IEnumerable<string?> libraryFilters = libraries.Length > 0 ? libraries.Select(library => (string?)library) : [null];
@@ -115,6 +125,11 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
             cancellationToken);
         return await ApplyMemoryFilterAsync(searchModels, request, cancellationToken);
     }
+
+    private static bool IsRepositoryId(string? query) =>
+        query?.Trim().Split('/') is [var owner, var repository]
+        && !string.IsNullOrWhiteSpace(owner)
+        && !string.IsNullOrWhiteSpace(repository);
 
     private async Task<IReadOnlyList<HuggingFaceModelInfo>> ApplyMemoryFilterAsync(
         IReadOnlyList<HuggingFaceModelInfo> models,
@@ -246,6 +261,7 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
         HuggingFaceSearchRequest request,
         CancellationToken cancellationToken)
     {
+        await RefreshHuggingFaceAuthorizationAsync(cancellationToken);
         var queryParts = new List<string> { $"search={Uri.EscapeDataString(request.Query ?? string.Empty)}" };
         AddQueryParts(queryParts, "filter", request.Libraries);
         AddQueryParts(queryParts, "pipeline_tag", request.Tasks);
@@ -305,6 +321,7 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
     public async Task<Guid> StartDownloadAsync(string modelId, string? fileName, string library = "gguf", CancellationToken cancellationToken = default)
     {
         ValidateModelId(modelId);
+        await RefreshHuggingFaceAuthorizationAsync(cancellationToken);
 
         var normalizedLibrary = library.ToLowerInvariant();
         var repository = await ResolveRepositoryAsync(modelId, cancellationToken);
@@ -426,6 +443,23 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
         }
     }
 
+    public async Task DeleteFailedDownloadsAsync(CancellationToken cancellationToken = default)
+    {
+        var failedDownloads = downloads.Values
+            .Where(status => !status.Completed && !string.IsNullOrWhiteSpace(status.Error))
+            .ToArray();
+        foreach (var status in failedDownloads)
+        {
+            if (!downloads.TryRemove(status.Id, out var removedStatus))
+                continue;
+
+            if (downloadOperations.TryRemove(status.Id, out var operation))
+                DeleteDownloadFiles(operation);
+            await DeletePersistedDownloadAsync(status.Id, cancellationToken);
+            await PublishDownloadUpdateAsync(removedStatus, cancelled: true, eventName: "ModelDownload_Delete");
+        }
+    }
+
     public async Task RestoreDownloadsAsync(CancellationToken cancellationToken = default)
     {
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
@@ -495,6 +529,7 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
         queueCancellation.Dispose();
         downloadSlots.Dispose();
         fileDownloadSlots.Dispose();
+        persistenceLock.Dispose();
     }
 
     private async Task ProcessDownloadQueueAsync(CancellationToken cancellationToken)
@@ -532,6 +567,7 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
 
     private async Task<RepositorySnapshot> ResolveRepositoryAsync(string modelId, CancellationToken cancellationToken)
     {
+        await RefreshHuggingFaceAuthorizationAsync(cancellationToken);
         var modelSegments = modelId.Split('/');
         using var response = await httpClient.GetAsync($"api/models/{Uri.EscapeDataString(modelSegments[0])}/{Uri.EscapeDataString(modelSegments[1])}", cancellationToken);
         EnsureHuggingFaceSuccessStatusCode(response);
@@ -562,7 +598,9 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
                 .ToArray()
             : [];
         var fileSizes = await ResolveFileSizesAsync(modelSegments, revision, cancellationToken);
-        var repositoryFiles = files.Select(file => new RepositoryFile(file, fileSizes.GetValueOrDefault(file))).ToArray();
+        var repositoryFiles = files
+            .Select(file => new RepositoryFile(file, fileSizes.TryGetValue(file, out var size) ? size : null))
+            .ToArray();
         return repositoryFiles.Length > 0
             ? new RepositorySnapshot(repositoryFiles, revision, libraryName, pipelineTag, tags)
             : throw new InvalidOperationException("The Hugging Face repository does not contain downloadable files.");
@@ -631,12 +669,20 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
             if (operation.CancelRequested)
                 return;
 
+            await RefreshHuggingFaceAuthorizationAsync(operation.Token);
+
             var filePaths = fileNames.Select(fileName => GetDownloadFilePath(destination, fileName)).ToArray();
             operation.InitializeFileStatuses(filePaths, operation.FileStatuses);
             await PublishDownloadStatusAsync(operation, false);
             var modelSegments = modelId.Split('/');
             await Task.WhenAll(fileNames.Select((fileName, index) =>
                 DownloadFileAsync(operation, fileName, filePaths[index], modelSegments)));
+            var missingFiles = filePaths
+                .Where(filePath => !File.Exists(filePath) || new FileInfo(filePath).Length == 0)
+                .Select(Path.GetFileName)
+                .ToArray();
+            if (missingFiles.Length > 0)
+                throw new InvalidOperationException($"Download unvollständig. Fehlende Dateien: {string.Join(", ", missingFiles)}");
             var completed = CreateDownloadStatus(operation, completed: true);
             downloads[downloadId] = completed;
             var localModels = await ScanLocalModelsAsync();
@@ -674,6 +720,24 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
         try
         {
             var fileOffset = File.Exists(filePath) ? new FileInfo(filePath).Length : 0;
+            var knownStatus = operation.GetFileStatus(fileName);
+            if (knownStatus?.Completed == true)
+            {
+                return;
+            }
+
+            if (knownStatus?.TotalBytes is { } knownTotalBytes && fileOffset == knownTotalBytes)
+            {
+                await PublishFileStatusAsync(operation, new DownloadFileStatus(fileName, fileOffset, knownTotalBytes, true));
+                return;
+            }
+
+            if (knownStatus?.TotalBytes is { } expectedBytes && fileOffset > expectedBytes)
+            {
+                File.Delete(filePath);
+                fileOffset = 0;
+            }
+
             var downloadUrl = $"{Uri.EscapeDataString(modelSegments[0])}/{Uri.EscapeDataString(modelSegments[1])}/resolve/{Uri.EscapeDataString(operation.Revision)}/{Uri.EscapeDataString(fileName)}";
             using var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
             if (fileOffset > 0)
@@ -755,40 +819,56 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
         ModelDownloadStatus status,
         CancellationToken cancellationToken = default)
     {
-        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.ModelDownloads.SingleOrDefaultAsync(download => download.Id == operation.Id, cancellationToken);
-        if (entity is null)
+        await persistenceLock.WaitAsync(cancellationToken);
+        try
         {
-            entity = new ModelDownloadEntity
+            await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+            var entity = await db.ModelDownloads.SingleOrDefaultAsync(download => download.Id == operation.Id, cancellationToken);
+            if (entity is null)
             {
-                Id = operation.Id,
-                CreatedAtUtc = DateTime.UtcNow
-            };
-            db.ModelDownloads.Add(entity);
-        }
+                entity = new ModelDownloadEntity
+                {
+                    Id = operation.Id,
+                    CreatedAtUtc = DateTime.UtcNow
+                };
+                db.ModelDownloads.Add(entity);
+            }
 
-        entity.ModelId = operation.ModelId;
-        entity.Library = operation.Library;
-        entity.DestinationPath = operation.Destination;
-        entity.Revision = operation.Revision;
-        entity.FileNamesJson = JsonSerializer.Serialize(operation.FileNames);
-        entity.FileStatusesJson = JsonSerializer.Serialize(status.Files ?? operation.FileStatuses);
-        entity.Paused = status.Paused;
-        entity.Completed = status.Completed;
-        entity.Error = status.Error;
-        entity.UpdatedAtUtc = DateTime.UtcNow;
-        await db.SaveChangesAsync(cancellationToken);
+            entity.ModelId = operation.ModelId;
+            entity.Library = operation.Library;
+            entity.DestinationPath = operation.Destination;
+            entity.Revision = operation.Revision;
+            entity.FileNamesJson = JsonSerializer.Serialize(operation.FileNames);
+            entity.FileStatusesJson = JsonSerializer.Serialize(status.Files ?? operation.FileStatuses);
+            entity.Paused = status.Paused;
+            entity.Completed = status.Completed;
+            entity.Error = status.Error;
+            entity.UpdatedAtUtc = DateTime.UtcNow;
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        finally
+        {
+            persistenceLock.Release();
+        }
     }
 
     private async Task DeletePersistedDownloadAsync(Guid downloadId, CancellationToken cancellationToken)
     {
-        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.ModelDownloads.SingleOrDefaultAsync(download => download.Id == downloadId, cancellationToken);
-        if (entity is null)
-            return;
+        await persistenceLock.WaitAsync(cancellationToken);
+        try
+        {
+            await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+            var entity = await db.ModelDownloads.SingleOrDefaultAsync(download => download.Id == downloadId, cancellationToken);
+            if (entity is null)
+                return;
 
-        db.ModelDownloads.Remove(entity);
-        await db.SaveChangesAsync(cancellationToken);
+            db.ModelDownloads.Remove(entity);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        finally
+        {
+            persistenceLock.Release();
+        }
     }
 
     private static void DeleteDownloadFiles(DownloadOperation operation)
@@ -877,9 +957,12 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
     }
 
     private static ModelLibraryOptions ReadPersistedOptions(
-        IDbContextFactory<ApplicationDbContext> dbContextFactory,
+        IDbContextFactory<ApplicationDbContext>? dbContextFactory,
         ModelLibraryOptions configuredOptions)
     {
+        if (dbContextFactory is null)
+            return configuredOptions;
+
         using var db = dbContextFactory.CreateDbContext();
         var json = db.ApplicationSettings.AsNoTracking()
             .Select(settings => settings.InferenceTimeoutsJson)
@@ -898,8 +981,43 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
             SearchLimit = persisted.SearchLimit,
             MaxParallelDownloads = persisted.MaxParallelDownloads,
             MaxParallelFileDownloads = persisted.MaxParallelFileDownloads,
-            HuggingFaceToken = configuredOptions.HuggingFaceToken
+            HuggingFaceToken = string.IsNullOrWhiteSpace(persisted.HuggingFaceToken)
+                ? configuredOptions.HuggingFaceToken
+                : persisted.HuggingFaceToken
         };
+    }
+
+    private async Task RefreshHuggingFaceAuthorizationAsync(CancellationToken cancellationToken)
+    {
+        if (dbContextFactory is null)
+        {
+            httpClient.DefaultRequestHeaders.Authorization = string.IsNullOrWhiteSpace(options.HuggingFaceToken)
+                ? null
+                : new AuthenticationHeaderValue("Bearer", options.HuggingFaceToken);
+            return;
+        }
+
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var json = await db.ApplicationSettings.AsNoTracking()
+            .Select(settings => settings.InferenceTimeoutsJson)
+            .SingleOrDefaultAsync(cancellationToken);
+        var configuredToken = options.HuggingFaceToken;
+        if (!string.IsNullOrWhiteSpace(json))
+        {
+            try
+            {
+                configuredToken = JsonSerializer.Deserialize<ApplicationSettings>(json, SettingsJsonOptions)?.ModelLibrary?.HuggingFaceToken
+                    ?? configuredToken;
+            }
+            catch (JsonException)
+            {
+                // Keep the process configuration token when persisted settings are invalid.
+            }
+        }
+
+        httpClient.DefaultRequestHeaders.Authorization = string.IsNullOrWhiteSpace(configuredToken)
+            ? null
+            : new AuthenticationHeaderValue("Bearer", configuredToken);
     }
 }
 
@@ -986,6 +1104,9 @@ internal sealed class DownloadOperation(Guid id, string modelId, string library,
     }
 
     public void SetFileStatus(DownloadFileStatus status) => fileStatuses[status.FileName] = status;
+
+    public DownloadFileStatus? GetFileStatus(string fileName) =>
+        fileStatuses.TryGetValue(fileName, out var status) ? status : null;
 
     public void RequestPause()
     {

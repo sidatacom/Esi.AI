@@ -1,7 +1,10 @@
 @page "/chats"
 @rendermode InteractiveAuto
+@implements IAsyncDisposable
 @using Esi.AI.Models
+@using Esi.AI.Studio.Client.State
 @inject IDataService DataService
+@inject IClientStateStore ClientState
 
 <div class="chat-layout">
     <aside class="chat-sidebar">
@@ -18,7 +21,7 @@
     </aside>
 
     <main class="chat-main">
-            <header class="chat-header"><div><p class="eyebrow">LOCAL CONVERSATION</p><h1>@(currentChat?.Title ?? "Chats")</h1><p class="lede">Gespräche mit einem ausgewählten geladenen Modell.</p></div>@if (currentChat is not null) { <label class="model-picker" for="chat-model">Modell<select id="chat-model" value="@selectedModelKey" @onchange="SelectModel" disabled="@isSending"><option value="">Modell auswählen ...</option>@foreach (var model in loadedModels) { <option value="@GetModelKey(model)">@GetModelDisplayName(model) (@model.Backend)</option>}</select></label> }</header>
+            <header class="chat-header"><div><p class="eyebrow">LOCAL CONVERSATION</p><h1>@(currentChat?.Title ?? "Chats")</h1><p class="lede">Gespräche mit einem ausgewählten geladenen Modell.</p></div>@if (currentChat is not null) { <label class="model-picker" for="chat-model">Modell<select id="chat-model" value="@selectedModelKey" @onchange="SelectModel" disabled="@isSending"><option value="">Modell auswählen ...</option>@foreach (var model in LoadedModels) { <option value="@GetModelKey(model)">@GetModelDisplayName(model) (@model.Backend)</option>}</select></label> }</header>
         @if (currentChat is null)
         {
             <section class="chat-empty-page"><strong>Bereit für eine neue Unterhaltung.</strong><button class="send-button" type="button" @onclick="NewChatAsync">Neuen Chat starten</button></section>
@@ -127,38 +130,52 @@
 
         return message.TokensPerSecond?.ToString("F1") ?? "-";
     }
-    private readonly List<ChatSummary> chatSummaries = [];
-    private readonly List<LoadedModelStatus> loadedModels = [];
-    private readonly List<LocalModel> localModels = [];
-    private readonly Composer composer = new();
-    private PersistedChat? currentChat;
-    private bool isSending;
-    private string pendingAssistantContent = string.Empty;
-    private string? statusMessage;
-    private string? selectedModelPath;
-    private ConfigurationBackend? selectedBackend;
-    private string? selectedRuntime;
-    private string? selectedModelKey;
-    private ChatImage? selectedImage;
-    private string? selectedImageName;
-    private string? imagePreviewUrl;
     private const long MaxImageBytes = 4 * 1024 * 1024;
+    private ChatPageState pageState = null!;
+    private List<ChatSummary> chatSummaries => pageState.History.Items;
+    private List<LocalModel> localModels => pageState.History.LocalModels;
+    private ComposerState composer => pageState.Composer;
+    private PersistedChat? currentChat { get => pageState.CurrentChat.Value; set => pageState.CurrentChat.Value = value; }
+    private bool isSending { get => pageState.CurrentChat.IsSending; set => pageState.CurrentChat.IsSending = value; }
+    private string pendingAssistantContent { get => pageState.CurrentChat.PendingAssistantContent; set => pageState.CurrentChat.PendingAssistantContent = value; }
+    private string? statusMessage { get => pageState.CurrentChat.StatusMessage; set => pageState.CurrentChat.StatusMessage = value; }
+    private string? selectedModelPath { get => pageState.CurrentChat.SelectedModelPath; set => pageState.CurrentChat.SelectedModelPath = value; }
+    private ConfigurationBackend? selectedBackend { get => pageState.CurrentChat.SelectedBackend; set => pageState.CurrentChat.SelectedBackend = value; }
+    private string? selectedRuntime { get => pageState.CurrentChat.SelectedRuntime; set => pageState.CurrentChat.SelectedRuntime = value; }
+    private string? selectedModelKey { get => pageState.CurrentChat.SelectedModelKey; set => pageState.CurrentChat.SelectedModelKey = value; }
+    private ChatImage? selectedImage { get => pageState.Composer.SelectedImage; set => pageState.Composer.SelectedImage = value; }
+    private string? selectedImageName { get => pageState.Composer.SelectedImageName; set => pageState.Composer.SelectedImageName = value; }
+    private string? imagePreviewUrl { get => pageState.Composer.ImagePreviewUrl; set => pageState.Composer.ImagePreviewUrl = value; }
+    private IReadOnlyList<LoadedModelStatus> LoadedModels => pageState.Models.Loaded.Where(model => model.IsModelLoaded).ToArray();
 
-    protected override async Task OnInitializedAsync() { await LoadLoadedModelsAsync(); await LoadChatsAsync(); if (chatSummaries.Count > 0) await SelectChatAsync(chatSummaries[0].Id); else await NewChatAsync(); }
+    protected override async Task OnInitializedAsync()
+    {
+        pageState = new ChatPageState(ClientState);
+        ClientState.Changed += HandleStateChanged;
+        await LoadLoadedModelsAsync();
+        await LoadChatsAsync();
+        if (chatSummaries.Count > 0)
+            await SelectChatAsync(chatSummaries[0].Id);
+    }
     private async Task LoadLoadedModelsAsync()
     {
         var status = await DataService.LoadedModel_ReadAsync();
         localModels.Clear();
         localModels.AddRange(await DataService.LocalModel_ReadAsync());
-        loadedModels.Clear();
-        loadedModels.AddRange(status.LoadedModels);
+        ClientState.LoadedModel_Read(status);
 
-        var selectedModel = loadedModels.FirstOrDefault();
+        var selectedModel = LoadedModels.FirstOrDefault();
         SetSelectedModel(selectedModel);
+    }
+    private void HandleStateChanged()
+    {
+        if (selectedModelKey is null || LoadedModels.All(model => !string.Equals(GetModelKey(model), selectedModelKey, StringComparison.Ordinal)))
+            SetSelectedModel(LoadedModels.FirstOrDefault());
+        _ = InvokeAsync(StateHasChanged);
     }
     private void SelectModel(ChangeEventArgs args)
     {
-        var selectedModel = loadedModels.FirstOrDefault(model => string.Equals(GetModelKey(model), args.Value?.ToString(), StringComparison.Ordinal));
+        var selectedModel = LoadedModels.FirstOrDefault(model => string.Equals(GetModelKey(model), args.Value?.ToString(), StringComparison.Ordinal));
         SetSelectedModel(selectedModel);
     }
     private void SetSelectedModel(LoadedModelStatus? model)
@@ -200,7 +217,7 @@
         return new(thinking, answer);
     }
     private async Task LoadChatsAsync() { chatSummaries.Clear(); chatSummaries.AddRange(await DataService.Chat_ReadAsync()); }
-    private async Task NewChatAsync() { currentChat = await DataService.Chat_CreateAsync(new CreateChatRequest()); SetSelectedModel(loadedModels.FirstOrDefault()); await LoadChatsAsync(); statusMessage = null; }
+    private async Task NewChatAsync() { currentChat = await DataService.Chat_CreateAsync(new CreateChatRequest()); SetSelectedModel(LoadedModels.FirstOrDefault()); await LoadChatsAsync(); statusMessage = null; }
     private async Task SelectChatAsync(Guid id) { currentChat = await DataService.Chat_ReadAsync(id); composer.Content = string.Empty; statusMessage = null; }
     private async Task DeleteChatAsync(Guid id) { if (isSending) return; try { await DataService.Chat_DeleteAsync(id); chatSummaries.RemoveAll(chat => chat.Id == id); if (currentChat?.Id == id) { currentChat = null; composer.Content = string.Empty; if (chatSummaries.Count > 0) await SelectChatAsync(chatSummaries[0].Id); } statusMessage = "Chat gelöscht."; } catch (Exception exception) { statusMessage = exception.Message; } }
     private async Task SelectImageAsync(InputFileChangeEventArgs args)
@@ -243,6 +260,13 @@
         selectedImageName = null;
         imagePreviewUrl = null;
     }
+
+    public ValueTask DisposeAsync()
+    {
+        ClientState.Changed -= HandleStateChanged;
+        return ValueTask.CompletedTask;
+    }
+
     private async Task SendAsync()
     {
         if (currentChat is null || (string.IsNullOrWhiteSpace(composer.Content) && selectedImage is null) || string.IsNullOrWhiteSpace(selectedModelPath) || selectedBackend is null || isSending)
@@ -303,6 +327,5 @@
         var fileName = Path.GetFileName(normalizedPath);
         return string.IsNullOrWhiteSpace(fileName) ? normalizedPath : Path.GetFileNameWithoutExtension(fileName);
     }
-    private sealed class Composer { public string Content { get; set; } = string.Empty; }
     private sealed record MessageContent(string? Thinking, string Answer);
 }

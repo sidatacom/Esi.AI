@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 
+const { readdir, showErrorMessage, windowApi } = vi.hoisted(() => {
+  const showErrorMessage = vi.fn();
+  return { readdir: vi.fn(), showErrorMessage, windowApi: { activeTextEditor: undefined, showErrorMessage } };
+});
+
+vi.mock("node:fs/promises", () => ({ readdir }));
+
 const extension = {
   isActive: true,
   packageJSON: {
@@ -29,8 +36,17 @@ vi.mock("vscode", () => ({
       "csdevkit.debug.showHotReloadPanel",
       "csdevkit.debug.selectStartupProject",
     ]),
-    executeCommand: vi.fn(async (command: string) => ({ command })),
+    executeCommand: vi.fn(async (command: string, ...argumentsValue: unknown[]) => {
+      if (command === "csdevkit.debug.hotReload") await windowApi.showErrorMessage("Hot Reload build failed");
+      return { command, argumentsValue };
+    }),
   },
+  Uri: { file: (filePath: string) => ({ scheme: "file", fsPath: filePath }) },
+  workspace: {
+    workspaceFolders: [{ uri: { fsPath: "/workspace" } }],
+    findFiles: vi.fn(async () => []),
+  },
+  window: windowApi,
 }));
 
 import { CSHARP_DEVKIT_TOOLS } from "../../src/mcp/tools/csharp-devkit.js";
@@ -59,10 +75,36 @@ describe("EsiMCP C# Dev Kit tools", () => {
   });
 
   it("executes an allowlisted command declared by the C# Dev Kit manifest", async () => {
-    const result = await CSHARP_DEVKIT_TOOLS[1].handler({ commandId: "csdevkit.debug.projectDebugLaunch" });
+    const projectUri = { scheme: "file", fsPath: "/workspace/Esi.AI.Studio.csproj" };
+    const result = await CSHARP_DEVKIT_TOOLS[1].handler({ commandId: "csdevkit.debug.projectDebugLaunch", arguments: [projectUri] });
     const payload = JSON.parse(result.content[0].text);
 
     expect(payload.commandId).toBe("csdevkit.debug.projectDebugLaunch");
+    expect(payload.result.argumentsValue).toEqual([projectUri]);
+  });
+
+  it("suppresses C# Dev Kit notifications during EsiMCP hot reload", async () => {
+    const result = await CSHARP_DEVKIT_TOOLS[1].handler({ commandId: "csdevkit.debug.hotReload", arguments: [] });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.result.suppressedMessages).toEqual([
+      { method: "showErrorMessage", message: "Hot Reload build failed" },
+    ]);
+  });
+
+  it("resolves the project from the active editor when launch arguments are omitted", async () => {
+    const vscode = await import("vscode");
+    readdir.mockResolvedValueOnce([
+      { name: "Esi.AI.Studio.csproj", isFile: () => true } as never,
+    ]);
+    (vscode.window as { activeTextEditor?: unknown }).activeTextEditor = {
+      document: { uri: { scheme: "file", fsPath: "/workspace/src/Esi.AI.Studio/Program.cs" } },
+    };
+
+    const result = await CSHARP_DEVKIT_TOOLS[1].handler({ commandId: "csdevkit.debug.projectDebugLaunch" });
+    const payload = JSON.parse(result.content[0].text);
+
+    expect(payload.result.argumentsValue).toEqual([{ scheme: "file", fsPath: "/workspace/src/Esi.AI.Studio/Esi.AI.Studio.csproj" }]);
   });
 
   it("rejects commands outside the EsiMCP allowlist", async () => {

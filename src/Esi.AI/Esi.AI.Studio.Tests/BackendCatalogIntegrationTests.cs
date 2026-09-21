@@ -264,10 +264,7 @@ public sealed class BackendCatalogIntegrationTests
                 library.StartDownloadAsync("owner/second", "second-00001-of-00002.gguf"));
 
             foreach (var downloadId in downloadIds)
-            {
-                while (library.GetDownload(downloadId)?.Completed != true)
-                    await Task.Delay(10);
-            }
+                await WaitForDownloadCompletionAsync(library, downloadId);
 
             Assert.AreEqual(2, downloadIds.Select(downloadId => library.GetDownload(downloadId)?.Files?.Count).Min());
             Assert.AreEqual(4, handler.MaxConcurrentDownloads);
@@ -407,8 +404,7 @@ public sealed class BackendCatalogIntegrationTests
         {
             var downloadId = await library.StartDownloadAsync("owner/first", "first-00001-of-00002.gguf");
 
-            while (library.GetDownload(downloadId)?.Completed != true)
-                await Task.Delay(10);
+            await WaitForDownloadCompletionAsync(library, downloadId);
 
             Assert.AreEqual(2, handler.MaxConcurrentDownloads);
         }
@@ -657,7 +653,7 @@ public sealed class BackendCatalogIntegrationTests
     [TestMethod]
     public async Task LocalModel_ReadAsync_RestoresHuggingFaceIdFromCompletedDownload()
     {
-        await using var context = await TestContext.CreateAsync();
+        await using var context = await TestContext.CreateAsync(new HuggingFaceMetadataHttpMessageHandler());
         await context.AddCompletedDownloadAsync("owner/repository");
 
         var model = (await context.DataService.LocalModel_ReadAsync()).Single(item => item.Path == context.ModelPath);
@@ -668,7 +664,7 @@ public sealed class BackendCatalogIntegrationTests
     [TestMethod]
     public async Task LocalModel_ReadAsync_RestoresHuggingFaceIdFromCompletedTransformersDownload()
     {
-        await using var context = await TestContext.CreateAsync();
+        await using var context = await TestContext.CreateAsync(new HuggingFaceMetadataHttpMessageHandler());
         var modelPath = await context.AddCompletedTransformersDownloadAsync("owner/transformer");
 
         var model = (await context.DataService.LocalModel_ReadAsync()).Single(item => item.Path == modelPath);
@@ -749,11 +745,25 @@ public sealed class BackendCatalogIntegrationTests
             ConfigurationBackend.Sglang,
             PythonExecutable: "/missing/sglang-python");
 
-        var status = await context.DataService.LoadPythonModelAsync(request);
+        var exception = await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+            () => context.DataService.LoadPythonModelAsync(request));
 
-        Assert.IsFalse(status.IsModelLoaded);
-        Assert.IsFalse(string.IsNullOrWhiteSpace(status.LoadLog));
-        Assert.IsFalse(status.LoadLog.Contains("SGLang could not load", StringComparison.OrdinalIgnoreCase));
+        StringAssert.Contains(exception.Message, "was not found or is not executable");
+    }
+
+    private static async Task WaitForDownloadCompletionAsync(ModelLibraryService library, Guid downloadId)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        while (true)
+        {
+            var status = library.GetDownload(downloadId);
+            if (status?.Completed == true)
+                return;
+            if (status?.Error is { Length: > 0 } error)
+                throw new InvalidOperationException($"Download {downloadId} failed: {error}; files: {string.Join(", ", status.Files?.Select(file => $"{file.FileName}={file.BytesDownloaded}/{file.TotalBytes}") ?? [])}");
+
+            await Task.Delay(10, timeout.Token);
+        }
     }
 
     private sealed class TestContext : IAsyncDisposable

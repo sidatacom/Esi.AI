@@ -16,14 +16,31 @@ public sealed class DataHub(
     public override async Task OnConnectedAsync()
     {
         await base.OnConnectedAsync();
-        foreach (var download in dataService.ModelDownload_Read())
-            await Clients.Caller.SendAsync("ModelDownload_Create", new ModelDownloadUpdate(download), Context.ConnectionAborted);
-        await Clients.Caller.SendAsync("LoadedModel_Update", await dataService.LoadedModel_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
-        foreach (var runtime in await dataService.BackendRuntime_ReadAsync(Context.ConnectionAborted))
-            await Clients.Caller.SendAsync("BackendRuntime_Create", runtime, Context.ConnectionAborted);
+        await Clients.Caller.SendAsync("ModelDownload_Read", dataService.ModelDownload_Read().Select(download => new ModelDownloadUpdate(download)).ToArray(), Context.ConnectionAborted);
+        await Clients.Caller.SendAsync("LoadedModel_Read", await dataService.LoadedModel_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
+        try
+        {
+            await Clients.Caller.SendAsync("BackendRuntime_Read", await dataService.BackendRuntime_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
+        }
+        catch (OperationCanceledException)
+        {
+            // A reconnect can cancel the optional runtime catalog refresh; keep the SignalR connection usable.
+        }
     }
 
     public Task<IReadOnlyList<ModelSettings>> ModelSettings_Read() => dataService.ModelSettings_ReadAsync(Context.ConnectionAborted);
+
+    public Task<IReadOnlyList<FlowDefinition>> FlowDefinition_Read() =>
+        dataService.FlowDefinition_ReadAsync(Context.ConnectionAborted);
+
+    public Task<FlowDefinition> FlowDefinition_Create(FlowDefinition definition) =>
+        dataService.FlowDefinition_CreateAsync(definition, Context.ConnectionAborted);
+
+    public Task<FlowDefinition> FlowDefinition_Update(FlowDefinition definition) =>
+        dataService.FlowDefinition_UpdateAsync(definition, Context.ConnectionAborted);
+
+    public Task FlowDefinition_Delete(Guid id) =>
+        dataService.FlowDefinition_DeleteAsync(id, Context.ConnectionAborted);
 
     public Task<ApplicationSettings> ApplicationSettings_Read() => dataService.ApplicationSettings_ReadAsync(Context.ConnectionAborted);
 
@@ -104,11 +121,11 @@ public sealed class DataHub(
     public Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisites(ConfigurationBackend backend, string pythonExecutable, IReadOnlyList<string>? devices) =>
         dataService.GetBackendPrerequisitesAsync(backend, pythonExecutable, Context.ConnectionAborted, devices);
 
-    public Task<BackendRequirementState> GetBackendRequirementState() =>
+    public Task<BackendRequirementState> BackendRequirement_Read() =>
         Task.FromResult(requirementMonitor.Current);
 
-    public Task<BackendRequirementState> RefreshBackendRequirementState() =>
-        dataService.RefreshBackendRequirementStateAsync(Context.ConnectionAborted);
+    public Task<BackendRequirementState> BackendRequirement_Update() =>
+        dataService.BackendRequirement_UpdateAsync(Context.ConnectionAborted);
 
     public Task<IReadOnlyList<BackendRuntimeStatus>> BackendRuntime_Read() =>
         dataService.BackendRuntime_ReadAsync(Context.ConnectionAborted);
@@ -206,6 +223,9 @@ public sealed class DataHub(
 
     public Task ModelDownload_DeleteCompleted() =>
         dataService.ModelDownload_DeleteCompletedAsync(Context.ConnectionAborted);
+
+    public Task ModelDownload_DeleteFailed() =>
+        dataService.ModelDownload_DeleteFailedAsync(Context.ConnectionAborted);
 
     public Task<DownloadStatus?> ModelDownload_ReadById(Guid id) =>
         Task.FromResult(dataService.ModelDownload_Read(id));

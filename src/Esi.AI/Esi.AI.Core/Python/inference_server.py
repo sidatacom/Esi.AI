@@ -10,6 +10,7 @@ import gc
 import inspect
 import json
 import os
+from pathlib import Path
 import signal
 import subprocess
 import sys
@@ -50,6 +51,57 @@ def _extract_root_error(output: str) -> str:
     return "\n".join(error_lines)
 
 
+def _enable_b70_bf16_mtp_draft() -> None:
+    """Enable unquantized Qwen3.5-family MTP layers for preserved-BF16 checkpoints."""
+    import vllm
+
+    model_path = Path(vllm.__file__).parent / "model_executor" / "models" / "qwen3_5_mtp.py"
+    if not model_path.exists():
+        raise RuntimeError(f"B70 BF16 MTP patch requires {model_path}")
+
+    source = model_path.read_text()
+    marker = "B70_MTP_NIGHTLY_DRAFT"
+    if marker in source:
+        return
+
+    old = (
+        "        original_quant = vllm_config.quant_config\n"
+        '        if quant_config and quant_config.get_name() not in ("modelopt_fp4",):\n'
+        "            hf_qc = getattr(model_config.hf_config, \"quantization_config\", None)\n"
+        "            if isinstance(hf_qc, dict):\n"
+        '                dynamic = hf_qc.get("dynamic", {})\n'
+        '                if any(k.startswith("-:") and "mtp" in k for k in dynamic):\n'
+        "                    vllm_config.quant_config = None\n"
+    )
+    new = (
+        "        original_quant = vllm_config.quant_config\n"
+        '        if quant_config and quant_config.get_name() not in ("modelopt_fp4",):\n'
+        '            if os.environ.get("B70_MTP_BF16_DRAFT") == "1":\n'
+        '                print("[B70] MTP draft: using unquantized BF16 layers", flush=True)\n'
+        "                vllm_config.quant_config = None\n"
+        "            else:\n"
+        "                hf_qc = getattr(model_config.hf_config, \"quantization_config\", None)\n"
+        "                if isinstance(hf_qc, dict):\n"
+        '                    dynamic = hf_qc.get("dynamic", {})\n'
+        '                    if any(k.startswith("-:") and "mtp" in k for k in dynamic):\n'
+        "                        vllm_config.quant_config = None\n"
+        "        # B70_MTP_NIGHTLY_DRAFT\n"
+    )
+    if source.count(old) != 1:
+        raise RuntimeError(
+            f"B70 BF16 MTP patch anchor was not found exactly once in {model_path}; "
+            "refusing to modify an incompatible vLLM installation"
+        )
+
+    patched = source.replace(old, new, 1)
+    if "\nimport os\n" not in patched and not patched.startswith("import os\n"):
+        if "import torch\n" not in patched:
+            raise RuntimeError(f"B70 BF16 MTP patch could not find an import anchor in {model_path}")
+        patched = patched.replace("import torch\n", "import os\nimport torch\n", 1)
+    compile(patched, str(model_path), "exec")
+    model_path.write_text(patched)
+
+
 if os.environ.get("VLLM_TARGET_DEVICE", "").lower() == "xpu":
     import vllm_xpu_bootstrap
 
@@ -84,6 +136,8 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
             if request.engine.lower() != "vllm":
                 return inference_pb2.ModelOperationResponse(error=f"Unsupported engine '{request.engine}'.")
             try:
+                if request.enable_bf16_mtp_draft:
+                    _enable_b70_bf16_mtp_draft()
                 if os.environ.get("VLLM_TARGET_DEVICE", "").lower() == "xpu":
                     import vllm_xpu_bootstrap
 
@@ -99,8 +153,23 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                     "trust_remote_code": request.trust_remote_code,
                     "enforce_eager": request.enforce_eager,
                 }
+                if request.quantization:
+                    engine_options["quantization"] = request.quantization
+                if request.dtype:
+                    engine_options["dtype"] = request.dtype
+                if request.kv_cache_dtype:
+                    engine_options["kv_cache_dtype"] = request.kv_cache_dtype
+                if request.speculative_config_json:
+                    engine_options["speculative_config"] = json.loads(request.speculative_config_json)
+                if request.max_num_seqs:
+                    engine_options["max_num_seqs"] = request.max_num_seqs
+                if request.max_num_batched_tokens:
+                    engine_options["max_num_batched_tokens"] = request.max_num_batched_tokens
+                engine_options["enable_prefix_caching"] = request.enable_prefix_caching
                 if request.gpu_memory_utilization > 0:
                     engine_options["gpu_memory_utilization"] = request.gpu_memory_utilization
+                if request.enable_bf16_mtp_draft:
+                    os.environ["B70_MTP_BF16_DRAFT"] = "1"
                 self._engine = AsyncLLMEngine.from_engine_args(AsyncEngineArgs(**engine_options))
                 self._model_id = request.model_path
                 return inference_pb2.ModelOperationResponse(
@@ -172,7 +241,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
             return
 
         request_id = request.request_id or str(uuid.uuid4())
-        started = time.monotonic()
+        decode_started = None
         previous_text = ""
         try:
             tool_choice = self._tool_choice(request.tool_choice_json)
@@ -201,6 +270,8 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 if context.cancelled():
                     await self._abort(request_id)
                     return
+                if decode_started is None:
+                    decode_started = time.monotonic()
                 result = output.outputs[0]
                 current_text = result.text
                 delta = current_text[len(previous_text):]
@@ -212,7 +283,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                         prompt_tokens=len(output.prompt_token_ids),
                     )
                 if output.finished:
-                    elapsed = time.monotonic() - started
+                    elapsed = time.monotonic() - (decode_started or time.monotonic())
                     yield inference_pb2.GenerateResponse(
                         finished=True,
                         generated_tokens=len(result.token_ids),

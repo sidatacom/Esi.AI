@@ -16,6 +16,11 @@ public interface IDataService
 
     Task<IReadOnlyList<ModelSettings>> ModelSettings_ReadAsync(CancellationToken cancellationToken = default);
 
+    Task<IReadOnlyList<FlowDefinition>> FlowDefinition_ReadAsync(CancellationToken cancellationToken = default);
+    Task<FlowDefinition> FlowDefinition_CreateAsync(FlowDefinition definition, CancellationToken cancellationToken = default);
+    Task<FlowDefinition> FlowDefinition_UpdateAsync(FlowDefinition definition, CancellationToken cancellationToken = default);
+    Task FlowDefinition_DeleteAsync(Guid id, CancellationToken cancellationToken = default);
+
     Task<ApplicationSettings> ApplicationSettings_ReadAsync(CancellationToken cancellationToken = default);
 
     Task<ApplicationSettings> ApplicationSettings_UpdateAsync(ApplicationSettings settings, CancellationToken cancellationToken = default);
@@ -61,6 +66,7 @@ public interface IDataService
     Task ModelDownload_UpdateAsync(Guid id, bool paused, CancellationToken cancellationToken = default);
     Task ModelDownload_DeleteAsync(Guid id, CancellationToken cancellationToken = default);
     Task ModelDownload_DeleteCompletedAsync(CancellationToken cancellationToken = default);
+    Task ModelDownload_DeleteFailedAsync(CancellationToken cancellationToken = default);
     Task<ModelStatus> SelectModelAsync(SelectModelRequest request, CancellationToken cancellationToken = default);
     Task<ModelLoadStatus> LoadedModel_ReadAsync(CancellationToken cancellationToken = default);
 
@@ -77,9 +83,9 @@ public interface IDataService
     Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default);
     Task<OpenVinoSolveResultDto> SolveDiagnosticAsync(string checkId, CancellationToken cancellationToken = default);
     Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null);
-    Task<BackendRequirementState> GetBackendRequirementStateAsync(CancellationToken cancellationToken = default);
+    Task<BackendRequirementState> BackendRequirement_ReadAsync(CancellationToken cancellationToken = default);
 
-    Task<BackendRequirementState> RefreshBackendRequirementStateAsync(CancellationToken cancellationToken = default);
+    Task<BackendRequirementState> BackendRequirement_UpdateAsync(CancellationToken cancellationToken = default);
     Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null);
     Task<IReadOnlyList<BackendRuntimeStatus>> BackendRuntime_ReadAsync(CancellationToken cancellationToken = default);
     Task<BackendRuntimeStatus> BackendRuntime_CreateAsync(BackendRuntimeInstallRequest request, CancellationToken cancellationToken = default);

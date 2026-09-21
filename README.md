@@ -56,6 +56,8 @@ A warm hello and sincere thanks to every project that makes this workspace possi
 | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp) | Underlying native ecosystem and GGUF runtime lineage for the LLamaSharp backend. | External upstream project |
 | [guojin-yan/OpenVINO-CSharp-API](https://github.com/guojin-yan/OpenVINO-CSharp-API) | C# OpenVINO integration used by the native OpenVINO backend. | Local fork: [`origins/sidatacom/OpenVINO-CSharp-API`](origins/sidatacom/OpenVINO-CSharp-API) |
 | [kkokosa/dotLLM](https://github.com/kkokosa/dotLLM) | .NET GGUF runtime path for the dotLLM backend. | Local fork: [`origins/sidatacom/dotLLM`](origins/sidatacom/dotLLM) |
+| [elsa-workflows/elsa-core](https://github.com/elsa-workflows/elsa-core) | MIT-licensed .NET workflow engine used for flow routing. | Local fork: [`origins/sidatacom/elsa-core`](origins/sidatacom/elsa-core) |
+| [elsa-workflows/elsa-studio](https://github.com/elsa-workflows/elsa-studio) | MIT-licensed Blazor workflow designer and studio modules. | Local fork: [`origins/sidatacom/elsa-studio`](origins/sidatacom/elsa-studio) |
 | [BerriAI/litellm](https://github.com/BerriAI/litellm) | Embedded provider routing and unified model API source. | [`origins/litellm`](origins/litellm) |
 | [mudler/LocalAI](https://github.com/mudler/LocalAI) | Embedded local inference and provider integration source. | [`origins/localai`](origins/localai) |
 | [vLLM](https://github.com/vllm-project/vllm) | External Python inference engine reached through the local bridge. | External runtime boundary |
