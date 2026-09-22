@@ -9,11 +9,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\..\origins\sidatacom\elsa-studio\src\framework\Elsa.Studio.Core\Elsa.Studio.Core.csproj" />
-    <ProjectReference Include="..\..\..\origins\sidatacom\elsa-studio\src\framework\Elsa.Studio.DomInterop\Elsa.Studio.DomInterop.csproj" />
-    <ProjectReference Include="..\..\..\origins\sidatacom\elsa-studio\src\modules\Elsa.Studio.Workflows.Core\Elsa.Studio.Workflows.Core.csproj" />
-    <ProjectReference Include="..\..\..\origins\sidatacom\elsa-studio\src\modules\Elsa.Studio.Workflows.Designer\Elsa.Studio.Workflows.Designer.csproj" />
-    <ProjectReference Include="..\..\..\origins\sidatacom\elsa-studio\src\modules\Elsa.Studio.Workflows\Elsa.Studio.Workflows.csproj" />
+    <PackageReference Include="Elsa.Studio.Core" Version="3.8.4" />
+    <PackageReference Include="Elsa.Studio.DomInterop" Version="3.8.4" />
+    <PackageReference Include="Elsa.Studio.Workflows.Core" Version="3.8.4" />
+    <PackageReference Include="Elsa.Studio.Workflows.Designer" Version="3.8.4" />
+    <PackageReference Include="Elsa.Studio.Workflows" Version="3.8.4" />
   </ItemGroup>
 
 </Project>
