@@ -2,7 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("../../src/utils/logger.js", () => ({ log: vi.fn(), logError: vi.fn() }));
 vi.mock("vscode", () => ({
-  extensions: { getExtension: vi.fn(() => undefined) },
+  extensions: {
+    getExtension: vi.fn(() => ({ isActive: true, packageJSON: { version: "3.20.199", contributes: { commands: [] } } })),
+  },
   commands: { getCommands: vi.fn(async () => []) },
 }));
 import { createMcpRequestHandler } from "../../src/mcp/server.js";
@@ -10,7 +12,7 @@ import type { SessionManager } from "../../src/terminal/session-manager.js";
 import type { DebugManager } from "../../src/debug/manager.js";
 
 describe("EsiMCP tool catalog", () => {
-  it("exposes namespaced Terminal and Debug tools", async () => {
+  it("exposes namespaced Terminal, C# Dev Kit, and Access tools without standalone Debug tools", async () => {
     const handler = createMcpRequestHandler({} as SessionManager, {} as DebugManager);
     const result = await handler("tools/list") as { tools: Array<{ name: string; description: string }> };
     const names = result.tools.map((tool) => tool.name);
@@ -18,8 +20,6 @@ describe("EsiMCP tool catalog", () => {
     expect(names).toEqual([
       "vscode_terminal_list_commands",
       "vscode_terminal_execute_command",
-      "vscode_debug_list_commands",
-      "vscode_debug_execute_command",
       "csharp_devkit_list_commands",
       "csharp_devkit_execute_command",
       "msaccess_list_commands",
@@ -34,8 +34,8 @@ describe("EsiMCP tool catalog", () => {
     const handler = createMcpRequestHandler(sessionManager, { getActiveSessionId: vi.fn(() => "session-123") } as unknown as DebugManager);
 
     const result = await handler("tools/call", {
-      name: "vscode_debug_execute_command",
-      arguments: { commandId: "debug.check.host.readyness", arguments: {} },
+      name: "csharp_devkit_execute_command",
+      arguments: { commandId: "csdevkit.debug.check.host.readyness", arguments: [] },
     }) as { content: Array<{ text: string }>; isError?: boolean; errorCode?: string };
 
     expect(result.isError).toBe(true);
@@ -46,7 +46,7 @@ describe("EsiMCP tool catalog", () => {
     });
   });
 
-  it("returns the started debug session ID through the VS Code debug tool", async () => {
+  it("returns the started debug session ID through the C# Dev Kit tool", async () => {
     const startDebugging = vi.fn().mockResolvedValue({ started: true, sessionId: "session-started" });
     const handler = createMcpRequestHandler(
       { prepareDebugHostReadiness: vi.fn(), bindDebugHostReadiness: vi.fn(), cancelPendingDebugHostReadiness: vi.fn() } as unknown as SessionManager,
@@ -54,10 +54,10 @@ describe("EsiMCP tool catalog", () => {
     );
 
     const result = await handler("tools/call", {
-      name: "vscode_debug_execute_command",
+      name: "csharp_devkit_execute_command",
       arguments: {
-        commandId: "debug.start",
-        arguments: { workingDirectory: "D:/Git/Esi.Copilot" },
+        commandId: "csdevkit.debug.start",
+        arguments: [{ workingDirectory: "D:/Git/Esi.Copilot" }],
       },
     }) as { content: Array<{ text: string }> };
 
@@ -65,7 +65,7 @@ describe("EsiMCP tool catalog", () => {
     expect(startDebugging).toHaveBeenCalledOnce();
   });
 
-  it("returns immediately when debug.restart has no active session", async () => {
+  it("preserves the existing C# Dev Kit restart behavior when no session is active", async () => {
     const restartDebugging = vi.fn().mockResolvedValue(false);
     const debugManager = {
       restartDebugging,
@@ -73,8 +73,8 @@ describe("EsiMCP tool catalog", () => {
     const handler = createMcpRequestHandler({} as SessionManager, debugManager);
 
     const result = await handler("tools/call", {
-      name: "vscode_debug_execute_command",
-      arguments: { commandId: "debug.restart", arguments: { rebuildTaskName: "build" } },
+      name: "csharp_devkit_execute_command",
+      arguments: { commandId: "csdevkit.debug.restart", arguments: [{ rebuildTaskName: "build" }] },
     }) as { content: Array<{ text: string }>; isError?: boolean };
 
     expect(result.isError).toBeUndefined();
@@ -85,20 +85,21 @@ describe("EsiMCP tool catalog", () => {
     expect(restartDebugging).toHaveBeenCalledWith("build");
   });
 
-  it("lists the legacy debug commands behind the VS Code debug command tool", async () => {
+  it("lists migrated debug commands in the C# Dev Kit catalog", async () => {
     const handler = createMcpRequestHandler({} as SessionManager, {} as DebugManager);
 
     const result = await handler("tools/call", {
-      name: "vscode_debug_list_commands",
+      name: "csharp_devkit_list_commands",
       arguments: {},
     }) as { content: Array<{ text: string }> };
 
     const payload = JSON.parse(result.content[0].text) as { commands: Array<{ command: string; argumentsSchema: { properties?: Record<string, unknown>; required?: string[] } }> };
-    expect(payload.commands.map((command) => command.command)).toContain("debug.stop");
-    expect(payload.commands.map((command) => command.command)).toContain("debug.restart");
-    const startCommand = payload.commands.find((command) => command.command === "debug.start");
-    expect(startCommand?.argumentsSchema.required).toEqual(["workingDirectory"]);
-    expect(startCommand?.argumentsSchema.properties).toHaveProperty("fileFullPath");
+    expect(payload.commands.map((command) => command.command)).toContain("csdevkit.debug.stop");
+    expect(payload.commands.map((command) => command.command)).toContain("csdevkit.debug.restart");
+    const startCommand = payload.commands.find((command) => command.command === "csdevkit.debug.start");
+    expect(startCommand?.argumentsSchema).toMatchObject({ type: "array", minItems: 1, maxItems: 1 });
+    expect(startCommand?.argumentsSchema.items.properties).toHaveProperty("workingDirectory");
+    expect(startCommand?.argumentsSchema.items.properties).toHaveProperty("fileFullPath");
   });
 
   it("lists the legacy terminal commands behind the VS Code terminal command tool", async () => {

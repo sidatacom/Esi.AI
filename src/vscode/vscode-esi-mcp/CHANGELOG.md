@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.0] - 2026-09-24
+
+### Removed
+- **Breaking:** Remove the standalone `vscode_debug_*` tools; use `csharp_devkit_*` with `csdevkit.debug.*` command IDs instead.
+
 ## [1.0.37] - 2026-09-21
 
 ### Fixed

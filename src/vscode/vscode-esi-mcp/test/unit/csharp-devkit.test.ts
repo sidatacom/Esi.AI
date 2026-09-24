@@ -67,9 +67,25 @@ describe("EsiMCP C# Dev Kit tools", () => {
       { command: "csdevkit.debug.output.diagnostics", title: "Debug Console Diagnostics", keyboardShortcuts: [], menuContexts: [], registered: false },
       { command: "csdevkit.debug.stop", title: "Stop Debugging", keyboardShortcuts: [], menuContexts: [], registered: false },
       { command: "csdevkit.debug.restart", title: "Restart Debugging", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.settings", title: "Debug Settings", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.start", title: "Debug Start", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.wait.for.event", title: "Debug Wait For Event", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.step.over", title: "Debug Step Over", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.step.into", title: "Debug Step Into", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.step.out", title: "Debug Step Out", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.continue", title: "Debug Continue", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.pause", title: "Debug Pause", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.add.breakpoint", title: "Debug Add Breakpoint", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.add.logpoint", title: "Debug Add Logpoint", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.remove.breakpoint", title: "Debug Remove Breakpoint", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.clear.all.breakpoints", title: "Debug Clear All Breakpoints", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.list.breakpoints", title: "Debug List Breakpoints", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.list.variable.names", title: "Debug List Variable Names", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.get.variables.values", title: "Debug Get Variables Values", keyboardShortcuts: [], menuContexts: [], registered: false },
+      { command: "csdevkit.debug.evaluate.expression", title: "Debug Evaluate Expression", keyboardShortcuts: [], menuContexts: [], registered: false },
     ]);
     expect(payload.commands.filter((command: { registered: boolean }) => command.registered).every((command: { argumentsSchema: { type: string; maxItems: number } }) => command.argumentsSchema.type === "array" && command.argumentsSchema.maxItems === 20)).toBe(true);
-    expect(payload.commands.filter((command: { registered: boolean; command: string }) => !command.registered && !["csdevkit.debug.check.host.readyness", "csdevkit.debug.output.diagnostics", "csdevkit.debug.restart"].includes(command.command)).every((command: { argumentsSchema: { type: string; maxItems: number } }) => command.argumentsSchema.type === "array" && command.argumentsSchema.maxItems === 0)).toBe(true);
+    expect(payload.commands.filter((command: { command: string }) => ["csdevkit.debug.step.over", "csdevkit.debug.step.into", "csdevkit.debug.step.out", "csdevkit.debug.continue", "csdevkit.debug.pause", "csdevkit.debug.clear.all.breakpoints", "csdevkit.debug.list.breakpoints"].includes(command.command)).every((command: { argumentsSchema: { type: string; maxItems: number } }) => command.argumentsSchema.type === "array" && command.argumentsSchema.maxItems === 0)).toBe(true);
     const readinessCommand = payload.commands.find((command: { command: string }) => command.command === "csdevkit.debug.check.host.readyness") as { argumentsSchema: { type: string; maxItems: number } };
     expect(readinessCommand.argumentsSchema).toMatchObject({ type: "array", maxItems: 1 });
   });
@@ -172,5 +188,16 @@ describe("EsiMCP C# Dev Kit tools", () => {
     expect(JSON.parse(result.content[0].text)).toEqual({ stopped: true });
     expect(stopDebugging).toHaveBeenCalledOnce();
     expect(resetDebugHostReadiness).toHaveBeenCalledOnce();
+  });
+
+  it("executes migrated debugger commands through the C# Dev Kit namespace", async () => {
+    const stepOver = vi.fn().mockResolvedValue(undefined);
+    await CSHARP_DEVKIT_TOOLS[1].handler(
+      { commandId: "csdevkit.debug.step.over", arguments: [] },
+      { stepOver } as never,
+      {} as never,
+    );
+
+    expect(stepOver).toHaveBeenCalledOnce();
   });
 });

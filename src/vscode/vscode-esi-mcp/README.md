@@ -58,28 +58,16 @@ After installation, ask Copilot to run `ls -la` in the terminal.
 Available command IDs: `terminal.run`, `terminal.create`, `terminal.execute`, `terminal.read`, `terminal.list`, `terminal.close`, and `terminal.input`.
 Each entry returned by `vscode_terminal_list_commands` also includes `argumentsSchema` with required fields, types, defaults, and descriptions.
 
-### VS Code Debug Commands
-
-| Tool | Description |
-|------|-------------|
-| `vscode_debug_list_commands` | List the available debug commands. |
-| `vscode_debug_execute_command` | Execute a debug command by `commandId` and `arguments`. |
-
-Available command IDs include `debug.start`, `debug.active.session`, `debug.stop`, `debug.restart`, and `debug.check.host.readyness`.
-
-`debug.restart` stops the active session and starts it again with a newly observed VS Code session ID. It accepts an optional `rebuildTaskName` that must exactly match a task from `tasks.json`, for example `{ "rebuildTaskName": "build" }`.
-Each entry returned by `vscode_debug_list_commands` also includes `argumentsSchema` with required fields, types, defaults, and descriptions.
-
 ### C# Dev Kit and Microsoft Access
 
 | Tool | Description |
 |------|-------------|
 | `csharp_devkit_list_commands` | List the commands declared by the installed Microsoft C# Dev Kit, including ID, title, keyboard shortcuts, menu contexts, and registration status. |
-| `csharp_devkit_execute_command` | Execute one command from the installed C# Dev Kit command manifest. The `commandId` must be declared by `ms-dotnettools.csdevkit`; optional arguments are forwarded to VS Code. |
+| `csharp_devkit_execute_command` | Execute one command declared by the installed C# Dev Kit or an allowlisted `csdevkit.debug.*` operation. Arguments are positional: pass one object in the array when parameters are required, or an empty array for no-argument commands. |
 | `msaccess_list_commands` | List the tools exposed by the configured `MS-Access-mcp` stdio server, including the upstream Access schemas. |
 | `msaccess_execute_command` | Execute one upstream Access tool by `commandId`, forwarding its JSON arguments. |
 
-The C# Dev Kit tools expose only commands declared by the installed extension. Arbitrary VS Code command IDs are rejected.
+The C# Dev Kit catalog combines commands declared by the installed extension with virtual DebugManager commands under `csdevkit.debug.*`, including `csdevkit.debug.start`, `csdevkit.debug.settings`, `csdevkit.debug.check.host.readyness`, `csdevkit.debug.active.session`, `csdevkit.debug.output.diagnostics`, `csdevkit.debug.stop`, and `csdevkit.debug.restart`. Arbitrary VS Code command IDs are rejected. `csdevkit.debug.restart` stops the active session and starts it again with a newly observed VS Code session ID; optional `rebuildTaskName` must exactly match a task from `tasks.json` and is passed as `[{ "rebuildTaskName": "build" }]`. No-argument operations use `arguments: []`.
 
 The Access wrapper also forwards the upstream MCP `resources/list`, `resources/templates/list`, `resources/read`, `prompts/list`, and `prompts/get` methods. Use the upstream list responses as the source of truth for exact schemas and arguments. These are MCP resource and prompt methods, not additional `msaccess_execute_command` IDs.
 
@@ -92,9 +80,10 @@ The Access server provides:
 The upstream server requires Windows, Microsoft Access, and a compatible .NET runtime for COM/DAO operations. The EsiMCP submodule is located at `origins/brickly26/MS-Access-mcp`.
 The C# Dev Kit list includes `argumentsSchema` as a positional array. The extension manifest does not publish command-specific parameter metadata for declared commands, so those entries are intentionally generic; the virtual active-session, stop, and restart commands accept no arguments.
 
-For a new Esi.Web launch, dispatch `vscode_debug_execute_command` with `debug.start` and
-`debug.check.host.readyness` in the same parallel tool-call batch. The backend owns
-`debug.start`; the frontend must invoke `debug.check.host.readyness` immediately and keep
+For a new Esi.Web launch, dispatch `csharp_devkit_execute_command` with
+`commandId: "csdevkit.debug.start"` and `arguments: [{ "workingDirectory": "<absolute-workspace-root>", "configurationName": "Esi.Web .NET Server" }]`, together with
+`commandId: "csdevkit.debug.check.host.readyness"` and `arguments: []` in the same parallel tool-call batch. The backend owns
+`csdevkit.debug.start`; the frontend must invoke `csdevkit.debug.check.host.readyness` immediately and keep
 the blocking call open until it returns.
 The readiness tool reads live shell execution output when available and can also probe the
 configured `esimcp.debugHostReadinessUrl` for an active debug session. A result of
@@ -169,9 +158,9 @@ The extension reads configuration from VS Code settings under `esimcp.*`. Use di
 | `esimcp.maxOutputLines` | number | 10000 | Max lines kept in output buffer per session |
 | `esimcp.idleTimeoutMs` | number | 300000 | Close idle sessions after this many ms (0 = disabled) |
 | `esimcp.blockedCommands` | string[] | `["rm -rf /"]` | Commands that will be rejected |
-| `esimcp.debugConfigurationName` | string | empty | Default VS Code launch configuration used by `debug.start` |
-| `esimcp.debugReadyString` | string | `Now ready on:` | Text observed in live VS Code shell output by `debug.check.host.readyness` |
-| `esimcp.debugHostReadinessTimeoutSeconds` | number | 60 | Timeout for `debug.check.host.readyness` in seconds |
+| `esimcp.debugConfigurationName` | string | empty | Default VS Code launch configuration used by `csdevkit.debug.start` |
+| `esimcp.debugReadyString` | string | `Now ready on:` | Text observed in live VS Code shell output by `csdevkit.debug.check.host.readyness` |
+| `esimcp.debugHostReadinessTimeoutSeconds` | number | 60 | Timeout for `csdevkit.debug.check.host.readyness` in seconds |
 | `esimcp.debugHostReadinessUrl` | string | empty | Optional HTTP or HTTPS endpoint probed while the active debug session starts |
 | `esimcp.msAccessServerCommand` | string | `dotnet` | Executable used to start the Access MCP server |
 | `esimcp.msAccessServerArguments` | string[] | `[]` | Explicit server arguments; replaces the default `dotnet run` arguments when set |
@@ -180,11 +169,11 @@ The extension reads configuration from VS Code settings under `esimcp.*`. Use di
 | `esimcp.msAccessDatabasePath` | string | empty | Optional path passed through `ACCESS_DATABASE_PATH` |
 | `esimcp.msAccessTimeoutMs` | number | 120000 | Timeout for Access MCP requests in milliseconds |
 
-For debugging, an explicit `configurationName` supplied to `debug.start` takes precedence over this setting. If neither is supplied, `testName` is used when present; otherwise EsiMCP creates a debug configuration from `fileFullPath`. `debug.start` reports debugger attachment; use `debug.check.host.readyness` separately for host readiness.
+For debugging, an explicit `configurationName` supplied as the first argument to `csdevkit.debug.start` takes precedence over this setting. If neither is supplied, `testName` is used when present; otherwise EsiMCP creates a debug configuration from `fileFullPath`. `csdevkit.debug.start` receives its parameter object inside the positional `arguments` array and reports debugger attachment; use `csdevkit.debug.check.host.readyness` separately for host readiness.
 
-Use `debug.wait.for.event` to wait for debugger state changes. A paused exception event includes DAP-provided exception details when the adapter supports `exceptionInfo`; the agent must resume a paused host before starting browser or HTTP validation.
+Use `csdevkit.debug.wait.for.event` with one parameter object inside `arguments` to wait for debugger state changes. A paused exception event includes DAP-provided exception details when the adapter supports `exceptionInfo`; the agent must resume a paused host before starting browser or HTTP validation.
 
-Use `debug.stop` to stop the active debug session.
+Use `csdevkit.debug.stop` with `arguments: []` to stop the active debug session.
 
 ## Recommended: Set as Preferred Tool
 

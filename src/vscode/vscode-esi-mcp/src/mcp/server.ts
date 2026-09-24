@@ -2,7 +2,6 @@ import { log, logError } from "../utils/logger.js";
 import type { SessionManager } from "../terminal/session-manager.js";
 import type { DebugManager } from "../debug/manager.js";
 import type { McpToolResponse } from "../types/index.js";
-import { VSCODE_DEBUG_TOOLS } from "./tools/vscode-debug.js";
 import { VSCODE_TERMINAL_TOOLS } from "./tools/vscode-terminal.js";
 import { CSHARP_DEVKIT_TOOLS } from "./tools/csharp-devkit.js";
 import { MSACCESS_TOOLS } from "./tools/msaccess.js";
@@ -28,16 +27,6 @@ TOOLS.push(...VSCODE_TERMINAL_TOOLS.map((tool) => ({
   description: tool.description,
   inputSchema: toJsonSchema(tool.schema),
   handler: async (params: unknown, sessionManager: SessionManager, _debugManager?: DebugManager) => tool.handler(params, sessionManager),
-})));
-
-TOOLS.push(...VSCODE_DEBUG_TOOLS.map((tool) => ({
-  name: tool.name,
-  description: tool.description,
-  inputSchema: toJsonSchema(tool.schema),
-  handler: async (params: unknown, sessionManager: SessionManager, debugManager?: DebugManager) => {
-    if (!debugManager) throw new Error("Debug manager is unavailable");
-    return tool.handler(params, debugManager, sessionManager);
-  },
 })));
 
 TOOLS.push(...CSHARP_DEVKIT_TOOLS.map((tool) => ({
@@ -82,7 +71,7 @@ export function createMcpRequestHandler(
         },
         serverInfo: {
           name: "EsiMCP",
-          version: "1.0.37",
+          version: "2.0.0",
         },
       };
     }

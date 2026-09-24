@@ -1,11 +1,12 @@
 import * as vscode from "vscode";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { z } from "zod";
 import type { DebugManager } from "../../debug/manager.js";
 import type { SessionManager } from "../../terminal/session-manager.js";
 import type { McpToolResponse } from "../../types/index.js";
 import { csharpDevKitArgumentsSchema, csharpDevKitCommandSchema, csharpDevKitEmptySchema, csharpDevKitNoArgumentsSchema, csharpDevKitReadinessArgumentsSchema, csharpDevKitRestartArgumentsSchema, toJsonSchema } from "./schemas.js";
-import { handleActiveDebugSession, handleDebugHostReadiness, handleRestartDebugSession, handleStopDebugSession } from "./debug.js";
+import { DEBUG_TOOLS, handleActiveDebugSession, handleDebugHostReadiness, handleRestartDebugSession, handleStopDebugSession } from "./debug.js";
 
 const CSHARP_DEV_KIT_EXTENSION_ID = "ms-dotnettools.csdevkit";
 const ALLOWED_CSHARP_DEV_KIT_COMMANDS = new Set([
@@ -66,6 +67,25 @@ type CSharpDevKitCommand = {
   registered: boolean;
   argumentsSchema: Record<string, unknown>;
 };
+
+const EXISTING_DEBUG_DEVKIT_COMMANDS = new Set([
+  "csdevkit.debug.active.session",
+  "csdevkit.debug.check.host.readyness",
+  "csdevkit.debug.restart",
+  "csdevkit.debug.stop",
+]);
+const DEBUG_DEVKIT_COMMANDS: CSharpDevKitCommand[] = DEBUG_TOOLS
+  .filter((tool) => !EXISTING_DEBUG_DEVKIT_COMMANDS.has(`csdevkit.${tool.name}`))
+  .map((tool) => ({
+    command: `csdevkit.${tool.name}`,
+    title: tool.name.split(".").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" "),
+    keyboardShortcuts: [],
+    menuContexts: [],
+    registered: false,
+    argumentsSchema: toJsonSchema(tool.schema === csharpDevKitEmptySchema
+      ? csharpDevKitNoArgumentsSchema
+      : z.array(tool.schema).length(1)),
+  }));
 
 type CSharpDevKitPackageJson = {
   version?: string;
@@ -138,7 +158,7 @@ async function getCSharpDevKitCommands(): Promise<CSharpDevKitCommand[]> {
       argumentsSchema: toJsonSchema(csharpDevKitArgumentsSchema),
     }));
 
-  return [...declaredCommands, ...ADDITIONAL_CSHARP_DEV_KIT_COMMANDS];
+  return [...declaredCommands, ...ADDITIONAL_CSHARP_DEV_KIT_COMMANDS, ...DEBUG_DEVKIT_COMMANDS];
 }
 
 async function listCommands(): Promise<McpToolResponse> {
@@ -238,6 +258,18 @@ async function executeCommand(params: unknown, debugManager?: DebugManager, sess
     if (!debugManager) throw new Error("Debug manager is unavailable");
     const argumentsValue = csharpDevKitRestartArgumentsSchema.parse(input.arguments ?? []);
     return handleRestartDebugSession(argumentsValue[0], debugManager);
+  }
+
+  const debugCommand = DEBUG_TOOLS.find((item) => input.commandId === `csdevkit.${item.name}`);
+  if (debugCommand) {
+    if (!debugManager || !sessionManager) throw new Error("Debug or session manager is unavailable");
+    const argumentsValue = input.arguments ?? [];
+    if (debugCommand.schema === csharpDevKitEmptySchema) {
+      if (argumentsValue.length > 0) throw new Error(`Command '${input.commandId}' does not accept arguments`);
+      return debugCommand.handler({}, debugManager, sessionManager);
+    }
+    if (argumentsValue.length !== 1) throw new Error(`Command '${input.commandId}' requires one object argument`);
+    return debugCommand.handler(argumentsValue[0], debugManager, sessionManager);
   }
 
   const extension = getCSharpDevKitExtension();

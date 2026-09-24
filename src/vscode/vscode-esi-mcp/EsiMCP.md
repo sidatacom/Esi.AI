@@ -1,18 +1,18 @@
 # Project: EsiMCP
 
 MCP server that runs commands in visible VS Code terminal tabs.
-EsiMCP is one direct HTTP MCP server per VS Code workspace, hosted by the VS Code extension at `http://127.0.0.1:<configured esimcp.serverPort>/mcp`. Terminal and debug operations use `mcp_esimcp_vscode_terminal_list_commands`, `mcp_esimcp_vscode_terminal_execute_command`, `mcp_esimcp_vscode_debug_list_commands`, and `mcp_esimcp_vscode_debug_execute_command`; their command IDs use dot notation such as `terminal.list` and `debug.active.session`. Use distinct ports for separate workspaces and configure the bearer token when `ESIMCP_SECRET` is enabled.
+EsiMCP is one direct HTTP MCP server per VS Code workspace, hosted by the VS Code extension at `http://127.0.0.1:<configured esimcp.serverPort>/mcp`. Terminal operations use `mcp_esimcp_vscode_terminal_list_commands` and `mcp_esimcp_vscode_terminal_execute_command`; C# Dev Kit and DebugManager operations use `mcp_esimcp_csharp_devkit_list_commands` and `mcp_esimcp_csharp_devkit_execute_command`. Terminal command IDs use `terminal.*`; DebugManager command IDs use `csdevkit.debug.*`. Use distinct ports for separate workspaces and configure the bearer token when `ESIMCP_SECRET` is enabled.
 
-The terminal and debug list tools return an `argumentsSchema` for every command, including required fields, types, defaults, and descriptions. C# Dev Kit list results return the positional array shape accepted by the wrapper; the installed extension does not expose more specific argument metadata for its declared commands.
+The terminal list tool returns an `argumentsSchema` for every command, including required fields, types, defaults, and descriptions. C# Dev Kit list results return the positional array shape accepted by the wrapper; the installed extension does not expose more specific argument metadata for its declared commands. DebugManager commands use `csdevkit.debug.*`; pass one parameter object inside `arguments` when required, or `arguments: []` when no parameters are required.
 
 ## Esi.Web Debug Readiness
 
-For a new Esi.Web launch, the orchestrator must dispatch `vscode_debug_execute_command`
-with `debug.start` and `debug.check.host.readyness` in the same parallel tool-call batch:
+For a new Esi.Web launch, the orchestrator must dispatch `csharp_devkit_execute_command`
+with `commandId: "csdevkit.debug.start"` and `arguments: [{ "workingDirectory": "<absolute-workspace-root>", "configurationName": "Esi.Web .NET Server" }]`, together with `commandId: "csdevkit.debug.check.host.readyness"` and `arguments: []` in the same parallel tool-call batch:
 
-1. The backend owns `debug.start`, which starts the configured VS Code debug session and waits for the debugger to attach.
-2. The frontend owns `debug.check.host.readyness` and must invoke it immediately, without waiting for `debug.start` to return.
-3. `debug.check.host.readyness` is a blocking call. It reads live shell execution output from VS Code terminals when available and can probe the configured `esimcp.debugHostReadinessUrl`; it does not read terminal scrollback.
+1. The backend owns `csdevkit.debug.start`, which starts the configured VS Code debug session and waits for the debugger to attach.
+2. The frontend owns `csdevkit.debug.check.host.readyness` and must invoke it immediately, without waiting for `csdevkit.debug.start` to return.
+3. `csdevkit.debug.check.host.readyness` is a blocking call. It reads live shell execution output from VS Code terminals when available and can probe the configured `esimcp.debugHostReadinessUrl`; it does not read terminal scrollback.
 4. `{ "ready": true }` means the configured readiness string or the configured host endpoint was observed. The default string is `Now ready on:`.
 5. `{ "ready": false }` means only that the readiness timeout expired.
 6. `Canceled: Canceled` means the MCP call was externally canceled. It is not a timeout and must stop the workflow; do not continue to browser actions.
@@ -20,18 +20,18 @@ with `debug.start` and `debug.check.host.readyness` in the same parallel tool-ca
 For an integrated-terminal debugger whose output is not exposed through shell integration,
 set `esimcp.debugHostReadinessUrl` to the host URL, for example `https://localhost:5012`.
 
-Do not perform browser validation, call `debug.stop`, or delegate another action while
-`debug.check.host.readyness` is pending. Start the readiness call before or during host
+Do not perform browser validation, call `csdevkit.debug.stop`, or delegate another action while
+`csdevkit.debug.check.host.readyness` is pending. Start the readiness call before or during host
 startup so it can observe live shell output.
 
 ## C# Dev Kit Commands
 
 EsiMCP exposes the installed Microsoft C# Dev Kit as a separate command area:
 
-- `csharp_devkit_list_commands` returns manifest commands with their IDs, resolved titles, keyboard shortcuts, menu contexts, and current registration state.
-- `csharp_devkit_execute_command` invokes one declared `csdevkit.*` command and optionally forwards JSON arguments.
+- `csharp_devkit_list_commands` returns allowlisted manifest commands with their IDs, resolved titles, keyboard shortcuts, menu contexts, and current registration state, plus virtual DebugManager commands under `csdevkit.debug.*`.
+- `csharp_devkit_execute_command` invokes one allowlisted manifest command or virtual DebugManager command. Parameters are positional: pass one object in the `arguments` array when required, or `[]` for commands without parameters.
 
-Command execution is allowlisted against `ms-dotnettools.csdevkit/package.json`; arbitrary VS Code commands are rejected.
+Manifest command execution is allowlisted against `ms-dotnettools.csdevkit/package.json`; virtual DebugManager commands use an explicit EsiMCP allowlist. Arbitrary VS Code commands are rejected.
 
 ## Release Process
 
