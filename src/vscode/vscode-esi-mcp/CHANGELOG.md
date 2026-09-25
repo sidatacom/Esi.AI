@@ -9,8 +9,25 @@ All notable changes to this project will be documented in this file.
 - Preserve readiness tracking and return the started session ID for both C# Dev Kit launch commands
 
 ### Removed
-- **Breaking:** Remove `csdevkit.debug.start`; use `csdevkit.debug.fileLaunch` for Esi.Web and `csdevkit.debug.projectDebugLaunch` for Esi.AI Studio
+- **Breaking:** Remove the obsolete virtual launch command; use `csdevkit.debug.fileLaunch` for Esi.Web and `csdevkit.debug.projectDebugLaunch` for Esi.AI Studio
 - Remove the unused `esimcp.debugReadyTimeoutMs` and `esimcp.debugConfigurationName` settings
+
+### Fixed
+- Probe the configured host URL for an already-running server
+- Finish readiness immediately when no launch or active session remains
+- Stop waiting when a launch is canceled or its session/terminal ends
+
+## [2.0.2] - 2026-09-25
+
+### Fixed
+- Probe the configured host URL for an already-running server
+- Finish readiness immediately when no launch or active session remains
+- Stop waiting when a launch is canceled or its session/terminal ends
+
+## [2.0.1] - 2026-09-25
+
+### Fixed
+- Keep host readiness latched per debug session until its terminal or session ends
 
 ## [2.0.0] - 2026-09-24
 

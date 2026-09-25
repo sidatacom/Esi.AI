@@ -15,7 +15,7 @@ with `commandId: "csdevkit.debug.fileLaunch"` and `arguments: [{ "scheme": "file
 3. The frontend invokes `csdevkit.debug.check.host.readyness` immediately and keeps the blocking call open until it returns.
 4. `csdevkit.debug.check.host.readyness` is a blocking call. It reads live shell execution output from VS Code terminals when available and can probe the configured `esimcp.debugHostReadinessUrl`; it does not read terminal scrollback.
 5. `{ "ready": true }` means the configured readiness string or the configured host endpoint was observed. The default string is `Now ready on:`.
-6. `{ "ready": false }` means only that the readiness timeout expired.
+6. `{ "ready": false }` means there is no active or pending launch, the host probe failed, startup failed, the session or terminal ended, or the timeout expired.
 7. `Canceled: Canceled` means the MCP call was externally canceled. It is not a timeout and must stop the workflow; do not continue to browser actions.
 
 For an integrated-terminal debugger whose output is not exposed through shell integration,

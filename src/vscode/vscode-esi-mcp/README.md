@@ -86,8 +86,12 @@ For a new Esi.Web launch, dispatch `csharp_devkit_execute_command` with
 The readiness tool reads live shell execution output when available and can also probe the
 configured `esimcp.debugHostReadinessUrl` for an active debug session. A result of
 `{ "ready": true }` confirms either the readiness string or the configured host endpoint was
-observed. `{ "ready": false }` means only that the timeout expired. `Canceled: Canceled` is
-external cancellation, not a timeout; stop the workflow and do not continue to browser actions.
+observed. A successful probe recognizes an already-running host even without an active debug
+session. If there is no active session or accepted launch and the host probe is unsuccessful,
+the check returns `{ "ready": false }` immediately. During an accepted launch, it remains
+pending until readiness, startup failure, cancellation, session or terminal termination, or
+timeout. `Canceled: Canceled` is external cancellation, not a timeout; stop the workflow and
+do not continue to browser actions.
 
 ## Usage Patterns
 
