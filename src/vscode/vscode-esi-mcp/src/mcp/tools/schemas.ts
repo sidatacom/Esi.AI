@@ -138,6 +138,16 @@ export const csharpDevKitProjectLaunchArgumentsSchema = z.array(z.object({
 export const csharpDevKitReadinessArgumentsSchema = z.array(z.object({ sessionId: z.string().min(1).optional() }).strict()).max(1).describe("Optional active debug session ID; when omitted, EsiMCP reads vscode.debug.activeDebugSession at call time");
 export const csharpDevKitRestartArgumentsSchema = z.array(debugRestartSchema).max(1).describe("Optional restart settings; rebuildTaskName must match a task name from tasks.json");
 export const csharpDevKitNoArgumentsSchema = z.array(z.unknown()).max(0).describe("This virtual command does not accept arguments");
+export const csharpDevKitInteractionStatusSchema = z.object({
+  executionId: z.string().min(1).optional(),
+  waitMs: z.number().int().min(0).max(30000).optional().default(1000),
+}).strict();
+export const csharpDevKitInteractionResponseSchema = z.object({
+  executionId: z.string().min(1),
+  interactionId: z.string().min(1),
+  response: z.unknown().optional(),
+  waitMs: z.number().int().min(0).max(30000).optional().default(1000),
+}).strict();
 export const csharpDevKitCommandSchema = z.object({
   commandId: z.string().min(1).max(256),
   arguments: z.array(z.unknown()).max(20).optional(),

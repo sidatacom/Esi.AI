@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.6] - 2026-09-25
+
+### Added
+- Capture VS Code message and input dialogs, including unawaited popups, from every manifest C# Dev Kit command; preserve popup cancellation through agent responses
+
 ## [2.0.5] - 2026-09-25
 
 ### Added

@@ -10,6 +10,7 @@
 		],
 		"git.ignoreLimitWarning": true,
 		"github.copilot.chat.virtualTools.threshold": 32,
-		"dotnet.preferVisualStudioCodeFileSystemWatcher": true
+		"dotnet.preferVisualStudioCodeFileSystemWatcher": true,
+		"dotnet.defaultSolution": "src/Esi.AI/Esi.AI.Studio.sln"
 	}
 }

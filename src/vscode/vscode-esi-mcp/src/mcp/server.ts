@@ -71,7 +71,7 @@ export function createMcpRequestHandler(
         },
         serverInfo: {
           name: "EsiMCP",
-          version: "2.0.5",
+          version: "2.0.6",
         },
       };
     }

@@ -31,6 +31,10 @@ EsiMCP exposes the installed Microsoft C# Dev Kit as a separate command area:
 
 - `csharp_devkit_list_commands` returns every command declared by the installed manifest with its ID, resolved title, keyboard shortcuts, menu contexts, registration state, and invocation syntax, plus virtual DebugManager commands under `csdevkit.debug.*`. An optional `commandId` filters the result to one command.
 - `csharp_devkit_execute_command` invokes one manifest command or virtual DebugManager command. Parameters are positional: pass one object in the `arguments` array when required, or `[]` for commands without parameters.
+- `csharp_devkit_get_interaction_status` gets the current state of a manifest command execution and can wait for a captured interaction.
+- `csharp_devkit_respond_to_interaction` submits an agent selection, text value, or file path for a captured popup and returns the next popup or the command result.
+
+Every manifest command runs through the interaction broker. It captures message notifications, message choices, `showQuickPick`/`createQuickPick`, `showInputBox`/`createInputBox`, and file/workspace-folder dialogs, including popups opened without awaiting their result. If execution returns `status: "waitingForAgent"`, pass its `executionId` and interaction `id` to `csharp_devkit_respond_to_interaction`. Choice responses use `selectedIndex` or `selectedIndexes`; text responses use a string; file dialogs use `paths` or `path`. Send `null` or an empty selection/path list to cancel a popup. If execution returns `status: "running"`, call `csharp_devkit_get_interaction_status` with that `executionId` to wait for its next interaction or result. Only one manifest command can be awaiting agent input at a time.
 
 Manifest command execution is restricted to command IDs declared by `ms-dotnettools.csdevkit/package.json`; virtual DebugManager commands use an explicit EsiMCP allowlist. Arbitrary VS Code commands are rejected.
 

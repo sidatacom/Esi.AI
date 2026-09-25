@@ -64,6 +64,8 @@ Each entry returned by `vscode_terminal_list_commands` also includes `argumentsS
 |------|-------------|
 | `csharp_devkit_list_commands` | List every command declared by the installed Microsoft C# Dev Kit and EsiMCP virtual commands, with invocation syntax. Pass `commandId` to request syntax for one command. |
 | `csharp_devkit_execute_command` | Execute one command declared by the installed C# Dev Kit or an EsiMCP virtual `csdevkit.debug.*` operation. Arguments are positional: pass one object in the array when parameters are required, or an empty array for no-argument commands. |
+| `csharp_devkit_get_interaction_status` | Get or wait for the state and captured VS Code popup of a C# Dev Kit command execution. |
+| `csharp_devkit_respond_to_interaction` | Submit a choice, text value, or path for a captured popup, or cancel it, then return the command's current or final result. |
 | `msaccess_list_commands` | List the tools exposed by the configured `MS-Access-mcp` stdio server, including the upstream Access schemas. |
 | `msaccess_execute_command` | Execute one upstream Access tool by `commandId`, forwarding its JSON arguments. |
 

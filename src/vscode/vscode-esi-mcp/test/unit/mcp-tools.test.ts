@@ -22,6 +22,8 @@ describe("EsiMCP tool catalog", () => {
       "vscode_terminal_execute_command",
       "csharp_devkit_list_commands",
       "csharp_devkit_execute_command",
+      "csharp_devkit_get_interaction_status",
+      "csharp_devkit_respond_to_interaction",
       "msaccess_list_commands",
       "msaccess_execute_command",
     ]);

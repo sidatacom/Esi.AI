@@ -1,7 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { debugState, readdir, showErrorMessage, windowApi } = vi.hoisted(() => {
+const { createQuickPick, debugState, readdir, showErrorMessage, showInputBox, showOpenDialog, showQuickPick, showWarningMessage, windowApi } = vi.hoisted(() => {
   const showErrorMessage = vi.fn();
+  const showInputBox = vi.fn(async () => undefined);
+  const showOpenDialog = vi.fn(async () => undefined);
+  const showQuickPick = vi.fn(async (items: unknown[]) => items[0]);
+  const showWarningMessage = vi.fn();
+  const createQuickPick = vi.fn(() => ({
+    items: [] as unknown[],
+    selectedItems: [] as unknown[],
+    activeItems: [] as unknown[],
+    canSelectMany: false,
+    show: vi.fn(),
+    hide: vi.fn(),
+    dispose: vi.fn(),
+  }));
   return {
     debugState: {
       activeDebugSession: undefined as { id: string; name: string } | undefined,
@@ -9,7 +22,12 @@ const { debugState, readdir, showErrorMessage, windowApi } = vi.hoisted(() => {
     },
     readdir: vi.fn(),
     showErrorMessage,
-    windowApi: { activeTextEditor: undefined, showErrorMessage },
+    showInputBox,
+    showOpenDialog,
+    showQuickPick,
+    showWarningMessage,
+    createQuickPick,
+    windowApi: { activeTextEditor: undefined, showErrorMessage, showInputBox, showOpenDialog, showQuickPick, showWarningMessage, createQuickPick },
   };
 });
 
@@ -50,6 +68,31 @@ vi.mock("vscode", () => ({
     ]),
     executeCommand: vi.fn(async (command: string, ...argumentsValue: unknown[]) => {
       if (command === "csdevkit.debug.hotReload") await windowApi.showErrorMessage("Hot Reload build failed");
+      if (command === "csdevkit.debug.selectStartupProject") {
+        return windowApi.showQuickPick(["Esi.Web", "Esi.AI.Studio"], { placeHolder: "Select startup project" });
+      }
+      if (command === "csdevkit.debug.showHotReloadPanel") {
+        const notification = windowApi.showWarningMessage("Build failed", { modal: true, detail: "The last build could not be started." }, "Cancel", "Continue");
+        return argumentsValue[0] === "fire-and-forget" ? { command, argumentsValue } : notification;
+      }
+      if (command === "csdevkit.addExistingProject") {
+        const picker = windowApi.createQuickPick() as unknown as {
+          items: unknown[];
+          selectedItems: unknown[];
+          onDidAccept: (handler: () => void) => void;
+          show: () => void;
+        };
+        return new Promise((resolve) => {
+          picker.onDidAccept(() => resolve(picker.selectedItems[0]));
+          picker.items = [{ label: "Select project file" }];
+          picker.show();
+        });
+      }
+      if (command === "csdevkit.buildSolution") {
+        return argumentsValue[0] === "open-dialog"
+          ? windowApi.showOpenDialog({ title: "Select project", canSelectMany: false })
+          : windowApi.showInputBox({ prompt: "Solution name" });
+      }
       if (command === "csdevkit.debug.fileLaunch" || command === "csdevkit.debug.projectDebugLaunch") {
         const session = { id: `session-${command.split(".").at(-1)}`, name: "Esi.Web" };
         debugState.activeDebugSession = session;
@@ -202,13 +245,185 @@ describe("EsiMCP C# Dev Kit tools", () => {
     expect(cancelPendingDebugHostReadiness).not.toHaveBeenCalled();
   });
 
-  it("suppresses C# Dev Kit notifications during EsiMCP hot reload", async () => {
-    const result = await CSHARP_DEVKIT_TOOLS[1].handler({ commandId: "csdevkit.debug.hotReload", arguments: [] });
-    const payload = JSON.parse(result.content[0].text);
+  it("captures and resumes C# Dev Kit notifications during hot reload", async () => {
+    const executeCommand = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_execute_command");
+    const respondToInteraction = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_respond_to_interaction");
+    const result = await executeCommand!.handler({ commandId: "csdevkit.debug.hotReload", arguments: [] });
+    const pending = JSON.parse(result.content[0].text);
 
-    expect(payload.result.suppressedMessages).toEqual([
-      { method: "showErrorMessage", message: "Hot Reload build failed" },
-    ]);
+    expect(pending).toMatchObject({ status: "waitingForAgent", interaction: { kind: "message", message: "Hot Reload build failed" } });
+
+    const resumed = await respondToInteraction!.handler({
+      executionId: pending.executionId,
+      interactionId: pending.interaction.id,
+      response: null,
+      waitMs: 500,
+    });
+
+    expect(JSON.parse(resumed.content[0].text)).toMatchObject({ commandId: "csdevkit.debug.hotReload" });
+  });
+
+  it("keeps an unawaited notification available after its command completes", async () => {
+    const executeCommand = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_execute_command");
+    const respondToInteraction = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_respond_to_interaction");
+    const started = await executeCommand!.handler({ commandId: "csdevkit.debug.showHotReloadPanel", arguments: ["fire-and-forget"] });
+    const pending = JSON.parse(started.content[0].text);
+
+    expect(pending).toMatchObject({ status: "waitingForAgent", interaction: { kind: "message", message: "Build failed" } });
+
+    const resumed = await respondToInteraction!.handler({
+      executionId: pending.executionId,
+      interactionId: pending.interaction.id,
+      response: { selectedIndex: 1 },
+      waitMs: 500,
+    });
+
+    expect(JSON.parse(resumed.content[0].text)).toMatchObject({
+      commandId: "csdevkit.debug.showHotReloadPanel",
+      result: { command: "csdevkit.debug.showHotReloadPanel", argumentsValue: ["fire-and-forget"] },
+    });
+  });
+
+  it("captures and resumes a quick pick through the agent interaction tools", async () => {
+    const executeCommand = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_execute_command");
+    const respondToInteraction = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_respond_to_interaction");
+    const getInteractionStatus = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_get_interaction_status");
+    expect(executeCommand).toBeDefined();
+    expect(respondToInteraction).toBeDefined();
+
+    const started = await executeCommand!.handler({ commandId: "csdevkit.debug.selectStartupProject", arguments: [] });
+    const pending = JSON.parse(started.content[0].text);
+    expect(pending).toMatchObject({ status: "waitingForAgent", interaction: { kind: "quickPick", choices: [{ label: "Esi.Web" }, { label: "Esi.AI.Studio" }] } });
+    const status = await getInteractionStatus!.handler({ executionId: pending.executionId, waitMs: 0 });
+    expect(JSON.parse(status.content[0].text)).toMatchObject({ executionId: pending.executionId, status: "waitingForAgent" });
+
+    const resumed = await respondToInteraction!.handler({
+      executionId: pending.executionId,
+      interactionId: pending.interaction.id,
+      response: { selectedIndexes: [1] },
+      waitMs: 500,
+    });
+
+    expect(JSON.parse(resumed.content[0].text)).toMatchObject({ commandId: "csdevkit.debug.selectStartupProject", result: "Esi.AI.Studio" });
+    expect(showQuickPick).not.toHaveBeenCalled();
+  });
+
+  it("captures event-driven QuickPick controls and raises the accept event after selection", async () => {
+    const executeCommand = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_execute_command");
+    const respondToInteraction = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_respond_to_interaction");
+    const started = await executeCommand!.handler({ commandId: "csdevkit.addExistingProject", arguments: [] });
+    const pending = JSON.parse(started.content[0].text);
+
+    expect(pending).toMatchObject({ status: "waitingForAgent", interaction: { kind: "quickPick", choices: [{ label: "Select project file" }] } });
+
+    const resumed = await respondToInteraction!.handler({
+      executionId: pending.executionId,
+      interactionId: pending.interaction.id,
+      response: { selectedIndexes: [0] },
+      waitMs: 500,
+    });
+
+    expect(JSON.parse(resumed.content[0].text)).toMatchObject({ commandId: "csdevkit.addExistingProject", result: { label: "Select project file" } });
+    expect(createQuickPick).toHaveBeenCalledOnce();
+  });
+
+  it("captures and returns agent-provided text from showInputBox", async () => {
+    const executeCommand = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_execute_command");
+    const respondToInteraction = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_respond_to_interaction");
+    const started = await executeCommand!.handler({ commandId: "csdevkit.buildSolution", arguments: [] });
+    const pending = JSON.parse(started.content[0].text);
+
+    expect(pending).toMatchObject({ status: "waitingForAgent", interaction: { kind: "inputBox", options: { prompt: "Solution name" } } });
+
+    const resumed = await respondToInteraction!.handler({
+      executionId: pending.executionId,
+      interactionId: pending.interaction.id,
+      response: "Esi.AI.sln",
+      waitMs: 500,
+    });
+
+    expect(JSON.parse(resumed.content[0].text)).toMatchObject({ commandId: "csdevkit.buildSolution", result: "Esi.AI.sln" });
+    expect(showInputBox).not.toHaveBeenCalled();
+  });
+
+  it("maps quick-pick cancellation to an undefined VS Code result", async () => {
+    const executeCommand = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_execute_command");
+    const respondToInteraction = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_respond_to_interaction");
+    const started = await executeCommand!.handler({ commandId: "csdevkit.debug.selectStartupProject", arguments: [] });
+    const pending = JSON.parse(started.content[0].text);
+
+    const cancelled = await respondToInteraction!.handler({
+      executionId: pending.executionId,
+      interactionId: pending.interaction.id,
+      response: null,
+      waitMs: 500,
+    });
+
+    expect(JSON.parse(cancelled.content[0].text)).toEqual({ commandId: "csdevkit.debug.selectStartupProject" });
+  });
+
+  it("captures modal message actions and returns the agent-selected button", async () => {
+    const executeCommand = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_execute_command");
+    const respondToInteraction = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_respond_to_interaction");
+    const started = await executeCommand!.handler({ commandId: "csdevkit.debug.showHotReloadPanel", arguments: [] });
+    const pending = JSON.parse(started.content[0].text);
+
+    expect(pending).toMatchObject({
+      status: "waitingForAgent",
+      interaction: {
+        kind: "message",
+        message: "Build failed",
+        choices: [{ index: 0, label: "Cancel" }, { index: 1, label: "Continue" }],
+        options: { modal: true, detail: "The last build could not be started." },
+      },
+    });
+
+    const resumed = await respondToInteraction!.handler({
+      executionId: pending.executionId,
+      interactionId: pending.interaction.id,
+      response: { selectedIndex: 1 },
+      waitMs: 500,
+    });
+
+    expect(JSON.parse(resumed.content[0].text)).toMatchObject({ commandId: "csdevkit.debug.showHotReloadPanel", result: "Continue" });
+  });
+
+  it("converts agent-provided paths to VS Code URIs for open dialogs", async () => {
+    const executeCommand = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_execute_command");
+    const respondToInteraction = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_respond_to_interaction");
+    const started = await executeCommand!.handler({ commandId: "csdevkit.buildSolution", arguments: ["open-dialog"] });
+    const pending = JSON.parse(started.content[0].text);
+
+    expect(pending).toMatchObject({ status: "waitingForAgent", interaction: { kind: "openDialog", options: { title: "Select project" } } });
+
+    const resumed = await respondToInteraction!.handler({
+      executionId: pending.executionId,
+      interactionId: pending.interaction.id,
+      response: { paths: ["/workspace/Esi.AI.Studio.csproj"] },
+      waitMs: 500,
+    });
+
+    expect(JSON.parse(resumed.content[0].text)).toMatchObject({
+      commandId: "csdevkit.buildSolution",
+      result: [{ scheme: "file", fsPath: "/workspace/Esi.AI.Studio.csproj" }],
+    });
+    expect(showOpenDialog).not.toHaveBeenCalled();
+  });
+
+  it("maps open-dialog cancellation to an undefined VS Code result", async () => {
+    const executeCommand = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_execute_command");
+    const respondToInteraction = CSHARP_DEVKIT_TOOLS.find((tool) => tool.name === "csharp_devkit_respond_to_interaction");
+    const started = await executeCommand!.handler({ commandId: "csdevkit.buildSolution", arguments: ["open-dialog"] });
+    const pending = JSON.parse(started.content[0].text);
+
+    const cancelled = await respondToInteraction!.handler({
+      executionId: pending.executionId,
+      interactionId: pending.interaction.id,
+      response: null,
+      waitMs: 500,
+    });
+
+    expect(JSON.parse(cancelled.content[0].text)).toEqual({ commandId: "csdevkit.buildSolution" });
   });
 
   it("resolves the project from the active editor when launch arguments are omitted", async () => {
