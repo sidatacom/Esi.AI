@@ -1,6 +1,4 @@
 import * as vscode from "vscode";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import { log } from "../utils/logger.js";
 
 const MAX_VARIABLES = 100;
@@ -12,8 +10,6 @@ type DapVariable = { name: string; value?: string; evaluateName?: string; variab
 type DapResponse = { scopes?: Array<{ name?: string; variablesReference?: number }>; variables?: DapVariable[]; result?: unknown; value?: unknown; body?: { exceptionId?: string; description?: string; breakMode?: string } };
 type DapBreakpoint = { id?: number; verified?: boolean; line?: number; column?: number; message?: string };
 type DebugStackItemDetails = { source?: { uri?: vscode.Uri }; range?: { start?: { line?: number } } };
-export type DebugStartLifecycle = { onAcceptedStart?: () => void; onStarted?: (session: vscode.DebugSession) => void; onEnd?: () => void };
-export type DebugStartResult = { started: boolean; sessionId: string | null };
 export type DebugEvent = {
   id: number;
   type: "paused" | "continued" | "terminated";
@@ -49,7 +45,6 @@ export class DebugManager {
   private readonly debugOutputListeners = new Set<DebugOutputListener>();
   private nextEventId = 1;
   private pausedStateKey: string | null = null;
-  private debugStartInProgress = false;
 
   constructor() {
     this.debugDisposables.push(vscode.debug.onDidChangeActiveStackItem(() => { void this.observeDebugState(); }));
@@ -126,79 +121,6 @@ export class DebugManager {
     const key = setting.slice(separator + 1);
     const value = vscode.workspace.getConfiguration(section).get<unknown>(key);
     return { setting, value: this.redact(value, setting) };
-  }
-
-  async startDebugging(input: { workingDirectory: string; fileFullPath?: string; testName?: string; configurationName?: string }, lifecycle?: DebugStartLifecycle): Promise<DebugStartResult> {
-    if (this.debugStartInProgress || this.getDebugSession()) return { started: false, sessionId: null };
-    this.debugStartInProgress = true;
-
-    try {
-      lifecycle?.onAcceptedStart?.();
-      const folder = vscode.workspace.getWorkspaceFolder(vscode.Uri.file(input.workingDirectory));
-      if (input.configurationName?.trim()) {
-        const configurationName = input.configurationName.trim();
-
-        const sessionStarted = this.waitForDebugSession(configurationName, true);
-        try {
-          const started = await vscode.debug.startDebugging(folder, configurationName);
-          if (!started) {
-            sessionStarted.cancel();
-            return { started: false, sessionId: null };
-          }
-
-          await sessionStarted.promise;
-          const session = this.getDebugSession(configurationName) ?? vscode.debug.activeDebugSession;
-          if (session) lifecycle?.onStarted?.(session);
-          return { started: true, sessionId: session?.id ?? null };
-        } catch (error) {
-          sessionStarted.cancel();
-          throw error;
-        }
-      }
-      if (input.testName?.trim()) {
-        await vscode.commands.executeCommand("testing.run", { tests: [input.testName.trim()], debug: true });
-        const session = vscode.debug.activeDebugSession;
-        if (session) lifecycle?.onStarted?.(session);
-        return { started: true, sessionId: session?.id ?? null };
-      }
-      const configuredName = vscode.workspace.getConfiguration("esimcp").get<string>("debugConfigurationName", "").trim();
-      if (configuredName) {
-        const sessionStarted = this.waitForDebugSession(configuredName, true);
-        try {
-          const started = await vscode.debug.startDebugging(folder, configuredName);
-          if (!started) {
-            sessionStarted.cancel();
-            return { started: false, sessionId: null };
-          }
-
-          await sessionStarted.promise;
-          const session = this.getDebugSession(configuredName) ?? vscode.debug.activeDebugSession;
-          if (session) lifecycle?.onStarted?.(session);
-          return { started: true, sessionId: session?.id ?? null };
-        } catch (error) {
-          sessionStarted.cancel();
-          throw error;
-        }
-      }
-      if (!input.fileFullPath?.trim()) {
-        throw new Error("fileFullPath is required when configurationName and testName are not provided");
-      }
-
-      const configuration = await this.createDefaultConfiguration(input.fileFullPath.trim());
-      const started = await vscode.debug.startDebugging(folder, configuration);
-      if (!started) return { started: false, sessionId: null };
-
-      await this.waitForDebugSession(configuration.name);
-      const session = this.getDebugSession(configuration.name) ?? vscode.debug.activeDebugSession;
-      if (session) lifecycle?.onStarted?.(session);
-      return { started: true, sessionId: session?.id ?? null };
-    } finally {
-      try {
-        lifecycle?.onEnd?.();
-      } finally {
-        this.debugStartInProgress = false;
-      }
-    }
   }
 
   private async observeDebugState(): Promise<void> {
@@ -564,41 +486,6 @@ export class DebugManager {
     }
   }
 
-  private waitForDebugSession(configurationName: string, acceptAnyStartedSession = false): { promise: Promise<void>; cancel(): void } {
-    const existingSession = this.getDebugSession(configurationName);
-    if (existingSession) return { promise: Promise.resolve(), cancel: () => undefined };
-
-    let settled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    let resolvePromise: () => void;
-    let rejectPromise: (error: Error) => void;
-    const disposables: vscode.Disposable[] = [];
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      disposables.forEach((disposable) => disposable.dispose());
-      error ? rejectPromise(error) : resolvePromise();
-    };
-    const matches = (session: vscode.DebugSession) => acceptAnyStartedSession
-      || session.name === configurationName
-      || session.name.startsWith(`${configurationName} `);
-    const promise = new Promise<void>((resolve, reject) => {
-      resolvePromise = resolve;
-      rejectPromise = reject;
-      timer = setTimeout(() => finish(new Error(`Timed out after ${this.getTimeoutMs("debugStateTimeoutMs", 30000)}ms waiting for debug session '${configurationName}'`)), this.getTimeoutMs("debugStateTimeoutMs", 30000));
-    });
-
-    disposables.push(vscode.debug.onDidStartDebugSession((session) => {
-      if (matches(session)) finish();
-    }));
-    disposables.push(vscode.debug.onDidTerminateDebugSession((session) => {
-      if (matches(session)) finish(new Error(`Debug session '${configurationName}' terminated before it became ready`));
-    }));
-
-    return { promise, cancel: () => finish(new Error("Debug session startup was cancelled")) };
-  }
-
   private async dapRequest(session: vscode.DebugSession, command: string, args: unknown): Promise<DapResponse> {
     const timeoutMs = this.getTimeoutMs("debugAdapterTimeoutMs", 30000);
     return new Promise((resolve, reject) => {
@@ -610,101 +497,6 @@ export class DebugManager {
   private getTimeoutMs(settingName: string, fallback: number): number {
     const value = vscode.workspace.getConfiguration("esimcp").get<number>(settingName);
     return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
-  }
-
-  private async createDefaultConfiguration(fileFullPath: string): Promise<vscode.DebugConfiguration> {
-    const extension = path.extname(fileFullPath).toLowerCase();
-    if (extension !== ".cs" && extension !== ".csproj") {
-      return {
-        type: this.detectDebuggerType(extension),
-        request: "launch",
-        name: "EsiMCP Launch",
-        program: fileFullPath,
-      };
-    }
-
-    const projectPath = await this.findNearestProject(fileFullPath);
-    if (!projectPath) {
-      throw new Error(`Could not locate a .csproj for ${fileFullPath}`);
-    }
-
-    const assemblyPath = await this.findBuiltAssembly(projectPath);
-    if (!assemblyPath) {
-      throw new Error(`Could not find a built assembly for ${path.basename(projectPath)}. Run dotnet build first.`);
-    }
-
-    return {
-      type: "coreclr",
-      request: "launch",
-      name: "EsiMCP .NET Launch",
-      program: assemblyPath,
-      cwd: path.dirname(projectPath),
-      stopAtEntry: false,
-    };
-  }
-
-  private async findNearestProject(fileFullPath: string): Promise<string | null> {
-    const resolvedPath = path.resolve(fileFullPath);
-    let directory = path.extname(resolvedPath).toLowerCase() === ".csproj"
-      ? path.dirname(resolvedPath)
-      : (await fs.stat(resolvedPath)).isDirectory() ? resolvedPath : path.dirname(resolvedPath);
-
-    while (true) {
-      const entries = await fs.readdir(directory, { withFileTypes: true });
-      const project = entries.find((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".csproj"));
-      if (project) return path.join(directory, project.name);
-
-      const parent = path.dirname(directory);
-      if (parent === directory) return null;
-      directory = parent;
-    }
-  }
-
-  private async findBuiltAssembly(projectPath: string): Promise<string | null> {
-    const projectName = path.basename(projectPath, path.extname(projectPath));
-    const binPath = path.join(path.dirname(projectPath), "bin");
-    const configurations = ["Debug", "Release"];
-
-    for (const configuration of configurations) {
-      const configurationPath = path.join(binPath, configuration);
-      let targetFrameworks: string[];
-      try {
-        targetFrameworks = (await fs.readdir(configurationPath, { withFileTypes: true }))
-          .filter((entry) => entry.isDirectory())
-          .map((entry) => entry.name);
-      } catch {
-        continue;
-      }
-
-      for (const targetFramework of targetFrameworks) {
-        const assemblyPath = path.join(configurationPath, targetFramework, `${projectName}.dll`);
-        try {
-          await fs.access(assemblyPath);
-          return assemblyPath;
-        } catch {
-          continue;
-        }
-      }
-    }
-
-    return null;
-  }
-
-  private detectDebuggerType(extension: string): string {
-    const debuggerTypes: Record<string, string> = {
-      ".py": "debugpy",
-      ".js": "pwa-node",
-      ".ts": "pwa-node",
-      ".java": "java",
-      ".cpp": "cppdbg",
-      ".cc": "cppdbg",
-      ".c": "cppdbg",
-      ".go": "go",
-      ".rs": "lldb",
-      ".php": "php",
-      ".rb": "ruby",
-    };
-    return debuggerTypes[extension] ?? "pwa-node";
   }
 
   private getDebugSession(configurationName?: string): vscode.DebugSession | undefined {

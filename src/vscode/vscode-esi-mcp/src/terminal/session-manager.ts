@@ -24,20 +24,6 @@ export class DebugSessionExceptionError extends Error {
   }
 }
 
-export interface TerminalOutputWaiter {
-  promise: Promise<void>;
-  cancel(): void;
-}
-
-interface OutputWaiterState {
-  expectedText: string;
-  recentOutput: string;
-  resolve: () => void;
-  reject: (error: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
-  settled: boolean;
-}
-
 interface DebugReadinessState {
   sessionId: string;
   terminal: vscode.Terminal | null;
@@ -50,7 +36,6 @@ type DebugReadinessSource = Pick<DebugManager, "getActiveSessionId" | "onDebugEv
 
 export class SessionManager {
   private sessions = new Map<string, TerminalSession>();
-  private outputWaiters = new Set<OutputWaiterState>();
   private debugReadinessBySession = new Map<string, DebugReadinessState>();
   private debugConsoleOutputBySession = new Map<string, string>();
   private debugEventDisposable: vscode.Disposable | null = null;
@@ -138,11 +123,9 @@ export class SessionManager {
         for await (const chunk of event.execution.read()) {
           this.findByTerminal(event.terminal)?.appendOutput(chunk);
           this.updateDebugHostReadiness(event.terminal, chunk);
-          this.notifyOutputWaiters(chunk);
         }
       } catch (error) {
-        logError("Error reading terminal output while waiting for the debug ready string", error);
-        this.rejectOutputWaiters(error instanceof Error ? error : new Error(String(error)));
+        logError("Error reading terminal output", error);
       }
     });
   }
@@ -230,29 +213,6 @@ export class SessionManager {
     });
   }
 
-  private notifyOutputWaiters(chunk: string): void {
-    for (const waiter of this.outputWaiters) {
-      const output = `${waiter.recentOutput}${chunk}`;
-      if (output.includes(waiter.expectedText)) {
-        this.finishOutputWaiter(waiter);
-        continue;
-      }
-      waiter.recentOutput = output.slice(-(waiter.expectedText.length - 1));
-    }
-  }
-
-  private finishOutputWaiter(waiter: OutputWaiterState, error?: Error): void {
-    if (waiter.settled) return;
-    waiter.settled = true;
-    clearTimeout(waiter.timer);
-    this.outputWaiters.delete(waiter);
-    error ? waiter.reject(error) : waiter.resolve();
-  }
-
-  private rejectOutputWaiters(error: Error): void {
-    for (const waiter of [...this.outputWaiters]) this.finishOutputWaiter(waiter, error);
-  }
-
   private recoverExistingSessions(): void {
     const config = this.getConfig();
     const maxOutputLines = config.maxOutputLines;
@@ -316,11 +276,6 @@ export class SessionManager {
   
   getDebugReadyString(): string {
     return vscode.workspace.getConfiguration("esimcp").get<string>("debugReadyString", "Now ready on:").trim();
-  }
-
-  getDebugReadyTimeoutMs(): number {
-    const timeoutMs = vscode.workspace.getConfiguration("esimcp").get<number>("debugReadyTimeoutMs", 120000);
-    return typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 120000;
   }
 
   getDebugHostReadinessTimeoutMs(): number {
@@ -446,29 +401,6 @@ export class SessionManager {
       output,
       lastLine,
     };
-  }
-
-  waitForTerminalOutput(expectedText: string, timeoutMs: number): TerminalOutputWaiter {
-    const normalizedText = expectedText.trim();
-    if (!normalizedText) throw new Error("esimcp.debugReadyString must not be empty");
-    if (!vscode.window.onDidStartTerminalShellExecution) {
-      throw new Error("VS Code terminal shell integration is unavailable; cannot wait for the debug ready string");
-    }
-
-    let waiter: OutputWaiterState;
-    const promise = new Promise<void>((resolve, reject) => {
-      waiter = {
-        expectedText: normalizedText,
-        recentOutput: "",
-        resolve,
-        reject,
-        timer: setTimeout(() => this.finishOutputWaiter(waiter, new Error(`Timed out after ${timeoutMs}ms waiting for debug ready string '${normalizedText}'`)), timeoutMs),
-        settled: false,
-      };
-      this.outputWaiters.add(waiter);
-    });
-
-    return { promise, cancel: () => this.finishOutputWaiter(waiter!) };
   }
 
   private startIdleReaper(): void {
@@ -629,7 +561,6 @@ export class SessionManager {
     this.debugEventDisposable = null;
     this.debugOutputDisposable?.dispose();
     this.debugOutputDisposable = null;
-    this.rejectOutputWaiters(new Error("SessionManager disposed"));
     this.onSessionsChangedEmitter.dispose();
 
     log("SessionManager disposed");

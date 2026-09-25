@@ -117,7 +117,6 @@ export const terminalSendInputSchema = z.object({
 
 const debugScopeSchema = z.enum(["local", "global", "all"]).default("local");
 const variableNameSchema = z.string().min(1).max(128).refine((name) => !name.includes("*") && name.toLowerCase() !== "all", { message: "Wildcard and all-variable requests are not allowed" });
-export const debugStartSchema = z.object({ workingDirectory: z.string().min(1), fileFullPath: z.string().min(1).optional(), testName: z.string().min(1).optional(), configurationName: z.string().min(1).optional() }).strict();
 export const debugEmptySchema = z.object({}).strict();
 export const debugWaitForEventSchema = z.object({ timeoutMs: z.coerce.number().int().min(100).max(120000).optional().default(30000), type: z.enum(["paused", "continued", "terminated"]).optional() }).strict();
 export const debugBreakpointSchema = z.object({ fileFullPath: z.string().min(1), line: z.number().int().min(1), condition: z.string().max(1000).optional() }).strict();
@@ -129,6 +128,9 @@ export const debugSettingsSchema = z.object({ setting: z.string().min(3).max(128
 export const debugRestartSchema = z.object({ rebuildTaskName: z.string().min(1).optional().describe("Optional exact task name from tasks.json to run after stopping and before restarting") }).strict();
 export const debugCheckHostReadinessSchema = z.object({ sessionId: z.string().min(1).optional() }).strict();
 export const csharpDevKitEmptySchema = debugEmptySchema;
+export const csharpDevKitListCommandsSchema = z.object({
+  commandId: z.string().min(1).max(256).optional().describe("Optional command ID to return only that command and its invocation syntax"),
+}).strict();
 export const csharpDevKitArgumentsSchema = z.array(z.unknown()).max(20).describe("Optional positional arguments forwarded to the C# Dev Kit command; the extension does not publish command-specific argument metadata");
 export const csharpDevKitReadinessArgumentsSchema = z.array(z.object({ sessionId: z.string().min(1).optional() }).strict()).max(1).describe("Optional active debug session ID; when omitted, EsiMCP reads vscode.debug.activeDebugSession at call time");
 export const csharpDevKitRestartArgumentsSchema = z.array(debugRestartSchema).max(1).describe("Optional restart settings; rebuildTaskName must match a task name from tasks.json");

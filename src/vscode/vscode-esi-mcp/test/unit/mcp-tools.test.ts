@@ -46,25 +46,6 @@ describe("EsiMCP tool catalog", () => {
     });
   });
 
-  it("returns the started debug session ID through the C# Dev Kit tool", async () => {
-    const startDebugging = vi.fn().mockResolvedValue({ started: true, sessionId: "session-started" });
-    const handler = createMcpRequestHandler(
-      { prepareDebugHostReadiness: vi.fn(), bindDebugHostReadiness: vi.fn(), cancelPendingDebugHostReadiness: vi.fn() } as unknown as SessionManager,
-      { startDebugging } as unknown as DebugManager,
-    );
-
-    const result = await handler("tools/call", {
-      name: "csharp_devkit_execute_command",
-      arguments: {
-        commandId: "csdevkit.debug.start",
-        arguments: [{ workingDirectory: "D:/Git/Esi.Copilot" }],
-      },
-    }) as { content: Array<{ text: string }> };
-
-    expect(JSON.parse(result.content[0].text)).toEqual({ started: true, sessionId: "session-started" });
-    expect(startDebugging).toHaveBeenCalledOnce();
-  });
-
   it("preserves the existing C# Dev Kit restart behavior when no session is active", async () => {
     const restartDebugging = vi.fn().mockResolvedValue(false);
     const debugManager = {
@@ -85,7 +66,7 @@ describe("EsiMCP tool catalog", () => {
     expect(restartDebugging).toHaveBeenCalledWith("build");
   });
 
-  it("lists migrated debug commands in the C# Dev Kit catalog", async () => {
+  it("lists command syntax for every virtual C# Dev Kit command", async () => {
     const handler = createMcpRequestHandler({} as SessionManager, {} as DebugManager);
 
     const result = await handler("tools/call", {
@@ -93,13 +74,11 @@ describe("EsiMCP tool catalog", () => {
       arguments: {},
     }) as { content: Array<{ text: string }> };
 
-    const payload = JSON.parse(result.content[0].text) as { commands: Array<{ command: string; argumentsSchema: { properties?: Record<string, unknown>; required?: string[] } }> };
+    const payload = JSON.parse(result.content[0].text) as { commands: Array<{ command: string; invocationSyntax: string }> };
     expect(payload.commands.map((command) => command.command)).toContain("csdevkit.debug.stop");
     expect(payload.commands.map((command) => command.command)).toContain("csdevkit.debug.restart");
-    const startCommand = payload.commands.find((command) => command.command === "csdevkit.debug.start");
-    expect(startCommand?.argumentsSchema).toMatchObject({ type: "array", minItems: 1, maxItems: 1 });
-    expect(startCommand?.argumentsSchema.items.properties).toHaveProperty("workingDirectory");
-    expect(startCommand?.argumentsSchema.items.properties).toHaveProperty("fileFullPath");
+    expect(payload.commands.map((command) => command.command)).not.toContain("csdevkit.debug.start");
+    expect(payload.commands.every((command) => command.invocationSyntax.length > 0)).toBe(true);
   });
 
   it("lists the legacy terminal commands behind the VS Code terminal command tool", async () => {

@@ -6,7 +6,6 @@ import {
   terminalListSchema,
   terminalCloseSchema,
   terminalSendInputSchema,
-  debugStartSchema,
   debugWaitForEventSchema,
   debugVariableValuesSchema,
   debugEvaluateSchema,
@@ -144,14 +143,6 @@ describe("Zod Schemas", () => {
 });
 
 describe("Debug Schemas", () => {
-  it("rejects unknown debug fields", () => {
-    expect(debugStartSchema.safeParse({ workingDirectory: ".", extra: true }).success).toBe(false);
-  });
-
-  it("accepts launch, test, and configuration selectors", () => {
-    expect(debugStartSchema.safeParse({ workingDirectory: ".", fileFullPath: "src/test.cs", testName: "Test.One", configurationName: "Esi.Web .NET Server" }).success).toBe(true);
-  });
-
   it("accepts filtered debugger event waits and applies the timeout default", () => {
     const result = debugWaitForEventSchema.safeParse({ type: "paused" });
     expect(result.success).toBe(true);

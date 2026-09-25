@@ -3,7 +3,7 @@ import type { McpToolResponse } from "../../types/index.js";
 import type { DebugManager } from "../../debug/manager.js";
 import type { SessionManager } from "../../terminal/session-manager.js";
 import {
-  debugBreakpointSchema, debugEmptySchema, debugEvaluateSchema, debugLogpointSchema, debugStartSchema,
+  debugBreakpointSchema, debugEmptySchema, debugEvaluateSchema, debugLogpointSchema,
   debugSettingsSchema, debugVariableValuesSchema, debugVariablesSchema, debugWaitForEventSchema,
   debugCheckHostReadinessSchema, debugRestartSchema,
 } from "./schemas.js";
@@ -40,14 +40,6 @@ export const handleRestartDebugSession = async (params: unknown, manager: DebugM
 export const DEBUG_TOOLS: DebugToolDefinition[] = [
   { name: "debug.active.session", description: "EsiMCP Debug: return the ID of the active VS Code debug session", schema: empty, handler: handleActiveDebugSession },
   { name: "debug.settings", description: "EsiMCP Debug: read a setting from the active VS Code workspace configuration", schema: debugSettingsSchema, handler: async (params, manager) => { const input = debugSettingsSchema.parse(params); return text(manager.getSetting(input.setting)); } },
-  { name: "debug.start", description: "EsiMCP Debug: start a VS Code debug session and wait for the debugger to attach", schema: debugStartSchema, handler: async (params, manager, sessionManager) => {
-    const started = await manager.startDebugging(debugStartSchema.parse(params), {
-      onAcceptedStart: () => sessionManager.prepareDebugHostReadiness(),
-      onStarted: (session) => sessionManager.bindDebugHostReadiness(session),
-      onEnd: () => sessionManager.cancelPendingDebugHostReadiness(),
-    });
-    return text(started);
-  } },
   { name: "debug.check.host.readyness", description: "EsiMCP Debug: check the configured readiness string in active dotnet: terminals and abort if the debug session raises an exception", schema: debugCheckHostReadinessSchema, handler: handleDebugHostReadiness },
   { name: "debug.wait.for.event", description: "EsiMCP Debug: wait for a debugger pause, exception, continue, or termination event", schema: debugWaitForEventSchema, handler: async (params, manager) => { const input = debugWaitForEventSchema.parse(params); return text(await manager.waitForDebugEvent(input.timeoutMs, input.type)); } },
   { name: "debug.stop", description: "EsiMCP Debug: stop the active debug session", schema: empty, handler: handleStopDebugSession },

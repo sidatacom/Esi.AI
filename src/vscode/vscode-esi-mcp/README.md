@@ -62,12 +62,12 @@ Each entry returned by `vscode_terminal_list_commands` also includes `argumentsS
 
 | Tool | Description |
 |------|-------------|
-| `csharp_devkit_list_commands` | List the commands declared by the installed Microsoft C# Dev Kit, including ID, title, keyboard shortcuts, menu contexts, and registration status. |
-| `csharp_devkit_execute_command` | Execute one command declared by the installed C# Dev Kit or an allowlisted `csdevkit.debug.*` operation. Arguments are positional: pass one object in the array when parameters are required, or an empty array for no-argument commands. |
+| `csharp_devkit_list_commands` | List every command declared by the installed Microsoft C# Dev Kit and EsiMCP virtual commands, with invocation syntax. Pass `commandId` to request syntax for one command. |
+| `csharp_devkit_execute_command` | Execute one command declared by the installed C# Dev Kit or an EsiMCP virtual `csdevkit.debug.*` operation. Arguments are positional: pass one object in the array when parameters are required, or an empty array for no-argument commands. |
 | `msaccess_list_commands` | List the tools exposed by the configured `MS-Access-mcp` stdio server, including the upstream Access schemas. |
 | `msaccess_execute_command` | Execute one upstream Access tool by `commandId`, forwarding its JSON arguments. |
 
-The C# Dev Kit catalog combines commands declared by the installed extension with virtual DebugManager commands under `csdevkit.debug.*`, including `csdevkit.debug.start`, `csdevkit.debug.settings`, `csdevkit.debug.check.host.readyness`, `csdevkit.debug.active.session`, `csdevkit.debug.output.diagnostics`, `csdevkit.debug.stop`, and `csdevkit.debug.restart`. Arbitrary VS Code command IDs are rejected. `csdevkit.debug.restart` stops the active session and starts it again with a newly observed VS Code session ID; optional `rebuildTaskName` must exactly match a task from `tasks.json` and is passed as `[{ "rebuildTaskName": "build" }]`. No-argument operations use `arguments: []`.
+The C# Dev Kit catalog includes every command declared in the installed extension manifest and virtual DebugManager commands under `csdevkit.debug.*`. Every listed entry includes `invocationSyntax`; pass `commandId` to `csharp_devkit_list_commands` to retrieve one command's syntax. Manifest commands do not publish command-specific argument metadata, so their `argumentsSchema` and syntax describe a generic positional array. Arbitrary VS Code command IDs are rejected. Use `csdevkit.debug.fileLaunch` with an absolute project `.csproj` file URI for Esi.Web; use `csdevkit.debug.projectDebugLaunch` only for Esi.AI Studio. Both launch commands preserve EsiMCP readiness tracking and return the started VS Code session ID. `csdevkit.debug.restart` stops the active session and starts it again with a newly observed VS Code session ID; optional `rebuildTaskName` must exactly match a task from `tasks.json` and is passed as `[{ "rebuildTaskName": "build" }]`. No-argument operations use `arguments: []`.
 
 The Access wrapper also forwards the upstream MCP `resources/list`, `resources/templates/list`, `resources/read`, `prompts/list`, and `prompts/get` methods. Use the upstream list responses as the source of truth for exact schemas and arguments. These are MCP resource and prompt methods, not additional `msaccess_execute_command` IDs.
 
@@ -81,10 +81,8 @@ The upstream server requires Windows, Microsoft Access, and a compatible .NET ru
 The C# Dev Kit list includes `argumentsSchema` as a positional array. The extension manifest does not publish command-specific parameter metadata for declared commands, so those entries are intentionally generic; the virtual active-session, stop, and restart commands accept no arguments.
 
 For a new Esi.Web launch, dispatch `csharp_devkit_execute_command` with
-`commandId: "csdevkit.debug.start"` and `arguments: [{ "workingDirectory": "<absolute-workspace-root>", "configurationName": "Esi.Web .NET Server" }]`, together with
-`commandId: "csdevkit.debug.check.host.readyness"` and `arguments: []` in the same parallel tool-call batch. The backend owns
-`csdevkit.debug.start`; the frontend must invoke `csdevkit.debug.check.host.readyness` immediately and keep
-the blocking call open until it returns.
+`commandId: "csdevkit.debug.fileLaunch"` and `arguments: [{ "scheme": "file", "fsPath": "<absolute Esi.Web .csproj path>" }]`, together with
+`commandId: "csdevkit.debug.check.host.readyness"` and `arguments: []` in the same parallel tool-call batch. C# Dev Kit resolves the project's launch settings, including its configured port; the frontend owns both calls and must keep the blocking readiness call open until it returns.
 The readiness tool reads live shell execution output when available and can also probe the
 configured `esimcp.debugHostReadinessUrl` for an active debug session. A result of
 `{ "ready": true }` confirms either the readiness string or the configured host endpoint was
@@ -158,8 +156,7 @@ The extension reads configuration from VS Code settings under `esimcp.*`. Use di
 | `esimcp.maxOutputLines` | number | 10000 | Max lines kept in output buffer per session |
 | `esimcp.idleTimeoutMs` | number | 300000 | Close idle sessions after this many ms (0 = disabled) |
 | `esimcp.blockedCommands` | string[] | `["rm -rf /"]` | Commands that will be rejected |
-| `esimcp.debugConfigurationName` | string | empty | Default VS Code launch configuration used by `csdevkit.debug.start` |
-| `esimcp.debugReadyString` | string | `Now ready on:` | Text observed in live VS Code shell output by `csdevkit.debug.check.host.readyness` |
+| `esimcp.debugReadyString` | string | `Now ready on:` | Text observed in live VS Code shell or Debug Console output by `csdevkit.debug.check.host.readyness` |
 | `esimcp.debugHostReadinessTimeoutSeconds` | number | 60 | Timeout for `csdevkit.debug.check.host.readyness` in seconds |
 | `esimcp.debugHostReadinessUrl` | string | empty | Optional HTTP or HTTPS endpoint probed while the active debug session starts |
 | `esimcp.msAccessServerCommand` | string | `dotnet` | Executable used to start the Access MCP server |
@@ -168,8 +165,6 @@ The extension reads configuration from VS Code settings under `esimcp.*`. Use di
 | `esimcp.msAccessServerWorkingDirectory` | string | workspace root | Working directory for the Access MCP process |
 | `esimcp.msAccessDatabasePath` | string | empty | Optional path passed through `ACCESS_DATABASE_PATH` |
 | `esimcp.msAccessTimeoutMs` | number | 120000 | Timeout for Access MCP requests in milliseconds |
-
-For debugging, an explicit `configurationName` supplied as the first argument to `csdevkit.debug.start` takes precedence over this setting. If neither is supplied, `testName` is used when present; otherwise EsiMCP creates a debug configuration from `fileFullPath`. `csdevkit.debug.start` receives its parameter object inside the positional `arguments` array and reports debugger attachment; use `csdevkit.debug.check.host.readyness` separately for host readiness.
 
 Use `csdevkit.debug.wait.for.event` with one parameter object inside `arguments` to wait for debugger state changes. A paused exception event includes DAP-provided exception details when the adapter supports `exceptionInfo`; the agent must resume a paused host before starting browser or HTTP validation.
 
@@ -285,13 +280,11 @@ This commonly happens with commands that produce heavy TUI output (progress bars
 3. Commands execute in real VS Code terminals using the Shell Integration API
 4. Output is stored in circular buffers with pagination support for efficient reading
 
-## Latest Changes (1.0.31)
+## Latest Changes (2.0.5)
 
-- Added the `MS-Access-mcp` submodule and configurable stdio bridge
-- Added `msaccess_list_commands` and `msaccess_execute_command`
-- Forwarded Access MCP resources and prompt templates
-- Advertised `tools`, `resources`, and `prompts` capabilities during initialization
-- Added Access server and database path configuration
+- Exposed all installed C# Dev Kit manifest commands with per-command invocation syntax
+- Routed debug startup through C# Dev Kit `fileLaunch` and `projectDebugLaunch` while preserving readiness tracking
+- Removed the obsolete virtual launch command; Esi.Web uses C# Dev Kit `fileLaunch`
 
 See [CHANGELOG.md](CHANGELOG.md) for full history.
 

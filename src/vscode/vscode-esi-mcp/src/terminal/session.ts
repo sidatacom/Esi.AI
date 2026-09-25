@@ -127,9 +127,8 @@ export class TerminalSession {
 
     const outputStartIndex = this.outputBuffer.lines.length;
 
-    this.terminal.sendText(command, true);
-
     if (!waitForCompletion) {
+      this.terminal.sendText(command, true);
       return {
         commandId,
         output: "(command sent, not waiting for completion)",
@@ -139,12 +138,14 @@ export class TerminalSession {
       };
     }
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       let resolved = false;
+      let endListener: vscode.Disposable | undefined;
 
       const timeoutHandle = setTimeout(() => {
         if (resolved) return;
         resolved = true;
+        endListener?.dispose();
 
         if (this.currentCommand) {
           this.currentCommand.timedOut = true;
@@ -168,13 +169,13 @@ export class TerminalSession {
       }, timeoutMs);
 
       if (vscode.window.onDidEndTerminalShellExecution) {
-        const disposable = vscode.window.onDidEndTerminalShellExecution(
+        endListener = vscode.window.onDidEndTerminalShellExecution(
           (event) => {
             if (event.terminal !== this.terminal || resolved) return;
 
             resolved = true;
             clearTimeout(timeoutHandle);
-            disposable.dispose();
+            endListener?.dispose();
 
             const output = this.outputBuffer.lines
               .slice(outputStartIndex)
@@ -217,6 +218,16 @@ export class TerminalSession {
             }
           }, this.timing.completionSettleMs);
         }, this.timing.completionPollIntervalMs);
+      }
+
+      try {
+        this.terminal.sendText(command, true);
+      } catch (error) {
+        if (resolved) return;
+        resolved = true;
+        clearTimeout(timeoutHandle);
+        endListener?.dispose();
+        reject(error);
       }
     });
   }

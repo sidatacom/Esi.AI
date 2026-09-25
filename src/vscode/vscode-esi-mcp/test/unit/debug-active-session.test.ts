@@ -7,7 +7,6 @@ const mockState = vi.hoisted(() => ({
   taskEndListeners: [] as Array<(event: { execution: { task: { name: string } }; exitCode?: number }) => void>,
   tasks: [] as Array<{ name: string }>,
   trackerFactory: undefined as { createDebugAdapterTracker: (session: unknown) => { onDidSendMessage: (message: { type: string; event?: string; body?: { output?: unknown } }) => void } } | undefined,
-  resolveStart: undefined as ((started?: boolean) => void) | undefined,
 }));
 
 vi.mock("vscode", () => ({
@@ -71,7 +70,6 @@ describe("DebugManager active session", () => {
     mockState.taskEndListeners.length = 0;
     mockState.tasks.length = 0;
     mockState.trackerFactory = undefined;
-    mockState.resolveStart = undefined;
   });
 
   it("returns the active session ID", () => {
@@ -97,12 +95,6 @@ describe("DebugManager active session", () => {
       "Now ready on: http://localhost:7010",
     );
     manager.dispose();
-  });
-
-  it("rejects a start when a debug session is already active", async () => {
-    mockState.activeDebugSession = { id: "session-123", name: "Esi.Web .NET Server" };
-
-    await expect(new DebugManager().startDebugging({ workingDirectory: "C:/workspace", configurationName: "Esi.Web .NET Server" })).resolves.toEqual({ started: false, sessionId: null });
   });
 
   it("waits for the requested session to terminate", async () => {
@@ -162,54 +154,4 @@ describe("DebugManager active session", () => {
     expect(vscode.debug.startDebugging).toHaveBeenCalledWith(oldSession.workspaceFolder, oldSession.configuration);
   });
 
-  it("rejects a second start while the first start is in progress", async () => {
-    const manager = new DebugManager();
-    const input = { workingDirectory: "C:/workspace", configurationName: "Esi.Web .NET Server" };
-    const onAcceptedStart = vi.fn();
-    const onStarted = vi.fn();
-    const onEnd = vi.fn();
-    const firstStart = manager.startDebugging(input, { onAcceptedStart, onStarted, onEnd });
-
-    await Promise.resolve();
-    const secondOnAcceptedStart = vi.fn();
-    const secondOnEnd = vi.fn();
-    await expect(manager.startDebugging(input, { onAcceptedStart: secondOnAcceptedStart, onEnd: secondOnEnd })).resolves.toEqual({ started: false, sessionId: null });
-    expect(onAcceptedStart).toHaveBeenCalledOnce();
-    expect(secondOnAcceptedStart).not.toHaveBeenCalled();
-    expect(secondOnEnd).not.toHaveBeenCalled();
-
-    mockState.resolveStart?.();
-    await expect(firstStart).resolves.toEqual({ started: true, sessionId: "session-started" });
-    expect(onEnd).toHaveBeenCalledOnce();
-    expect(onStarted).toHaveBeenCalledWith({ id: "session-started", name: "Esi.Web .NET Server" });
-  });
-
-  it("returns a started session when VS Code uses the runtime terminal name", async () => {
-    const vscode = await import("vscode");
-    vi.mocked(vscode.debug.startDebugging).mockImplementationOnce(async () => {
-      const session = { id: "session-runtime-name", name: "Esi.Web.dll" };
-      mockState.activeDebugSession = session;
-      mockState.startListeners.slice().forEach((listener) => listener(session));
-      return true;
-    });
-
-    await expect(new DebugManager().startDebugging({
-      workingDirectory: "C:/workspace",
-      configurationName: "Esi.Web .NET Server",
-    })).resolves.toEqual({ started: true, sessionId: "session-runtime-name" });
-  });
-
-  it("runs the lifecycle end callback when an accepted start fails", async () => {
-    const manager = new DebugManager();
-    const input = { workingDirectory: "C:/workspace", testName: "Esi.Web startup" };
-    const onAcceptedStart = vi.fn();
-    const onEnd = vi.fn();
-    const vscode = await import("vscode");
-    vi.mocked(vscode.commands.executeCommand).mockRejectedValueOnce(new Error("startup failed"));
-    const start = manager.startDebugging(input, { onAcceptedStart, onEnd });
-
-    await expect(start).rejects.toThrow("startup failed");
-    expect(onAcceptedStart).toHaveBeenCalledOnce();
-    expect(onEnd).toHaveBeenCalledOnce();
-  });
 });

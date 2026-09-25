@@ -25,7 +25,14 @@ const mockState = vi.hoisted(() => ({
   onDidCloseTerminal: vi.fn(() => ({ dispose: vi.fn() })),
   onDidOpenTerminal: vi.fn(() => ({ dispose: vi.fn() })),
   onDidStartTerminalShellExecution: vi.fn(() => ({ dispose: vi.fn() })),
-  onDidEndTerminalShellExecution: vi.fn(() => ({ dispose: vi.fn() })),
+  shellEndListeners: [] as Array<(event: { terminal: unknown; exitCode?: number }) => void>,
+  onDidEndTerminalShellExecution: vi.fn((listener: (event: { terminal: unknown; exitCode?: number }) => void) => {
+    mockState.shellEndListeners.push(listener);
+    return { dispose: () => {
+      const index = mockState.shellEndListeners.indexOf(listener);
+      if (index >= 0) mockState.shellEndListeners.splice(index, 1);
+    } };
+  }),
   debugEventListeners: [] as Array<(event: DebugEvent) => void>,
 }));
 
@@ -64,6 +71,7 @@ vi.mock("vscode", () => ({
 }));
 
 import { SessionManager } from "../../src/terminal/session-manager.js";
+import { TerminalSession } from "../../src/terminal/session.js";
 
 describe("SessionManager terminal recovery", () => {
   beforeEach(() => {
@@ -73,7 +81,27 @@ describe("SessionManager terminal recovery", () => {
     mockState.debugHostReadinessTimeoutSeconds = 60;
     mockState.debugHostReadinessUrl = "";
     mockState.debugEventListeners.length = 0;
+    mockState.shellEndListeners.length = 0;
     vi.clearAllMocks();
+  });
+
+  it("resolves waitForCompletion when shell execution ends during sendText", async () => {
+    const terminal = new MockTerminal("MCP: execution");
+    terminal.sendText.mockImplementation(() => {
+      const event = { terminal, exitCode: 0 };
+      for (const listener of [...mockState.shellEndListeners]) listener(event);
+    });
+    const session = new TerminalSession(
+      { name: "execution" },
+      100,
+      { completionPollIntervalMs: 10, completionSettleMs: 5 },
+      terminal as never,
+    );
+
+    const result = await session.execute("Write-Output complete", 100, true);
+
+    expect(result).toMatchObject({ exitCode: 0, timedOut: false });
+    mockState.shellEndListeners.length = 0;
   });
 
   it("recovers only EsiMCP-owned terminals and closes the adopted terminal", () => {
@@ -127,52 +155,7 @@ describe("SessionManager terminal recovery", () => {
     manager.dispose();
   });
 
-  it("resolves when the configured ready string appears in terminal output", async () => {
-    const manager = new SessionManager();
-    const waiter = manager.waitForTerminalOutput("ready", 1000);
-    const listener = mockState.onDidStartTerminalShellExecution.mock.calls[0]?.[0] as ((event: {
-      execution: { read: () => AsyncIterable<string> };
-    }) => Promise<void>);
-
-    await listener({
-      execution: {
-        async *read() {
-          yield "service is ";
-          yield "ready now";
-        },
-      },
-    });
-
-    await expect(waiter.promise).resolves.toBeUndefined();
-    manager.dispose();
-  });
-
-  it("uses the managed terminal buffer instead of competing for its output stream", async () => {
-    mockState.includeAllTerminals = true;
-    const terminal = new MockTerminal("MCP: web");
-    mockState.terminals.push(terminal);
-
-    const manager = new SessionManager();
-    const waiter = manager.waitForTerminalOutput("Now ready on:", 1000);
-    const listener = mockState.onDidStartTerminalShellExecution.mock.calls[0]?.[0] as (event: {
-      terminal: MockTerminal;
-      execution: { read: () => AsyncIterable<string> };
-    }) => Promise<void>;
-
-    await listener({
-      terminal,
-      execution: {
-        async *read() {
-          yield "Now ready on: https://localhost:5012";
-        },
-      },
-    });
-
-    await expect(waiter.promise).resolves.toBeUndefined();
-    manager.dispose();
-  });
-
-  it("binds terminal readiness to the debug session created by debug.start", async () => {
+  it("binds terminal readiness to a C# Dev Kit-launched debug session", async () => {
     const manager = new SessionManager();
     const openedTerminal = new MockTerminal("Esi.Web.dll");
     const openListener = mockState.onDidOpenTerminal.mock.calls[0]?.[0] as ((terminal: MockTerminal) => void);

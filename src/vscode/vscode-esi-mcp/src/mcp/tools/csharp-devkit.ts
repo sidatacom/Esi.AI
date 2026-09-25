@@ -5,17 +5,15 @@ import { z } from "zod";
 import type { DebugManager } from "../../debug/manager.js";
 import type { SessionManager } from "../../terminal/session-manager.js";
 import type { McpToolResponse } from "../../types/index.js";
-import { csharpDevKitArgumentsSchema, csharpDevKitCommandSchema, csharpDevKitEmptySchema, csharpDevKitNoArgumentsSchema, csharpDevKitReadinessArgumentsSchema, csharpDevKitRestartArgumentsSchema, toJsonSchema } from "./schemas.js";
+import { csharpDevKitArgumentsSchema, csharpDevKitCommandSchema, csharpDevKitEmptySchema, csharpDevKitListCommandsSchema, csharpDevKitNoArgumentsSchema, csharpDevKitReadinessArgumentsSchema, csharpDevKitRestartArgumentsSchema, toJsonSchema } from "./schemas.js";
 import { DEBUG_TOOLS, handleActiveDebugSession, handleDebugHostReadiness, handleRestartDebugSession, handleStopDebugSession } from "./debug.js";
 
 const CSHARP_DEV_KIT_EXTENSION_ID = "ms-dotnettools.csdevkit";
-const ALLOWED_CSHARP_DEV_KIT_COMMANDS = new Set([
+const DEBUG_LAUNCH_COMMANDS = new Set([
+  "csdevkit.debug.fileLaunch",
   "csdevkit.debug.projectDebugLaunch",
-  "csdevkit.debug.noDebugProjectLaunch",
-  "csdevkit.debug.hotReload",
-  "csdevkit.debug.showHotReloadPanel",
-  "csdevkit.debug.selectStartupProject",
 ]);
+let debugLaunchInProgress = false;
 const ADDITIONAL_CSHARP_DEV_KIT_COMMANDS: CSharpDevKitCommand[] = [
   {
     command: "csdevkit.debug.active.session",
@@ -86,6 +84,10 @@ const DEBUG_DEVKIT_COMMANDS: CSharpDevKitCommand[] = DEBUG_TOOLS
       ? csharpDevKitNoArgumentsSchema
       : z.array(tool.schema).length(1)),
   }));
+const VIRTUAL_DEBUG_COMMANDS = new Set([
+  ...ADDITIONAL_CSHARP_DEV_KIT_COMMANDS,
+  ...DEBUG_DEVKIT_COMMANDS,
+].map((command) => command.command));
 
 type CSharpDevKitPackageJson = {
   version?: string;
@@ -146,7 +148,7 @@ async function getCSharpDevKitCommands(): Promise<CSharpDevKitCommand[]> {
   }
 
   const declaredCommands = manifestCommands
-    .filter((item): item is { command: string; title?: unknown } => typeof item.command === "string" && ALLOWED_CSHARP_DEV_KIT_COMMANDS.has(item.command))
+    .filter((item): item is { command: string; title?: unknown } => typeof item.command === "string")
     .map((item) => ({
       command: item.command,
       title: typeof item.title === "string" && item.title.startsWith("%")
@@ -155,19 +157,45 @@ async function getCSharpDevKitCommands(): Promise<CSharpDevKitCommand[]> {
       keyboardShortcuts: keyboardShortcuts.get(item.command) ?? [],
       menuContexts: menuContexts.get(item.command) ?? [],
       registered: registeredCommands.has(item.command),
-      argumentsSchema: toJsonSchema(csharpDevKitArgumentsSchema),
+      argumentsSchema: DEBUG_LAUNCH_COMMANDS.has(item.command)
+        ? toJsonSchema(z.array(z.object({ scheme: z.literal("file"), fsPath: z.string().min(1) }).passthrough()).length(1))
+        : toJsonSchema(csharpDevKitArgumentsSchema),
     }));
 
   return [...declaredCommands, ...ADDITIONAL_CSHARP_DEV_KIT_COMMANDS, ...DEBUG_DEVKIT_COMMANDS];
 }
 
-async function listCommands(): Promise<McpToolResponse> {
+function getInvocationSyntax(command: CSharpDevKitCommand): string {
+  if (command.command === "csdevkit.debug.fileLaunch") {
+    return `Call csharp_devkit_execute_command with commandId "${command.command}" and arguments containing the file URI object for the target project, for example [{"scheme":"file","fsPath":"<absolute Esi.Web .csproj path>"}]. The C# Dev Kit resolves the project launch settings, including its configured port.`;
+  }
+  if (command.command === "csdevkit.debug.projectDebugLaunch") {
+    return `Call csharp_devkit_execute_command with commandId "${command.command}" and arguments containing the project URI object, for example [{"scheme":"file","fsPath":"<absolute .csproj path>"}].`;
+  }
+  if (VIRTUAL_DEBUG_COMMANDS.has(command.command)) {
+    return command.argumentsSchema.maxItems === 0
+      ? `Call csharp_devkit_execute_command with commandId "${command.command}" and arguments: [].`
+      : `Call csharp_devkit_execute_command with commandId "${command.command}" and arguments: [<one object matching this command's argumentsSchema>].`;
+  }
+  return `Call csharp_devkit_execute_command with commandId "${command.command}" and arguments: [<positional arguments required by this command>]. The Dev Kit manifest does not publish a command-specific arguments schema; omit arguments or use [] when no arguments are required.`;
+}
+
+async function listCommands(params: unknown): Promise<McpToolResponse> {
+  const input = csharpDevKitListCommandsSchema.parse(params ?? {});
   const extension = getCSharpDevKitExtension();
+  const commands = await getCSharpDevKitCommands();
+  const matchingCommands = input.commandId
+    ? commands.filter((command) => command.command === input.commandId)
+    : commands;
+  if (input.commandId && matchingCommands.length === 0) {
+    throw new Error(`Command '${input.commandId}' is not declared by the C# Dev Kit or EsiMCP`);
+  }
+
   return text({
     extensionId: CSHARP_DEV_KIT_EXTENSION_ID,
     version: extension.packageJSON.version,
     active: extension.isActive,
-    commands: await getCSharpDevKitCommands(),
+    commands: matchingCommands.map((command) => ({ ...command, invocationSyntax: getInvocationSyntax(command) })),
   });
 }
 
@@ -227,11 +255,71 @@ async function executeHotReloadSilently(command: string, argumentsValue: unknown
   }
 }
 
+async function executeDebugLaunchCommand(
+  command: string,
+  resolveArguments: () => Promise<unknown[]>,
+  sessionManager?: SessionManager,
+): Promise<McpToolResponse> {
+  if (debugLaunchInProgress || vscode.debug.activeDebugSession) {
+    return text({ commandId: command, started: false, sessionId: null });
+  }
+
+  debugLaunchInProgress = true;
+  let startListener: vscode.Disposable | undefined;
+  let readinessPrepared = false;
+  let readinessBound = false;
+
+  try {
+    const argumentsValue = await resolveArguments();
+    sessionManager?.prepareDebugHostReadiness();
+    readinessPrepared = sessionManager !== undefined;
+    let startedSession: vscode.DebugSession | undefined;
+    let resolveStartedSession: (session: vscode.DebugSession) => void = () => undefined;
+    const startedSessionPromise = new Promise<vscode.DebugSession>((resolve) => {
+      resolveStartedSession = resolve;
+    });
+    startListener = vscode.debug.onDidStartDebugSession((session) => {
+      startedSession = session;
+      resolveStartedSession(session);
+    });
+    const result = await vscode.commands.executeCommand(command, ...argumentsValue);
+    if (result === false) return text({ commandId: command, result, started: false, sessionId: null });
+
+    const activeSession = vscode.debug.activeDebugSession;
+    let session = startedSession ?? activeSession;
+    if (!session) {
+      const configuredTimeout = vscode.workspace.getConfiguration("esimcp").get<number>("debugStateTimeoutMs", 30000);
+      const timeoutMs = typeof configuredTimeout === "number" && Number.isFinite(configuredTimeout) && configuredTimeout > 0
+        ? configuredTimeout
+        : 30000;
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        session = await Promise.race([
+          startedSessionPromise,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error(`Timed out after ${timeoutMs}ms waiting for C# Dev Kit command '${command}' to start a debug session`)), timeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timeout) clearTimeout(timeout);
+      }
+    }
+
+    sessionManager?.bindDebugHostReadiness(session);
+    readinessBound = true;
+    return text({ commandId: command, result, started: true, sessionId: session.id });
+  } finally {
+    startListener?.dispose();
+    if (readinessPrepared && !readinessBound) sessionManager?.cancelPendingDebugHostReadiness();
+    debugLaunchInProgress = false;
+  }
+}
+
 async function executeCommand(params: unknown, debugManager?: DebugManager, sessionManager?: SessionManager): Promise<McpToolResponse> {
   const input = csharpDevKitCommandSchema.parse(params);
   const command = (await getCSharpDevKitCommands()).find((item) => item.command === input.commandId);
   if (!command) {
-    throw new Error(`Command '${input.commandId}' is not allowed by the EsiMCP C# Dev Kit wrapper`);
+    throw new Error(`Command '${input.commandId}' is not declared by the C# Dev Kit or exposed as an EsiMCP virtual command`);
   }
 
   if (input.commandId === "csdevkit.debug.active.session") {
@@ -278,9 +366,14 @@ async function executeCommand(params: unknown, debugManager?: DebugManager, sess
     throw new Error(`C# Dev Kit command '${command.command}' is not registered in the current workspace`);
   }
 
-  const argumentsValue = input.commandId === "csdevkit.debug.projectDebugLaunch"
-    ? await resolveProjectLaunchArguments(input.arguments)
-    : input.arguments ?? [];
+  if (DEBUG_LAUNCH_COMMANDS.has(command.command)) {
+    const resolveArguments = input.commandId === "csdevkit.debug.projectDebugLaunch"
+      ? () => resolveProjectLaunchArguments(input.arguments)
+      : async () => input.arguments ?? [];
+    return executeDebugLaunchCommand(command.command, resolveArguments, sessionManager);
+  }
+
+  const argumentsValue = input.arguments ?? [];
   const result = input.commandId === "csdevkit.debug.hotReload"
     ? await executeHotReloadSilently(command.command, argumentsValue)
     : await vscode.commands.executeCommand(command.command, ...argumentsValue);
@@ -290,9 +383,9 @@ async function executeCommand(params: unknown, debugManager?: DebugManager, sess
 export const CSHARP_DEVKIT_TOOLS: CSharpDevKitToolDefinition[] = [
   {
     name: "csharp_devkit_list_commands",
-    description: "EsiMCP C# Dev Kit: list commands declared by the installed Microsoft C# Dev Kit extension",
-    schema: csharpDevKitEmptySchema,
-    handler: async () => listCommands(),
+    description: "EsiMCP C# Dev Kit: list all commands declared by the installed extension, or query one command's invocation syntax with commandId",
+    schema: csharpDevKitListCommandsSchema,
+    handler: async (params) => listCommands(params),
   },
   {
     name: "csharp_devkit_execute_command",

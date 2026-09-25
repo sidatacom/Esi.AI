@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.5] - 2026-09-25
+
+### Added
+- Expose every installed C# Dev Kit manifest command with per-command invocation syntax
+- Preserve readiness tracking and return the started session ID for both C# Dev Kit launch commands
+
+### Removed
+- **Breaking:** Remove `csdevkit.debug.start`; use `csdevkit.debug.fileLaunch` for Esi.Web and `csdevkit.debug.projectDebugLaunch` for Esi.AI Studio
+- Remove the unused `esimcp.debugReadyTimeoutMs` and `esimcp.debugConfigurationName` settings
+
 ## [2.0.0] - 2026-09-24
 
 ### Removed
