@@ -270,25 +270,25 @@ Der Provider schreibt begrenzte SSE-Traces in den Output Channel und standardmä
 
 ## Packaging und Release
 
-Die Provider-Version ist aktuell `0.1.24`. Jede Verhaltensänderung am Provider erfordert eine neue Patch-Version. Für einen Release müssen synchronisiert werden:
+Die aktuelle Provider-Version ist in `src/vscode/vscode-esi-ai-studio/package.json` festgelegt. Jede Verhaltensänderung am Provider erfordert eine neue Patch-Version. Für einen Release müssen synchronisiert werden:
 
 - `package.json`
 - `package-lock.json`
 - generiertes `dist/extension.js`
 - erzeugtes VSIX-Paket
 
-Anschließend wird das neu versionierte VSIX über `scripts/install.sh` beziehungsweise `npm run install:local` installiert. Nach der Installation muss der VS-Code-Window beziehungsweise der Extension Host neu geladen werden, bevor Modellregistrierung oder Fähigkeiten geprüft werden.
+Anschließend wird das neu versionierte VSIX über `scripts/install.sh` beziehungsweise `npm run install:local` installiert. Nach der Installation muss das VS-Code-Fenster beziehungsweise der Extension Host neu geladen werden, bevor Modellregistrierung oder Fähigkeiten geprüft werden.
 
-Die Studio-Anwendung selbst darf nur über die überwachte VS-Code-Debugkonfiguration beziehungsweise die Task-Kette mit aktivem Watchdog gestartet werden. Für diese reine Dokumentationsänderung war kein Studio-Neustart erforderlich.
+Der Studio-Debug- und Hot-Reload-Lifecycle ist in [Studio-Entwicklung](development/studio-development.md) dokumentiert. Diese Provider-Anleitung ersetzt diesen Ablauf nicht.
 
 ## Validierung
 
-Die bisherige Implementierung wurde mit folgenden Prüfungen abgesichert:
+Der damals beschriebene Provider-Stand wurde mit folgenden Prüfungen abgesichert; Versionsnummern und Testzahlen sind ein historischer Snapshot:
 
 - 31 fokussierte Tests: `31 passed, 0 failed`
 - direkte SSE-Anfrage ohne Tools erfolgreich
 - direkte SSE-Anfrage mit strukturiertem Tool-Call erfolgreich
-- Provider-Bundle gebaut und als Version `0.1.24` installiert
+- Provider-Bundle gebaut und als damals aktuelle Version installiert
 - `git diff --check` ohne Fehler
 - Provider-Trace und Serverpfad für `[DONE]`, SSE-Fehler und Cancellation geprüft
 

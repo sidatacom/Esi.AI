@@ -14,6 +14,8 @@ public sealed class ModelConfigurationEntity
 
     public ConfigurationBackend Backend { get; set; } = ConfigurationBackend.Llama;
 
+    public string? BackendVariantId { get; set; }
+
     public bool IsDefault { get; set; }
 
     public bool AutoLaunch { get; set; } = true;

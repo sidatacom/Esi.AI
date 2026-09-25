@@ -502,6 +502,20 @@ public sealed class OpenAiCompatibleControllerTests
     }
 
     [TestMethod]
+    public void Prepare_WhenLoadedModelHasVariant_PreservesVariantIdentity()
+    {
+        using var runtime = new ModelRuntime();
+        var middleware = new OpenAiCompatibleBackendMiddleware(runtime, new InferenceScheduler());
+        var status = new ModelLoadStatus("/models/model.gguf", "CUDA", 0, 4096, 0, 0, [], null, string.Empty,
+            new Dictionary<string, float>(), true, [], "llama.cuda12");
+        var request = new OpenAiChatRequest(null, [new OpenAiChatMessage("user", "Hi")]);
+
+        var normalized = middleware.Prepare(request, status);
+
+        Assert.AreEqual("llama.cuda12", normalized.BackendVariantId);
+    }
+
+    [TestMethod]
     public void Prepare_WhenManyToolsAreProvided_PreservesEveryToolDefinition()
     {
         using var runtime = new ModelRuntime();

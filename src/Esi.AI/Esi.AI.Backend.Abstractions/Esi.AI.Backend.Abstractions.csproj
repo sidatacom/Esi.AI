@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Esi.AI.Backend.Abstractions</RootNamespace>
+    <PackageId>Esi.AI.Backend.Abstractions</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Engine-neutral runtime contracts for Esi.AI backend modules.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Esi.AI.Models/Esi.AI.Models.csproj" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+</Project>

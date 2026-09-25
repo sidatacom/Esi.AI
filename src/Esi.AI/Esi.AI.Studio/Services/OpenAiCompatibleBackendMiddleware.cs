@@ -50,7 +50,8 @@ public sealed class OpenAiCompatibleBackendMiddleware(
             structuredMessages,
             messages,
             tools,
-            ToGenerationOptions(request, tools, string.Equals(status.Backend, "OpenVINO", StringComparison.OrdinalIgnoreCase)));
+            ToGenerationOptions(request, tools, string.Equals(status.Backend, "OpenVINO", StringComparison.OrdinalIgnoreCase)),
+            BackendVariantId: status.BackendVariantId);
     }
 
     /// <summary>Runs a normalized request through the selected backend and preserves streaming semantics.</summary>
@@ -131,6 +132,9 @@ public sealed class OpenAiCompatibleBackendMiddleware(
     {
         try
         {
+            if (!string.IsNullOrWhiteSpace(request.BackendVariantId) && modelRuntime.HasBackendRuntime(request.BackendVariantId))
+                return await modelRuntime.GenerateBackendAsync(request, onDelta, cancellationToken).ConfigureAwait(false);
+
             return request.Backend switch
             {
                 "OpenVINO" => await GenerateOpenVinoAsync(request, onDelta, cancellationToken).ConfigureAwait(false),

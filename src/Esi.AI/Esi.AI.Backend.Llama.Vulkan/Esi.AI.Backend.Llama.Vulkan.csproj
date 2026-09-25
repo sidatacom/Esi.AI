@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Esi.AI.Backend.Llama.Vulkan</RootNamespace>
+    <PackageId>Esi.AI.Backend.Llama.Vulkan</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Vulkan inference backend module for Esi.AI using LLamaSharp.</Description>
+    <PackageTags>esi-ai;backend;llama;vulkan;linux-x64</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Esi.AI.Backend.Abstractions/Esi.AI.Backend.Abstractions.csproj" />
+    <ProjectReference Include="../Esi.AI.Models/Esi.AI.Models.csproj" />
+    <ProjectReference Include="../../../origins/sidatacom/LLamaSharp/LLama/LLamaSharp.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../../origins/sidatacom/LLamaSharp/LLama/runtimes/deps/vulkan/*.so"
+          Link="runtimes/linux-x64/native/vulkan/%(Filename)%(Extension)"
+          Pack="true"
+          PackagePath="runtimes/linux-x64/native/vulkan/%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+    <None Include="../../../origins/sidatacom/LLamaSharp/LLama/runtimes/deps/avx2/libggml-cpu.so"
+          Link="runtimes/linux-x64/native/vulkan/libggml-cpu.so"
+          Pack="true"
+          PackagePath="runtimes/linux-x64/native/vulkan/libggml-cpu.so"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

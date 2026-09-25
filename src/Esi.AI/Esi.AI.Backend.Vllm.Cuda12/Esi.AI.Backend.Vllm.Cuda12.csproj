@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Esi.AI.Backend.Vllm.Cuda12</RootNamespace>
+    <PackageId>Esi.AI.Backend.Vllm.Cuda12</PackageId>
+    <Version>0.1.0</Version>
+    <Description>CUDA 12 vLLM inference backend module for Esi.AI.</Description>
+    <PackageTags>esi-ai;backend;vllm;cuda;cuda12;linux-x64</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Esi.AI.Backend.Abstractions/Esi.AI.Backend.Abstractions.csproj" />
+    <ProjectReference Include="../Esi.AI.Models/Esi.AI.Models.csproj" />
+    <PackageReference Include="Google.Protobuf" Version="3.30.2" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.76.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.76.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="../Esi.AI.Models/Grpc/vllm_inference.proto" GrpcServices="Client" />
+    <None Update="Python/**/*"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Pack="true"
+          PackagePath="contentFiles/any/any/Python/%(RecursiveDir)%(Filename)%(Extension)"
+          PackageCopyToOutput="true" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Esi.AI.Backend.Vllm.Cuda12.Tests" />
+  </ItemGroup>
+
+</Project>

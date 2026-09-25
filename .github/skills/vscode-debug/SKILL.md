@@ -11,7 +11,9 @@ Use this workflow for every debug-session lifecycle operation.
 
 Use only `csharp_devkit_list_commands` and `csharp_devkit_execute_command` for C# Dev Kit and debug lifecycle operations. Use only `vscode_terminal_list_commands` and `vscode_terminal_execute_command` for visible VS Code terminal operations. Do not use legacy `mcp_esimcp_debug_*`, `mcp_esimcp_terminal_*`, or `mcp_esimcp_csharp_devkit_*` names.
 
-Esi.AI Studio is a .NET 10 Blazor Web App. Start it through the C# Dev Kit Run and Debug configuration shown by VS Code: `C#: Esi.AI.Studio [Default Configuration]`. Select or verify that configuration in the Run and Debug configuration picker before invoking the dynamic project launch (`csdevkit.debug.projectDebugLaunch` / **Start New Instance**). Do not require `.vscode/launch.json` or `.vscode/tasks.json` for the normal workflow.
+Esi.AI Studio is a .NET 10 Blazor Web App. For automated starts, invoke `csdevkit.debug.projectDebugLaunch` with the explicit Studio project context as its first positional argument. Through EsiMCP, pass a context object containing `path`; the installed C# Dev Kit converts it to a VS Code file URI. This is the programmatic project-launch action; it does not require a pre-existing `launch.json` or a previously selected in-memory debug configuration. For a manual start, right-click the Studio project in Solution Explorer and choose **Start New Instance**. Alternatively, use **Debug: Select and Start Debugging** or **Show all automatic debug configurations** in the Debug view to create/select a dynamic C# configuration before pressing F5. Microsoft documents these UI paths at [C# debugging in VS Code](https://code.visualstudio.com/docs/csharp/debugging).
+
+Do not confuse `csdevkit.debug.selectStartupProject` with selecting a Run and Debug configuration: it only selects the startup project. EsiMCP passes JSON arguments to the C# Dev Kit command unchanged. Pass an array containing a command-context object with `path` set to the absolute `.csproj` path. In multi-project workspaces, always pass it explicitly; without arguments EsiMCP can only resolve a project from the active editor or from a workspace containing exactly one project.
 
 ## Session lifecycle
 
@@ -19,9 +21,9 @@ Esi.AI Studio is a .NET 10 Blazor Web App. Start it through the C# Dev Kit Run a
 2. If a debug session is active and a fresh session is required, stop the existing session first with `csharp_devkit_execute_command` using `commandId: "csdevkit.debug.stop"`. Never start a second session on top of an existing one.
 3. Confirm that the previous session has stopped and that its application process or debug port is no longer owned by the old session.
 4. Before every debug start or restart, build `src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj` successfully. Do not launch or restart the debugger when the build exits non-zero; report the build diagnostics and fix or request resolution first.
-5. In the Run and Debug configuration picker, select `C#: Esi.AI.Studio [Default Configuration]`; do not launch with an undefined, stale, or unrelated target.
-6. Start exactly one server debug session with `csdevkit.debug.projectDebugLaunch` and the Studio server project selected.
-7. Wait for the debugger to attach, verify an active debug-session ID with `commandId: "csdevkit.debug.active.session"`, invoke `csharp_devkit_execute_command` using `commandId: "csdevkit.debug.check.host.readyness"`, and verify the shared browser page at `http://localhost:7010`.
+5. Start exactly one server debug session with `csdevkit.debug.projectDebugLaunch` and the explicit Studio project context below, or use **Start New Instance** in Solution Explorer.
+6. Do not treat command dispatch as a running session. Verify a non-null ID with `csdevkit.debug.active.session`; if it is `null`, inspect the C# Dev Kit/Debug Console output and fix the selected project or VS Code launch context before retrying.
+7. Once an active session exists, call `csdevkit.debug.check.host.readyness` and verify the shared browser page at `http://localhost:7010`.
 8. Reuse the existing shared browser page when possible, reload the target route, and verify the behavior that motivated the debug session.
 9. For WebAssembly breakpoints, verify the `inspectUri` in the server launch profile and use the `blazorwasm` attach configuration only when an explicit browser attach is needed.
 10. At the end of the task, leave the single intended session running only when further interactive verification is expected; otherwise stop it cleanly.
@@ -39,29 +41,24 @@ When the active session only needs to be refreshed, execute `csdevkit.debug.rest
 
 When an agent must invoke C# Dev Kit programmatically through the EsiMCP server, use `csharp_devkit_list_commands` and `csharp_devkit_execute_command` for C# Dev Kit commands, including the virtual `active.session`, `check.host.readyness`, `stop`, and `restart` commands.
 
-If `csdevkit.debug.projectDebugLaunch` fails with a missing URI/scheme or an undefined launch target, treat that as a broken VS Code/C# Dev Kit context. Inspect and repair the active Run and Debug configuration and startup project, then retry the same C# Dev Kit command. Never substitute `dotnet run`, a manually created launch configuration, or another server process as a workaround.
+If `csdevkit.debug.projectDebugLaunch` reports a missing URI/scheme, verify the EsiMCP argument is an array containing `{ "path": "<absolute .csproj path>" }`; the installed C# Dev Kit converts this context to a VS Code URI. If the command is dispatched but `csdevkit.debug.active.session` remains `null`, the launch has failed: inspect C# Dev Kit output and use **Start New Instance** on the Studio project or **Debug: Select and Start Debugging** to resolve the dynamic launch context. Do not repeatedly dispatch the command, create a launch file, or substitute `dotnet run`/another server process. The automated command was dispatched with this context in the 2026-09-25 verification attempt, but no session or listener appeared; automated launch is not yet verified in this workspace.
 
-### Verified EsiMCP launch invocation
+### EsiMCP Project Launch Invocation
 
-The verified EsiMCP call uses `csharp_devkit_execute_command` with the command ID `csdevkit.debug.projectDebugLaunch` and a serialized VS Code file URI object as its first argument. The URI string alone is not sufficient:
+The EsiMCP wrapper forwards the command's positional arguments unchanged. Pass a command-context object with `path`; do not pass a URI-shaped JSON object with only `scheme` and `fsPath` because it is not a VS Code `Uri` instance:
 
 ```json
 {
 	"commandId": "csdevkit.debug.projectDebugLaunch",
 	"arguments": [
 		{
-			"scheme": "file",
-			"authority": "",
-			"path": "/home/llm/Git/Esi.AI/src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj",
-			"query": "",
-			"fragment": "",
-			"fsPath": "/home/llm/Git/Esi.AI/src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj"
+			"path": "/home/llm/Git/Esi.AI/src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj"
 		}
 	]
 }
 ```
 
-This invocation created the active Studio debug session. Verify success through the active debug-session ID and the shared browser page at `http://localhost:7010`; a command response without an active session or a reachable browser page is not a successful launch. For Hot Reload, use `csdevkit.debug.hotReload` against that active session and `csdevkit.debug.showHotReloadPanel` only to inspect Hot Reload diagnostics.
+The JSON shape above is the EsiMCP wrapper's argument contract, not proof that a launch succeeded. The command ID is exposed by the installed C# Dev Kit manifest; Microsoft's public documentation describes the UI launch paths rather than this internal command payload. The wrapper can infer an omitted project argument from the active editor or from a workspace with exactly one `.csproj`; this workspace has multiple projects, so pass the Studio project explicitly. Verify success through the active debug-session ID and the shared browser page at `http://localhost:7010`; a command response without an active session is not a successful launch. For Hot Reload, use `csdevkit.debug.hotReload` against that active session and `csdevkit.debug.showHotReloadPanel` only to inspect Hot Reload diagnostics.
 
 ### Verified EsiMCP stop invocation
 
@@ -87,7 +84,7 @@ C# Dev Kit 3.20.207 exposes these lifecycle and diagnostic commands through the 
 - `csdevkit.debug.restart`
 
 1. Check the active debug-session ID.
-2. Start with `csdevkit.debug.projectDebugLaunch` and the complete Studio project file URI object shown above.
+2. Start with `csdevkit.debug.projectDebugLaunch` and the Studio project context shown above.
 3. Confirm the active debug-session ID with `csdevkit.debug.active.session`.
 4. Call `csharp_devkit_execute_command` with `{ "commandId": "csdevkit.debug.check.host.readyness", "arguments": [] }`.
 5. For a refresh, call `{ "commandId": "csdevkit.debug.restart", "arguments": [] }`, then query the new active session and run the readiness command again.
@@ -95,9 +92,9 @@ C# Dev Kit 3.20.207 exposes these lifecycle and diagnostic commands through the 
 
 For structured diagnostics, call `{ "commandId": "csdevkit.debug.output.diagnostics", "arguments": [{ "sessionId": "<active-session-id>" }] }`. The response includes `sessionId`, `bufferedCharacters`, `readinessStringSeen`, `output`, and `lastLine`. Use `lastLine` as the concise answer when the user asks for the last Debug Console line; use `output` to investigate the surrounding messages. If no session is active, the command returns `null`, so first call `csdevkit.debug.active.session` and do not infer a console failure from `null`. The readiness command returned `{ "ready": true }`; these are the C# Dev Kit bridge checks, distinct from the legacy EsiMCP host-readiness helper.
 
-### Troubleshooting the missing `scheme` error
+### Troubleshooting a missing launch session
 
-The error `Cannot read properties of undefined (reading 'scheme')` occurs before Studio starts when `csdevkit.debug.projectDebugLaunch` receives a URI string or an incomplete URI object. Pass the complete serialized VS Code file URI object shown above, or select `Esi.AI.Studio` in Solution Explorer and use **Start New Instance**. Do not replace the C# Dev Kit launch with `dotnet run`; after retrying, verify both the active session ID and `{ "ready": true }`.
+The EsiMCP wrapper does not construct VS Code `Uri` instances for explicit arguments. Pass the `{ "path": "<absolute .csproj path>" }` command context so C# Dev Kit can create the URI internally. If that command returns without an active session, the launch is still unsuccessful; use **Start New Instance** on `Esi.AI.Studio` or **Debug: Select and Start Debugging** to choose a dynamic configuration. Do not replace the C# Dev Kit launch with `dotnet run`; after a successful start, verify both the active session ID and `{ "ready": true }`.
 
 ### Verified Razor Hot Reload check
 

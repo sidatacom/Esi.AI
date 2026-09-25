@@ -7,6 +7,7 @@ All notable changes to this project will be documented in this file.
 ### Added
 - Expose every installed C# Dev Kit manifest command with per-command invocation syntax
 - Preserve readiness tracking and return the started session ID for both C# Dev Kit launch commands
+- Validate the `path` command context for C# Dev Kit project launches
 
 ### Removed
 - **Breaking:** Remove the obsolete virtual launch command; use `csdevkit.debug.fileLaunch` for Esi.Web and `csdevkit.debug.projectDebugLaunch` for Esi.AI Studio

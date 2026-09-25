@@ -77,7 +77,8 @@ public sealed record ModelConfiguration(
     DateTime UpdatedAtUtc,
     ConfigurationBackend Backend = ConfigurationBackend.Llama,
     InferenceTimeoutSettings? InferenceTimeout = null,
-    bool AutoLaunch = true);
+    bool AutoLaunch = true,
+    string BackendVariantId = "");
 
 /// <summary>Describes the internal models and persisted configurations available to the application API.</summary>
 public sealed record ApplicationModelCatalog(
@@ -249,6 +250,19 @@ public sealed record ChatGenerationOptions(
     IReadOnlyList<OpenAiToolDefinition>? Tools = null,
     JsonElement? ToolChoice = null);
 
+/// <summary>Contains normalized text, usage, timing, and tool-call data returned by a backend.</summary>
+public sealed record GenerationResult(
+    string Text,
+    int TokenCount,
+    TimeSpan Duration,
+    double TokensPerSecond,
+    int? PromptTokenCount = null,
+    string FinishReason = "stop",
+    IReadOnlyList<OpenAiToolCall>? ToolCalls = null,
+    double? TimeToFirstTokenMs = null,
+    double? PrefillDurationMs = null,
+    double? DecodeDurationMs = null);
+
 public sealed record ChatResponse(string Content);
 
 public sealed record OpenAiChatRequest(
@@ -333,7 +347,8 @@ public sealed record OpenAiBackendChatRequest(
     IReadOnlyList<ChatMessage> Messages,
     IReadOnlyList<OpenAiToolDefinition>? Tools,
     ChatGenerationOptions Options,
-    InferenceTimeoutSettings? InferenceTimeout = null);
+    InferenceTimeoutSettings? InferenceTimeout = null,
+    string BackendVariantId = "");
 
 public sealed record OpenAiChatMessage(
     string Role,
@@ -601,7 +616,8 @@ public sealed record DotLlmLoadRequest(
 /// <summary>Identifies one loaded model and its backend for an application API unload operation.</summary>
 public sealed record ApplicationModelUnloadRequest(
     string ModelPath,
-    [property: JsonConverter(typeof(JsonStringEnumConverter))] ConfigurationBackend Backend);
+    [property: JsonConverter(typeof(JsonStringEnumConverter))] ConfigurationBackend Backend,
+    string BackendVariantId = "");
 
 public sealed record OpenVinoNpuSettings(
     int MaxPromptLength = 1024,
@@ -630,7 +646,8 @@ public sealed record ModelLoadStatus(
     string LoadLog,
     IReadOnlyDictionary<string, float> VulkanDeviceWeights,
     bool IsModelLoaded,
-    IReadOnlyList<LoadedModelStatus> LoadedModels);
+    IReadOnlyList<LoadedModelStatus> LoadedModels,
+    string BackendVariantId = "");
 
 public sealed record DeviceStatus(
     string DeviceId,
@@ -657,4 +674,5 @@ public sealed record LoadedModelStatus(
     double? CpuModelBufferMiB,
     string LoadLog = "",
     bool IsLoading = false,
-    bool IsModelLoaded = true);
+    bool IsModelLoaded = true,
+    string BackendVariantId = "");

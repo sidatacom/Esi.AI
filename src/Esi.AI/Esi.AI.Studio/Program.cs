@@ -48,6 +48,7 @@ builder.Services.AddRazorComponents()
     .AddAuthenticationStateSerialization();
 builder.Services.AddFluentUIComponents();
 builder.Services.AddEsiAiWorkflowDesigner();
+builder.Services.AddEsiAiBackendModules();
 builder.Services.AddScoped<IClientStateStore, ClientStateStore>();
 builder.Services.AddControllers();
 builder.Services.AddSignalR(options =>
@@ -156,7 +157,8 @@ builder.Services.AddSingleton<ModelRuntime>(services =>
         services.GetRequiredService<IModelRuntimeStatusPublisher>(),
         new ModelLifecycleCoordinator(),
         services.GetRequiredService<ILogger<ModelRuntime>>(),
-        services.GetRequiredService<OpenVinoLoadGate>()));
+        services.GetRequiredService<OpenVinoLoadGate>(),
+        services.GetRequiredService<Esi.AI.Backend.Abstractions.IBackendRuntimeResolver>()));
 builder.Services.AddSingleton<IModelRuntimeShutdown>(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddHostedService(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddSingleton<IInferenceFailureCoordinator, InferenceFailureCoordinator>();

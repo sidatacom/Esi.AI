@@ -16,22 +16,24 @@ Esi.AI is licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE)
 The Studio backend page brings together model configuration, GPU routing, backend compatibility, and runtime diagnostics. The current setup exposes CUDA, Vulkan, SYCL, OpenVINO, vLLM, SGLang, and dotLLM routes where the required drivers and runtimes are available.
 
 <p align="center">
-	<img src="docs/images/esi-ai-studio-backends.png" alt="Current Esi.AI Studio backend overview with runtime status, model catalog, and device routing" width="960" />
+	<img src="docs/projects/Esi.AI/assets/images/esi-ai-studio-backends.png" alt="Current Esi.AI Studio backend overview with runtime status, model catalog, and device routing" width="960" />
 </p>
 <p align="center"><em>Current backend overview, runtime status, model catalog, and device routing.</em></p>
 
 <p align="center">
-	<img src="docs/images/esi-ai-studio-sycl-config.png" alt="Current Esi.AI Studio OpenVINO device selection and model loading configuration" width="960" />
+	<img src="docs/projects/Esi.AI/assets/images/esi-ai-studio-sycl-config.png" alt="Current Esi.AI Studio SYCL device selection and model loading configuration" width="960" />
 </p>
 <p align="center"><em>Current OpenVINO device selection and model loading configuration.</em></p>
 
 ## Documentation
 
-- [Reference models and native load/generate checks](docs/reference-models.md)
-- [Backend runtime gallery](docs/backend-runtime-gallery.md)
-- [OpenVINO GenAI and GGUF notes](docs/openvino-genai-gguf.md)
-- [vLLM gRPC and Python runtime setup](docs/vllm-grpc.md)
-- [Esi.AI Studio debugging and Hot Reload](docs/studio-development.md)
+- [Documentation index](docs/README.md)
+- [Studio layer design: Backend, Flow, Request](docs/projects/Esi.AI/studio-layers-design.md)
+- [Reference models and native load/generate checks](docs/projects/Esi.AI/models/reference-models.md)
+- [Backend runtime gallery](docs/projects/Esi.AI/backends/backend-runtime-gallery.md)
+- [OpenVINO GenAI and GGUF notes](docs/projects/Esi.AI/backends/openvino-genai-gguf.md)
+- [vLLM gRPC and Python runtime setup](docs/projects/Esi.AI/backends/vllm-grpc.md)
+- [Esi.AI Studio debugging and Hot Reload](docs/projects/Esi.AI/development/studio-development.md)
 - [Third-party notices and license boundaries](THIRD-PARTY-NOTICES.md)
 
 ## Repository structure

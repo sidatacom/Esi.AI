@@ -9,7 +9,7 @@ namespace Esi.AI.Studio.Services;
 /// <summary>Executes backend diagnostics in an operating-system constrained worker process.</summary>
 public sealed class BackendSandboxBroker
 {
-    private const string WorkerProjectName = "Esi.AI.BackendWorker.dll";
+    private const string WorkerProjectName = "Esi.AI.Backend.Worker.dll";
     private readonly BackendSandboxOptions options;
     private readonly ApplicationSettingsService applicationSettings;
     private readonly string workerPath;
@@ -174,7 +174,7 @@ public sealed class BackendSandboxBroker
         candidates.Add(Path.Combine(AppContext.BaseDirectory, WorkerProjectName));
         var directory = new DirectoryInfo(AppContext.BaseDirectory);
         for (var index = 0; index < 6 && directory is not null; index++, directory = directory.Parent)
-            candidates.Add(Path.Combine(directory.FullName, "Esi.AI.BackendWorker", "bin", "Debug", "net10.0", WorkerProjectName));
+            candidates.Add(Path.Combine(directory.FullName, "Esi.AI.Backend.Worker", "bin", "Debug", "net10.0", WorkerProjectName));
 
         var worker = candidates.FirstOrDefault(File.Exists);
         return worker ?? throw new FileNotFoundException("The backend worker was not built.", WorkerProjectName);

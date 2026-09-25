@@ -78,11 +78,14 @@ public sealed class InferenceService(
         if (string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase))
         {
             var modelPath = Path.GetFullPath(request.ModelPath!);
-            openVinoStatus = modelRuntime.GetOpenVinoStatus();
-            if (!openVinoStatus.IsModelLoaded)
-                throw new InvalidOperationException("The selected OpenVINO model is not loaded.");
-            if (!string.Equals(openVinoStatus.ModelPath, modelPath, StringComparison.OrdinalIgnoreCase))
-                throw new InvalidOperationException($"The selected OpenVINO model does not match the loaded model. Loaded: '{openVinoStatus.ModelPath}', selected: '{modelPath}'.");
+            if (string.IsNullOrWhiteSpace(modelRuntime.GetLoadedBackendVariantId(modelPath)))
+            {
+                openVinoStatus = modelRuntime.GetOpenVinoStatus();
+                if (!openVinoStatus.IsModelLoaded)
+                    throw new InvalidOperationException("The selected OpenVINO model is not loaded.");
+                if (!string.Equals(openVinoStatus.ModelPath, modelPath, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"The selected OpenVINO model does not match the loaded model. Loaded: '{openVinoStatus.ModelPath}', selected: '{modelPath}'.");
+            }
         }
 
         if (request.Images is { Count: > 0 } && !modelRuntime.SupportsImageInput(backend, request.ModelPath))
@@ -96,6 +99,25 @@ public sealed class InferenceService(
 
         try
         {
+            var backendVariantId = modelRuntime.GetLoadedBackendVariantId(request.ModelPath);
+            if (!string.IsNullOrWhiteSpace(backendVariantId))
+            {
+                var normalizedRequest = new OpenAiBackendChatRequest(
+                    backend,
+                    Path.GetFileNameWithoutExtension(request.ModelPath!),
+                    request.ModelPath,
+                    messages.Select(message => new OpenAiChatMessage(
+                        message.Role,
+                        message.Content,
+                        message.ToolCalls,
+                        message.ToolCallId)).ToArray(),
+                    messages,
+                    null,
+                    new ChatGenerationOptions(),
+                    BackendVariantId: backendVariantId);
+                return await modelRuntime.GenerateBackendAsync(normalizedRequest, onDelta, cancellationToken).ConfigureAwait(false);
+            }
+
             if (string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase))
             {
                 using var openVinoSession = modelRuntime.CreateOpenVinoChatSession();

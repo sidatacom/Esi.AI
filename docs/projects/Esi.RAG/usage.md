@@ -9,10 +9,10 @@ This guide covers the local setup for Esi.RAG, starting Qdrant, configuring the 
 - LM Studio running an OpenAI-compatible server on the configured URL
 - The embedding model configured in `LmStudio:EmbeddingModel` loaded in LM Studio
 
-Run the commands below from the repository root (`D:\Git\Esi.RAG`):
+In this repository, run the commands below from the Esi.RAG project root (`src/Esi.RAG`):
 
 ```powershell
-Set-Location D:\Git\Esi.RAG
+Set-Location <Esi.AI-checkout>\src\Esi.RAG
 ```
 
 ## 1. Start Qdrant
@@ -35,7 +35,7 @@ To stop and remove the container while retaining the named volume, use `docker c
 
 ## 2. Configure the services
 
-The CLI reads configuration from `src\Esi.RAG.Cli\appsettings.json`. The API reads its equivalent file at `src\Esi.RAG.Api\appsettings.json`. Environment variables override JSON values; nested settings use double underscores in PowerShell.
+The CLI reads configuration from `Esi.RAG.Cli\appsettings.json`. The API reads its equivalent file at `Esi.RAG.Api\appsettings.json`. Environment variables override JSON values; nested settings use double underscores in PowerShell.
 
 At minimum, configure these values:
 
@@ -112,72 +112,44 @@ These variables apply only to the current PowerShell session. Remove them when n
 
 ## 3. Check dependencies
 
-Use the CLI health command before indexing:
+From this monorepo checkout, run the CLI health command before indexing:
 
 ```powershell
-& .\scripts\health.ps1
+dotnet run --project .\Esi.RAG.Cli\Esi.RAG.Cli.csproj -- health
 ```
 
 The result reports overall health and separate Qdrant and LM Studio status. Qdrant should be reachable and LM Studio should expose the configured embedding model.
-
-You can also run the command directly:
-
-```powershell
-dotnet run --project .\src\Esi.RAG.Cli\Esi.RAG.Cli.csproj -- health
-```
 
 ## 4. Index a repository
 
 Index a repository by passing its path to the CLI:
 
 ```powershell
-dotnet run --project .\src\Esi.RAG.Cli\Esi.RAG.Cli.csproj -- index D:\Git\YourRepository
+dotnet run --project .\Esi.RAG.Cli\Esi.RAG.Cli.csproj -- index D:\Git\YourRepository
 ```
 
 The repository is discovered recursively. Files are filtered by extension, excluded directories, size, generated-content rules, and secret detection. Content is extracted, chunked, embedded through LM Studio, and uploaded to the configured Qdrant collection. Re-indexing is safe: deterministic chunk IDs cause unchanged chunks to be upserted rather than duplicated.
 
-The equivalent PowerShell helper is:
-
-```powershell
-& .\scripts\index.ps1 -RepositoryPath "D:\Git\YourRepository"
-```
-
-The helper defaults to `D:\Git\Esi.RAG` when no path is supplied:
-
-```powershell
-& .\scripts\index.ps1
-```
-
-The legacy root helper can also be used:
-
-```powershell
-& .\ingest-default.ps1 -RepositoryPath "D:\Git\YourRepository"
-```
-
-The command writes progress to the console and prints an `IngestionReport` as JSON, including discovered, indexed, skipped, failed, embedded, and uploaded counts. Review skipped-file reasons and errors in that report.
+The command writes progress to the console and prints an `IngestionReport` as JSON, including discovered, indexed, skipped, failed, embedded, and uploaded counts. Review skipped-file reasons and errors in that report. The PowerShell helper scripts retain assumptions from the standalone Esi.RAG checkout; use the project-relative CLI commands above from this monorepo.
 
 ## 5. Search and ask questions
 
 Search returns matching citations from the indexed repository:
 
 ```powershell
-& .\scripts\search.ps1 -Query "Where is Qdrant configured?"
-
-dotnet run --project .\src\Esi.RAG.Cli\Esi.RAG.Cli.csproj -- search "Where is Qdrant configured?" --limit 5
+dotnet run --project .\Esi.RAG.Cli\Esi.RAG.Cli.csproj -- search "Where is Qdrant configured?" --limit 5
 ```
 
 Use filters when needed:
 
 ```powershell
-dotnet run --project .\src\Esi.RAG.Cli\Esi.RAG.Cli.csproj -- search "authentication flow" --limit 10 --language csharp --path-prefix src
+dotnet run --project .\Esi.RAG.Cli\Esi.RAG.Cli.csproj -- search "authentication flow" --limit 10 --language csharp --path-prefix src
 ```
 
 Ask runs a bounded, evidence-only investigation over the indexed content:
 
 ```powershell
-& .\scripts\ask.ps1 -Query "How does ingestion upload chunks to Qdrant?"
-
-dotnet run --project .\src\Esi.RAG.Cli\Esi.RAG.Cli.csproj -- ask "How does ingestion upload chunks to Qdrant?" --max-rounds 3 --max-citations 12
+dotnet run --project .\Esi.RAG.Cli\Esi.RAG.Cli.csproj -- ask "How does ingestion upload chunks to Qdrant?" --max-rounds 3 --max-citations 12
 ```
 
 ## 6. Run the API instead of the CLI
@@ -185,7 +157,7 @@ dotnet run --project .\src\Esi.RAG.Cli\Esi.RAG.Cli.csproj -- ask "How does inges
 Start the API when using HTTP clients or the OpenAPI document:
 
 ```powershell
-dotnet run --project .\src\Esi.RAG.Api\Esi.RAG.Api.csproj
+dotnet run --project .\Esi.RAG.Api\Esi.RAG.Api.csproj
 ```
 
 Available endpoints are:

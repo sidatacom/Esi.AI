@@ -241,6 +241,9 @@ namespace Esi.AI.Studio.Migrations
                     b.Property<int>("Backend")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("BackendVariantId")
+                        .HasColumnType("TEXT");
+
                     b.Property<string>("ConfigurationJson")
                         .IsRequired()
                         .HasColumnType("TEXT");

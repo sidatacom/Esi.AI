@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+option csharp_namespace = "Esi.AI.Backend.Vllm.Xpu.Grpc";
+
+package esi.ai.inference;
+
+service Inference {
+  rpc CheckReadiness (ReadinessRequest) returns (ReadinessResponse);
+  rpc LoadModel (LoadModelRequest) returns (ModelOperationResponse);
+  rpc UnloadModel (UnloadModelRequest) returns (ModelOperationResponse);
+  rpc Generate (GenerateRequest) returns (stream GenerateResponse);
+}
+
+message ReadinessRequest {}
+
+message ReadinessResponse {
+  bool ready = 1;
+  bool model_loaded = 2;
+  string model_id = 3;
+  string error = 4;
+}
+
+message LoadModelRequest {
+  string model_path = 1;
+  string engine = 2;
+  uint32 max_model_len = 3;
+  uint32 tensor_parallel_size = 4;
+  float gpu_memory_utilization = 5;
+  bool trust_remote_code = 6;
+  bool enforce_eager = 7;
+  string device = 8;
+  repeated string devices = 9;
+  string quantization = 10;
+  string dtype = 11;
+  string kv_cache_dtype = 12;
+  string speculative_config_json = 13;
+  uint32 max_num_seqs = 14;
+  uint32 max_num_batched_tokens = 15;
+  bool enable_prefix_caching = 16;
+  bool enable_xpu_graph = 17;
+  bool enable_bf16_mtp_draft = 18;
+}
+
+message UnloadModelRequest {}
+
+message ModelOperationResponse {
+  bool succeeded = 1;
+  string model_id = 2;
+  string error = 3;
+}
+
+message ChatMessage {
+  string role = 1;
+  string content = 2;
+  string tool_calls_json = 3;
+  string tool_call_id = 4;
+}
+
+message ToolDefinition {
+  string type = 1;
+  string name = 2;
+  string description = 3;
+  string parameters_json = 4;
+}
+
+message GenerateRequest {
+  string request_id = 1;
+  string model_id = 2;
+  repeated ChatMessage messages = 3;
+  uint32 max_tokens = 4;
+  float temperature = 5;
+  float top_p = 6;
+  int32 top_k = 7;
+  float min_p = 8;
+  float repetition_penalty = 9;
+  int32 seed = 10;
+  repeated string stop_sequences = 11;
+  repeated ToolDefinition tools = 12;
+  string tool_choice_json = 13;
+}
+
+message GenerateResponse {
+  string delta = 1;
+  bool finished = 2;
+  uint32 generated_tokens = 3;
+  uint32 prompt_tokens = 4;
+  double tokens_per_second = 5;
+  string error = 6;
+  string tool_calls_json = 7;
+}

@@ -5,6 +5,8 @@
 @using Elsa.Studio.Workflows.Models
 @using Orientation = Radzen.Orientation
 @using MudBlazor
+@using Radzen
+@using Radzen.Blazor
 
 <div class="esi-ai-elsa-designer" style="height:100%; min-height:100%;">
     <MudPopoverProvider />
@@ -18,8 +20,7 @@
             <RadzenSplitterPane Size="82%">
                 <WorkflowDefinitionWorkspace @ref="workspace"
                                              WorkflowDefinition="workflowDefinition"
-                                             SelectedWorkflowDefinition="workflowDefinition"
-                                             ActivitySelected="OnActivitySelectedAsync" />
+                                             SelectedWorkflowDefinition="workflowDefinition" />
             </RadzenSplitterPane>
         </RadzenSplitter>
     </CascadingValue>
@@ -30,6 +31,8 @@
     private readonly AccordionActivityPickerComponentProvider activityPickerComponentProvider = new();
     private WorkflowDefinitionWorkspace? workspace;
     private WorkflowDefinition workflowDefinition = new();
+    private string? lastDefinitionJson;
+    private bool? lastReadOnly;
 
     /// <summary>Gets or sets the Esi.AI workflow JSON shown by the designer.</summary>
     [Parameter] public string DefinitionJson { get; set; } = "{}";
@@ -42,6 +45,11 @@
 
     protected override void OnParametersSet()
     {
+        if (string.Equals(lastDefinitionJson, DefinitionJson, StringComparison.Ordinal) && lastReadOnly == IsReadOnly)
+            return;
+
+        lastDefinitionJson = DefinitionJson;
+        lastReadOnly = IsReadOnly;
         var flowchart = ElsaFlowchartAdapter.ToElsaFlowchart(DefinitionJson);
         workflowDefinition = new WorkflowDefinition
         {
@@ -49,16 +57,32 @@
             Id = "esi-ai-flow-v1",
             Name = "Esi.AI workflow",
             Root = flowchart,
+            Options = new(),
+            CustomProperties = new(),
+            Variables = [],
+            Inputs = [],
+            Outputs = [],
             IsReadonly = IsReadOnly
         };
     }
 
-    private async Task OnActivitySelectedAsync(JsonObject activity)
+    protected override void OnAfterRender(bool firstRender)
     {
-        if (workspace is null || !DefinitionJsonChanged.HasDelegate)
+        if (firstRender && workspace is not null)
+            workspace.WorkflowDefinitionUpdated += OnWorkflowDefinitionUpdatedAsync;
+    }
+
+    private async Task OnWorkflowDefinitionUpdatedAsync()
+    {
+        if (!DefinitionJsonChanged.HasDelegate || workspace is null)
             return;
 
-        var definitionJson = ElsaFlowchartAdapter.FromElsaFlowchart(workspace.GetSelectedDefinition()?.Root ?? new(), DefinitionJson);
+        var definition = workspace.GetSelectedDefinition();
+        if (definition?.Root is null)
+            return;
+
+        var definitionJson = ElsaFlowchartAdapter.FromElsaFlowchart(definition.Root, DefinitionJson);
+        lastDefinitionJson = definitionJson;
         await DefinitionJsonChanged.InvokeAsync(definitionJson);
     }
 }

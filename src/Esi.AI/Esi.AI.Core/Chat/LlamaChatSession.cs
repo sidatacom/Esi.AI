@@ -270,15 +270,3 @@ public sealed class LlamaChatSession : IDisposable
         };
     }
 }
-
-public sealed record GenerationResult(
-    string Text,
-    int TokenCount,
-    TimeSpan Duration,
-    double TokensPerSecond,
-    int? PromptTokenCount = null,
-    string FinishReason = "stop",
-    IReadOnlyList<OpenAiToolCall>? ToolCalls = null,
-    double? TimeToFirstTokenMs = null,
-    double? PrefillDurationMs = null,
-    double? DecodeDurationMs = null);

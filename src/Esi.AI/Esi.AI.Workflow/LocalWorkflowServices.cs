@@ -1,7 +1,14 @@
 using Elsa.Api.Client.Resources.WorkflowDefinitions.Models;
 using Elsa.Api.Client.Resources.WorkflowDefinitions.Requests;
 using Elsa.Api.Client.Resources.WorkflowDefinitions.Responses;
+using Elsa.Api.Client.Resources.Features.Models;
+using Elsa.Api.Client.Resources.CommitStrategies.Models;
+using Elsa.Api.Client.Resources.IncidentStrategies.Models;
+using Elsa.Api.Client.Resources.LogPersistenceStrategies;
+using Elsa.Api.Client.Resources.StorageDrivers.Models;
 using Elsa.Api.Client.Resources.Scripting.Models;
+using Elsa.Api.Client.Resources.VariableTypes.Models;
+using Elsa.Api.Client.Resources.WorkflowActivationStrategies.Models;
 using Elsa.Api.Client.Shared.Models;
 using Elsa.Studio.Models;
 using Elsa.Studio.Contracts;
@@ -67,8 +74,65 @@ internal sealed class LocalBackendApiClientProvider : IBackendApiClientProvider
     public Uri Url => new("http://local.esi.ai");
 
     public ValueTask<T> GetApiAsync<T>(CancellationToken cancellationToken = default) where T : class =>
-        throw new NotSupportedException("Elsa backend API calls are not part of the local Esi.AI workflow editor.");
+        throw new NotSupportedException($"Elsa backend API calls are not part of the local Esi.AI workflow editor: {typeof(T).FullName}.");
 }
+
+    internal sealed class LocalRemoteFeatureProvider : IRemoteFeatureProvider
+    {
+        public Task<bool> IsEnabledAsync(string featureName, CancellationToken cancellationToken = default) => Task.FromResult(false);
+
+        public Task<IEnumerable<FeatureDescriptor>> ListAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IEnumerable<FeatureDescriptor>>([]);
+    }
+
+    internal sealed class LocalStorageDriverService : IStorageDriverService
+    {
+        public Task<IEnumerable<StorageDriverDescriptor>> GetStorageDriversAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IEnumerable<StorageDriverDescriptor>>([]);
+    }
+
+    internal sealed class LocalVariableTypeService : IVariableTypeService
+    {
+        public Task<IEnumerable<VariableTypeDescriptor>> GetVariableTypesAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IEnumerable<VariableTypeDescriptor>>(
+            [
+                new("System.Boolean", "Boolean", "Primitives", null),
+                new("System.Int32", "Integer", "Primitives", null),
+                new("System.Int64", "Long", "Primitives", null),
+                new("System.Decimal", "Decimal", "Primitives", null),
+                new("System.Double", "Double", "Primitives", null),
+                new("System.String", "String", "Text", null),
+                new("System.DateTime", "DateTime", "Primitives", null),
+                new("System.Guid", "Guid", "Primitives", null)
+            ]);
+    }
+
+    internal sealed class LocalWorkflowActivationStrategyService : IWorkflowActivationStrategyService
+    {
+        public Task<IEnumerable<WorkflowActivationStrategyDescriptor>> GetWorkflowActivationStrategiesAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IEnumerable<WorkflowActivationStrategyDescriptor>>([]);
+    }
+
+    internal sealed class LocalIncidentStrategiesProvider : IIncidentStrategiesProvider
+    {
+        public ValueTask<IEnumerable<IncidentStrategyDescriptor>> GetIncidentStrategiesAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<IEnumerable<IncidentStrategyDescriptor>>([]);
+    }
+
+    internal sealed class LocalLogPersistenceStrategyService : ILogPersistenceStrategyService
+    {
+        public Task<IEnumerable<LogPersistenceStrategyDescriptor>> GetLogPersistenceStrategiesAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult<IEnumerable<LogPersistenceStrategyDescriptor>>([]);
+    }
+
+    internal sealed class LocalCommitStrategiesProvider : ICommitStrategiesProvider
+    {
+        public ValueTask<IEnumerable<CommitStrategyDescriptor>> GetWorkflowCommitStrategiesAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<IEnumerable<CommitStrategyDescriptor>>([]);
+
+        public ValueTask<IEnumerable<CommitStrategyDescriptor>> GetActivityCommitStrategiesAsync(CancellationToken cancellationToken = default) =>
+            ValueTask.FromResult<IEnumerable<CommitStrategyDescriptor>>([]);
+    }
 
 internal sealed class LocalHttpConnectionOptionsConfigurator : IHttpConnectionOptionsConfigurator
 {
@@ -82,4 +146,19 @@ internal sealed class LocalExpressionService : IExpressionService
 
     public Task<ExpressionDescriptor?> GetByTypeAsync(string type, CancellationToken cancellationToken = default) =>
         Task.FromResult<ExpressionDescriptor?>(null);
+}
+
+internal sealed class LocalFeatureService(IEnumerable<IFeature> features) : IFeatureService
+{
+    public event Action? Initialized;
+
+    public IEnumerable<IFeature> GetFeatures() => features;
+
+    public async Task InitializeFeaturesAsync(CancellationToken cancellationToken = default)
+    {
+        foreach (var feature in features)
+            await feature.InitializeAsync(cancellationToken);
+
+        Initialized?.Invoke();
+    }
 }

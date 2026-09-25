@@ -2,20 +2,18 @@
 
 Diese Dokumentation beschreibt die aktuellen Projekte unter `src/Esi.AI`.
 
-## Projekte
+## Projektuebersicht
 
-- [Esi.AI.Studio](Esi.AI.Studio/README.md): ASP.NET Core Blazor Web App und Host fuer Identity, SQLite und interaktive Komponenten.
-- [Esi.AI.Studio.Client](Esi.AI.Studio.Client/README.md): Blazor WebAssembly Client fuer die Auto-Interaktivitaet.
-- [Esi.AI.Core](Esi.AI.Core/README.md): Class Library fuer die lokale LLamaSharp-Anbindung.
+- [Esi.AI.Studio](Esi.AI.Studio/README.md): ASP.NET Core Blazor Web App und Server-Host.
+- [Esi.AI.Studio.Client](Esi.AI.Studio.Client/README.md): interaktiver Blazor-Client.
+- [Esi.AI.Core](Esi.AI.Core/README.md): Core- und Runtime-Integrationen.
+- [OpenAI-kompatible WebAPI und VS-Code-Provider](OpenAI-Compatible-WebAPI-and-Model-Provider.md)
+- [Studio Layer-Design](studio-layers-design.md): Zielbild fuer Backend-, Flow- und Request-Ebene.
+- [Backend-Dokumentation](backends/): Backend-Pakete, Runtime Gallery, Tool Calling und Python/gRPC.
+- [Entwicklungsanleitungen](development/): Studio-Debugging und EsiMCP-Lifecycle.
+- [Modelle](models/): Referenzmodelle und Smoke-Tests.
+- [Benchmarks](benchmarks/README.md): Messergebnisse und Benchmarknotizen.
 
-## Solution
+## Solution und Voraussetzungen
 
-Alle drei Projekte sind aktuell in `src/Esi.AI/Esi.AI.Studio.sln` eingetragen.
-
-## Gemeinsame Voraussetzungen
-
-- .NET SDK 10.0
-- Restore mit `dotnet restore`
-- Build mit `dotnet build`
-
-Der LLamaSharp-Code wird lokal aus `origins/sidatacom/LLamaSharp` referenziert. Native Backend-Pakete und produktive Modellkonfiguration sind noch nicht festgelegt.
+Die aktuelle Studio-Solution liegt unter `src/Esi.AI/Esi.AI.Studio.sln` und enthaelt `Esi.AI.Studio`, `Esi.AI.Studio.Client`, `Esi.AI.Workflow`, `Esi.AI.Core` und `Esi.AI.Models`. Backend- und Testprojekte liegen ebenfalls unter `src/Esi.AI`, sind aber nicht Teil dieser Solution. Fuer den Studio-Build wird das im Repository konfigurierte .NET SDK verwendet; konkrete Build- und Debug-Ablaufe stehen in [Studio-Entwicklung](development/studio-development.md).

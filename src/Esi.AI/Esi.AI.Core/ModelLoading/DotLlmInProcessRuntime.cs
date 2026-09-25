@@ -10,7 +10,7 @@ using DotLLM.Models.Gguf;
 using DotLLM.Tokenizers;
 using DotLLM.Tokenizers.ChatTemplates;
 using DotLLM.Tokenizers.ToolCallParsers;
-using GenerationResult = Esi.AI.Core.Chat.GenerationResult;
+using GenerationResult = Esi.AI.Models.GenerationResult;
 using Esi.AI.Models;
 using ModelChatMessage = Esi.AI.Models.ChatMessage;
 using DotChatMessage = DotLLM.Tokenizers.ChatMessage;

@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Esi.AI.Backend.Vllm.Xpu</RootNamespace>
+    <PackageId>Esi.AI.Backend.Vllm.Xpu</PackageId>
+    <Version>0.1.0</Version>
+    <Description>Standalone vLLM Intel XPU backend module for Esi.AI.</Description>
+    <PackageTags>esi-ai;backend;vllm;xpu;intel</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Esi.AI.Backend.Abstractions/Esi.AI.Backend.Abstractions.csproj" />
+    <ProjectReference Include="../Esi.AI.Models/Esi.AI.Models.csproj" />
+    <PackageReference Include="Google.Protobuf" Version="3.30.2" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.76.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.76.0" PrivateAssets="All" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Python/vllm_inference.proto" GrpcServices="Client" />
+    <None Include="Python/**/*"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Pack="true"
+          PackagePath="contentFiles/any/any/Python/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Esi.AI.Backend.Vllm.Xpu.Tests" />
+  </ItemGroup>
+
+</Project>

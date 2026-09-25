@@ -17,9 +17,13 @@ public static class ElsaFlowchartAdapter
     public static JsonObject ToElsaFlowchart(string? definitionJson)
     {
         var source = ParseObject(definitionJson);
+        if (source["elsaFlowchart"] is JsonObject storedFlowchart)
+            return (JsonObject)storedFlowchart.DeepClone();
+
         var nodes = source["nodes"] as JsonArray ?? [];
         var activities = new JsonArray();
         var connections = new JsonArray();
+        var activityIds = new List<string>();
 
         for (var index = 0; index < nodes.Count; index++)
         {
@@ -27,6 +31,7 @@ public static class ElsaFlowchartAdapter
                 continue;
 
             var id = $"esi-node-{index + 1}";
+            activityIds.Add(id);
             activities.Add(new JsonObject
             {
                 ["id"] = id,
@@ -34,7 +39,7 @@ public static class ElsaFlowchartAdapter
                 ["type"] = EsiNodeType,
                 ["version"] = 1,
                 ["name"] = node["name"]?.GetValue<string>() ?? $"Node {index + 1}",
-                ["displayName"] = node["detail"]?.GetValue<string>() ?? string.Empty,
+                ["routeTarget"] = node["detail"]?.GetValue<string>() ?? string.Empty,
                 ["kind"] = node["kind"]?.GetValue<string>() ?? "route",
                 ["designerMetadata"] = new JsonObject
                 {
@@ -43,16 +48,15 @@ public static class ElsaFlowchartAdapter
                 }
             });
 
-            if (index > 0)
-            {
-                connections.Add(new JsonObject
-                {
-                    ["source"] = new JsonObject { ["activityId"] = $"esi-node-{index}", ["port"] = "Done" },
-                    ["target"] = new JsonObject { ["activityId"] = id, ["port"] = "In" },
-                    ["vertices"] = new JsonArray()
-                });
-            }
         }
+
+        for (var index = 1; index < activityIds.Count; index++)
+            connections.Add(new JsonObject
+            {
+                ["source"] = new JsonObject { ["activityId"] = activityIds[index - 1], ["port"] = "Done" },
+                ["target"] = new JsonObject { ["activityId"] = activityIds[index], ["port"] = "In" },
+                ["vertices"] = new JsonArray()
+            });
 
         return new JsonObject
         {
@@ -79,15 +83,19 @@ public static class ElsaFlowchartAdapter
         {
             nodes.Add(new JsonObject
             {
-                ["name"] = activity["name"]?.GetValue<string>() ?? "Workflow node",
-                ["detail"] = activity["displayName"]?.GetValue<string>() ?? string.Empty,
-                ["kind"] = activity["kind"]?.GetValue<string>() ?? "route"
+                ["name"] = ReadString(activity, "name") ?? "Workflow node",
+                ["detail"] = ReadString(activity, "routeTarget") ?? ReadString(activity, "displayName") ?? string.Empty,
+                ["kind"] = ReadString(activity, "kind") ?? "route"
             });
         }
 
+        original["elsaFlowchart"] = flowchart.DeepClone();
         original["nodes"] = nodes;
         return original.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
     }
+
+    private static string? ReadString(JsonObject source, string propertyName) =>
+        source[propertyName] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
 
     private static JsonObject ParseObject(string? json)
     {

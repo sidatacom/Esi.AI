@@ -4,6 +4,8 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <RootNamespace>Esi.AI.Backend.Worker</RootNamespace>
+    <AssemblyName>Esi.AI.Backend.Worker</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>

@@ -16,9 +16,11 @@
 ## Wichtige Bereiche
 
 - `Program.cs`: Registrierung von Razor Components, Render-Modi, Authentication und Identity.
-- `Components/`: Layout, Routing, Seiten und Identity-Komponenten.
+- `Components/`: Host-Layout, Routing und Identity-Komponenten.
 - `Data/`: `ApplicationDbContext`, `ApplicationUser` und Migrationen.
 - `wwwroot/`: statische Web-Ressourcen.
+- `Controllers/OpenAiCompatibleController.cs`: OpenAI-kompatible Inference-API.
+- `Hubs/DataHub.cs` und `DataService`: SignalR-Anwendungsoperationen und Orchestrierung.
 
 ## Abhaengigkeiten
 
@@ -41,9 +43,9 @@ Die SQLite-Verbindungszeichenfolge steht in `appsettings.json`. In der Entwicklu
 
 Der verbindliche Entwicklungsablauf mit `dotnet watch`, CoreCLR-Server-Debugging,
 WebAssembly-Attach und dem Linux-Polling-Watcher ist in
-[Esi.AI Studio: Debugging und Hot Reload](../../../studio-development.md)
+[Esi.AI Studio: Debugging und Hot Reload](../development/studio-development.md)
 dokumentiert.
 
 ## Aktueller Stand
 
-Das Projekt basiert auf dem Blazor-Template. Fachliche Studio-Seiten und die spaetere LLama-Integration sind noch nicht umgesetzt.
+Studio hostet die interaktive Client-Anwendung, Identity und die OpenAI-kompatible API. Fachliche Seiten wie Backends, Models, Chats, Flow, Provider, Settings und WebAPI liegen im Clientprojekt. Backend-Runtime-Migration und Flow-Ausfuehrung sind teilweise beziehungsweise noch nicht vollstaendig integriert; Details stehen in den jeweiligen Architektur- und Backend-Dokumenten.

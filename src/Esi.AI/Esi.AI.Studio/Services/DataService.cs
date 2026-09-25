@@ -511,6 +511,27 @@ public sealed class DataService(
         if (!string.Equals(Path.GetFullPath(model.Path), Path.GetFullPath(configuration.ModelPath), StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The selected model configuration does not belong to the selected model.");
 
+        if (modelRuntime.HasBackendRuntime(configuration.BackendVariantId))
+        {
+            var backendConfiguration = configuration.Backend switch
+            {
+                ConfigurationBackend.Llama => JsonSerializer.SerializeToElement(
+                    DeserializeConfiguration<LoadModelRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, ConfigurationJsonOptions),
+                ConfigurationBackend.OpenVino => JsonSerializer.SerializeToElement(
+                    DeserializeConfiguration<OpenVinoLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, ConfigurationJsonOptions),
+                ConfigurationBackend.Vllm => JsonSerializer.SerializeToElement(
+                    DeserializeConfiguration<PythonInferenceLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path, Backend = ConfigurationBackend.Vllm }, ConfigurationJsonOptions),
+                _ => throw new ArgumentException($"The backend variant '{configuration.BackendVariantId}' is not supported by this host.", nameof(request))
+            };
+            await modelRuntime.LoadBackendAsync(
+                new Esi.AI.Backend.Abstractions.BackendLoadRequest(
+                    model.Path,
+                    configuration.BackendVariantId,
+                    backendConfiguration),
+                CancellationToken.None);
+            return modelRuntime.LoadedModel_Read();
+        }
+
         switch (configuration.Backend)
         {
             case ConfigurationBackend.Llama:
@@ -573,7 +594,8 @@ public sealed class DataService(
         if (currentStatus.LoadedModels.Any(model =>
             !model.IsLoading &&
             string.Equals(model.ModelPath, configuration.ModelPath, StringComparison.OrdinalIgnoreCase) &&
-            model.Backend == configuration.Backend))
+            model.Backend == configuration.Backend &&
+            string.Equals(model.BackendVariantId, configuration.BackendVariantId, StringComparison.OrdinalIgnoreCase)))
             return currentStatus;
 
         var model = (await Model_UpdateAsync(CancellationToken.None)).SingleOrDefault(item =>
@@ -743,6 +765,9 @@ public sealed class DataService(
         entity.Description = string.IsNullOrWhiteSpace(configuration.Description) ? null : configuration.Description.Trim();
         entity.ModelPath = configuration.ModelPath.Trim();
         entity.Backend = configuration.Backend;
+        entity.BackendVariantId = string.IsNullOrWhiteSpace(configuration.BackendVariantId)
+            ? ResolveBackendVariantId(configuration.Backend, configuration.ConfigurationJson)
+            : configuration.BackendVariantId.Trim();
         entity.IsDefault = configuration.IsDefault;
         entity.AutoLaunch = configuration.AutoLaunch;
         entity.SchemaVersion = configuration.SchemaVersion < 1 ? 1 : configuration.SchemaVersion;
@@ -916,9 +941,9 @@ public sealed class DataService(
         return modelRuntime.LoadedModel_Read();
     }
 
-    public async Task<ModelLoadStatus> UnloadModelAsync(string modelPath, ConfigurationBackend backend, CancellationToken cancellationToken = default)
+    public async Task<ModelLoadStatus> UnloadModelAsync(string modelPath, ConfigurationBackend backend, CancellationToken cancellationToken = default, string backendVariantId = "")
     {
-        await modelRuntime.UnloadAsync(modelPath, backend, cancellationToken);
+        await modelRuntime.UnloadAsync(modelPath, backend, cancellationToken, backendVariantId);
         return modelRuntime.LoadedModel_Read();
     }
 
@@ -1219,7 +1244,38 @@ public sealed class DataService(
     private static ModelConfiguration ToConfiguration(ModelConfigurationEntity entity) =>
         new(entity.Id, entity.Name, entity.Description, entity.ModelPath, entity.IsDefault, entity.SchemaVersion,
             entity.ConfigurationJson, entity.CreatedAtUtc, entity.UpdatedAtUtc, entity.Backend,
-            DeserializeInferenceTimeout(entity.InferenceTimeoutJson), entity.AutoLaunch);
+            DeserializeInferenceTimeout(entity.InferenceTimeoutJson), entity.AutoLaunch,
+            string.IsNullOrWhiteSpace(entity.BackendVariantId)
+                ? ResolveBackendVariantId(entity.Backend, entity.ConfigurationJson)
+                : entity.BackendVariantId);
+
+    private static string ResolveBackendVariantId(ConfigurationBackend backend, string configurationJson)
+    {
+        using var configuration = JsonDocument.Parse(configurationJson);
+        var root = configuration.RootElement;
+        return backend switch
+        {
+            ConfigurationBackend.Llama => root.TryGetProperty("backend", out var llamaBackend)
+                ? llamaBackend.GetString()?.Trim().ToLowerInvariant() switch
+                {
+                    "vulkan" => "llama.vulkan",
+                    "cuda" or "cuda12" => "llama.cuda12",
+                    "sycl" or "sycl16" or "xpu" => "llama.sycl",
+                    _ => "llama.cpu"
+                }
+                : "llama.cpu",
+            ConfigurationBackend.OpenVino => "openvino",
+            ConfigurationBackend.Vllm => IsXpuConfiguration(root) ? "vllm.xpu" : "vllm.cuda12",
+            ConfigurationBackend.Sglang => IsXpuConfiguration(root) ? "sglang.xpu" : "sglang.cuda12",
+            ConfigurationBackend.DotLlm => "dotllm.cpu",
+            _ => throw new ArgumentOutOfRangeException(nameof(backend), backend, "Unsupported backend family.")
+        };
+    }
+
+    private static bool IsXpuConfiguration(JsonElement root) =>
+        root.TryGetProperty("enableXpuGraph", out var xpuGraph) && xpuGraph.ValueKind == JsonValueKind.True ||
+        root.TryGetProperty("device", out var device) && device.ValueKind == JsonValueKind.String &&
+        device.GetString()?.Contains("xpu", StringComparison.OrdinalIgnoreCase) == true;
 
     private static InferenceTimeoutSettings? DeserializeInferenceTimeout(string? json) =>
         string.IsNullOrWhiteSpace(json)

@@ -13,7 +13,7 @@
 
 ## Wichtige Bereiche
 
-- `Pages/`: routbare Seiten und Template-Seiten.
+- `Pages/`: fachliche Studio-Seiten fuer Backends, Chats, Flow, Models, Provider, Settings und WebAPI.
 - `Layout/`: gemeinsame Client-Layouts.
 - `_Imports.razor`: gemeinsame Razor-Namespaces.
 - `wwwroot/`: statische Client-Ressourcen.
@@ -36,4 +36,4 @@ dotnet run --project src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj
 
 ## Aktueller Stand
 
-Die vorhandenen Seiten stammen aus dem Blazor-Template. Die fachlichen Studio-Funktionen werden spaeter ergaenzt.
+Der Client stellt die interaktive Studio-Oberflaeche bereit. Serveroperationen laufen ueber `IDataService` und die zentrale SignalR-Verbindung; fachliche Orchestrierung und Runtime-Zustand verbleiben serverseitig.

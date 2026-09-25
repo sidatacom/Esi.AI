@@ -17,11 +17,30 @@ internal sealed class LocalActivityRegistryProvider : IActivityRegistryProvider
                 Name = "Node",
                 Version = 1,
                 Category = "Esi.AI",
-                DisplayName = "Esi.AI workflow node",
-                Description = "A route node managed by the Esi.AI workflow adapter.",
-                IsBrowsable = false,
+                DisplayName = "Esi.AI route",
+                Description = "Routes a request to an Esi.AI backend.",
+                IsBrowsable = true,
                 IsStart = false,
                 IsTerminal = false,
+                Inputs =
+                [
+                    new InputDescriptor
+                    {
+                        Name = "Kind",
+                        TypeName = "System.String",
+                        DisplayName = "Route kind",
+                        IsBrowsable = true,
+                        UIHint = "singleline"
+                    },
+                    new InputDescriptor
+                    {
+                        Name = "RouteTarget",
+                        TypeName = "System.String",
+                        DisplayName = "Route target",
+                        IsBrowsable = true,
+                        UIHint = "singleline"
+                    }
+                ],
                 Ports =
                 [
                     new Port { Name = "In", DisplayName = "In", Type = PortType.Flow },

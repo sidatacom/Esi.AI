@@ -2,7 +2,7 @@
 
 ## Zweck
 
-`Esi.AI.Core` ist eine .NET Class Library fuer die kuenftige LLamaSharp-Anbindung im Esi.AI-System. Das Projekt bildet die Integrationsgrenze fuer lokale LLM-Inferenz und soll spaeter vom Studio Host verwendet werden.
+`Esi.AI.Core` ist die zentrale .NET-Bibliothek fuer Modellruntime und Inferenzintegration. Sie enthaelt unter anderem `ModelRuntime`, konkrete LLamaSharp-, OpenVINO- und dotLLM-Lader sowie die Python/gRPC-Bruecke fuer vLLM und SGLang. Der Studio-Host orchestriert diese Laufzeiten ueber seine Services.
 
 ## Technologie
 
@@ -29,15 +29,14 @@ dotnet restore src/Esi.AI/Esi.AI.Core/Esi.AI.Core.csproj
 dotnet build src/Esi.AI/Esi.AI.Core/Esi.AI.Core.csproj
 ```
 
-Beim Build wird aus dem Fork das kompatible `net8.0` Target verwendet. LLamaSharp kann dabei native Laufzeitdateien vorbereiten; ein konkretes CPU-, CUDA- oder Vulkan-Backend ist noch nicht als Esi.AI-Abhaengigkeit festgelegt.
+Beim Build wird aus dem Fork das kompatible `net8.0` Target verwendet. Zusaetzliche Backend-Projekte unter `src/Esi.AI` kapseln bereits Teile der LLama-Runtime separat; die vollstaendige Host-Integration und Migration der Legacy-Lader ist noch nicht abgeschlossen.
 
 ## Aktueller Stand
 
-Das Projekt enthaelt noch die generierte Platzhalterklasse. Neue Esi.AI-Typen muessen gemaess Repository-Konvention unter `Esi.AI.Core` angelegt werden.
+Das Projekt enthaelt die bestehenden Laufzeitadapter und Teile der bisherigen Runtime-Orchestrierung. Die schrittweise Extraktion in `Esi.AI.Backend.*` ist im [Backend-Migrationsstand](../backends/backend-assemblies.md) beschrieben.
 
 ## Naechste Integrationsschritte
 
-1. LLamaSharp-Konfiguration und Modellpfade kapseln.
-2. Ein Esi.AI-eigenes Interface fuer Inferenz definieren.
-3. Einen passenden nativen Backend-Pfad fuer die Zielumgebung festlegen.
-4. Die Registrierung im Studio Host ueber Dependency Injection ergaenzen.
+1. Verbleibende Runtime-Implementierungen mit gezielten Lifecycle- und Generierungstests aus Core herausloesen.
+2. Die Backend-Auswahl des Studio-Hosts schrittweise auf den gemeinsamen `IBackendRuntime`-Vertrag migrieren.
+3. Engine-spezifische Referenzen aus Core entfernen, sobald alle benoetigten Backend-Module integriert sind.

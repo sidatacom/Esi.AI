@@ -112,8 +112,8 @@ public sealed class DataHub(
     public Task<ModelLoadStatus> UnloadModelByPath(string modelPath) =>
         dataService.UnloadModelAsync(modelPath, Context.ConnectionAborted);
 
-    public Task<ModelLoadStatus> UnloadModelByPathForBackend(string modelPath, ConfigurationBackend backend) =>
-        dataService.UnloadModelAsync(modelPath, backend, Context.ConnectionAborted);
+    public Task<ModelLoadStatus> UnloadModelByPathForBackend(string modelPath, ConfigurationBackend backend, string backendVariantId = "") =>
+        dataService.UnloadModelAsync(modelPath, backend, Context.ConnectionAborted, backendVariantId);
 
     public Task<OpenVinoDiagnosticsDto> GetOpenVinoDiagnostics() =>
         backendDiagnostics.GetOpenVinoDiagnosticsAsync(Context.ConnectionAborted);

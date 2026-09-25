@@ -78,7 +78,7 @@ public interface IDataService
 
     Task<ModelLoadStatus> UnloadModelAsync(string modelPath, CancellationToken cancellationToken = default);
 
-    Task<ModelLoadStatus> UnloadModelAsync(string modelPath, ConfigurationBackend backend, CancellationToken cancellationToken = default);
+    Task<ModelLoadStatus> UnloadModelAsync(string modelPath, ConfigurationBackend backend, CancellationToken cancellationToken = default, string backendVariantId = "");
 
     Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default);
     Task<OpenVinoSolveResultDto> SolveDiagnosticAsync(string checkId, CancellationToken cancellationToken = default);

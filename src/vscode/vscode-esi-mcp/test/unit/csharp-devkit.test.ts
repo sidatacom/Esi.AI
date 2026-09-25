@@ -70,7 +70,7 @@ vi.mock("vscode", () => ({
   },
   Uri: { file: (filePath: string) => ({ scheme: "file", fsPath: filePath }) },
   workspace: {
-    workspaceFolders: [{ uri: { fsPath: "C:\\workspace" } }],
+    workspaceFolders: [{ uri: { fsPath: "/workspace" } }],
     findFiles: vi.fn(async () => []),
   },
   window: windowApi,
@@ -89,7 +89,7 @@ describe("EsiMCP C# Dev Kit tools", () => {
     const payload = JSON.parse(result.content[0].text);
 
     expect(payload.extensionId).toBe("ms-dotnettools.csdevkit");
-    expect(payload.commands.map(({ argumentsSchema: _argumentsSchema, invocationSyntax: _invocationSyntax, ...command }) => command)).toEqual([
+  expect(payload.commands.map(({ argumentsSchema: _argumentsSchema, argumentsExample: _argumentsExample, invocationSyntax: _invocationSyntax, ...command }) => command)).toEqual([
       { command: "csdevkit.addExistingProject", title: "Add Existing Project...", keyboardShortcuts: [], menuContexts: [], registered: true },
       { command: "csdevkit.buildSolution", title: "Build Solution", keyboardShortcuts: [], menuContexts: ["commandPalette"], registered: true },
       { command: "csdevkit.debug.fileLaunch", title: "Debug project associated with this file", keyboardShortcuts: [], menuContexts: [], registered: true },
@@ -126,30 +126,49 @@ describe("EsiMCP C# Dev Kit tools", () => {
     const fileLaunchCommand = payload.commands.find((command: { command: string }) => command.command === "csdevkit.debug.fileLaunch");
     expect(fileLaunchCommand.argumentsSchema).toMatchObject({ type: "array", minItems: 1, maxItems: 1 });
     expect(fileLaunchCommand.argumentsSchema.items.properties).toHaveProperty("fsPath");
+    const launchCommand = payload.commands.find((command: { command: string }) => command.command === "csdevkit.debug.projectDebugLaunch") as { argumentsSchema: Record<string, unknown>; argumentsExample: unknown[] };
+    expect(launchCommand.argumentsSchema).toMatchObject({
+      type: "array",
+      minItems: 1,
+      maxItems: 1,
+      items: {
+        type: "object",
+        required: ["path"],
+        properties: { path: { type: "string" } },
+      },
+    });
+    expect(launchCommand.argumentsExample).toEqual([{ path: "/absolute/path/to/Project.csproj" }]);
     expect(payload.commands.filter((command: { command: string }) => ["csdevkit.debug.step.over", "csdevkit.debug.step.into", "csdevkit.debug.step.out", "csdevkit.debug.continue", "csdevkit.debug.pause", "csdevkit.debug.clear.all.breakpoints", "csdevkit.debug.list.breakpoints"].includes(command.command)).every((command: { argumentsSchema: { type: string; maxItems: number } }) => command.argumentsSchema.type === "array" && command.argumentsSchema.maxItems === 0)).toBe(true);
     const readinessCommand = payload.commands.find((command: { command: string }) => command.command === "csdevkit.debug.check.host.readyness") as { argumentsSchema: { type: string; maxItems: number } };
     expect(readinessCommand.argumentsSchema).toMatchObject({ type: "array", maxItems: 1 });
   });
 
   it("executes projectDebugLaunch with its URI argument and transfers the old start lifecycle", async () => {
-    const projectUri = { scheme: "file", fsPath: "/workspace/Esi.AI.Studio.csproj" };
+    const projectContext = { path: "/workspace/Esi.AI.Studio.csproj" };
     const prepareDebugHostReadiness = vi.fn();
     const bindDebugHostReadiness = vi.fn();
     const cancelPendingDebugHostReadiness = vi.fn();
 
     const result = await CSHARP_DEVKIT_TOOLS[1].handler(
-      { commandId: "csdevkit.debug.projectDebugLaunch", arguments: [projectUri] },
+      { commandId: "csdevkit.debug.projectDebugLaunch", arguments: [projectContext] },
       undefined,
       { prepareDebugHostReadiness, bindDebugHostReadiness, cancelPendingDebugHostReadiness } as never,
     );
     const payload = JSON.parse(result.content[0].text);
 
     expect(payload.commandId).toBe("csdevkit.debug.projectDebugLaunch");
-    expect(payload.result.argumentsValue).toEqual([projectUri]);
+    expect(payload.result.argumentsValue).toEqual([projectContext]);
     expect(payload).toMatchObject({ started: true, sessionId: "session-projectDebugLaunch" });
     expect(prepareDebugHostReadiness).toHaveBeenCalledOnce();
     expect(bindDebugHostReadiness).toHaveBeenCalledWith(debugState.activeDebugSession);
     expect(cancelPendingDebugHostReadiness).not.toHaveBeenCalled();
+  });
+
+  it("rejects URI-shaped project launch arguments", async () => {
+    await expect(CSHARP_DEVKIT_TOOLS[1].handler({
+      commandId: "csdevkit.debug.projectDebugLaunch",
+      arguments: [{ scheme: "file", fsPath: "/workspace/Esi.AI.Studio.csproj" }],
+    })).rejects.toThrow();
   });
 
   it("queries one command's invocation syntax", async () => {
@@ -198,13 +217,13 @@ describe("EsiMCP C# Dev Kit tools", () => {
       { name: "Esi.AI.Studio.csproj", isFile: () => true } as never,
     ]);
     (vscode.window as { activeTextEditor?: unknown }).activeTextEditor = {
-      document: { uri: { scheme: "file", fsPath: "C:\\workspace\\src\\Esi.AI.Studio\\Program.cs" } },
+      document: { uri: { scheme: "file", fsPath: "/workspace/src/Esi.AI.Studio/Program.cs" } },
     };
 
     const result = await CSHARP_DEVKIT_TOOLS[1].handler({ commandId: "csdevkit.debug.projectDebugLaunch" });
     const payload = JSON.parse(result.content[0].text);
 
-    expect(payload.result.argumentsValue).toEqual([{ scheme: "file", fsPath: "C:\\workspace\\src\\Esi.AI.Studio\\Esi.AI.Studio.csproj" }]);
+    expect(payload.result.argumentsValue).toEqual([{ path: "/workspace/src/Esi.AI.Studio/Esi.AI.Studio.csproj" }]);
   });
 
   it("rejects commands outside the installed C# Dev Kit manifest", async () => {

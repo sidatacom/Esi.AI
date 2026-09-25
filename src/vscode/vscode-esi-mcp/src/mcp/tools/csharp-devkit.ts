@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { DebugManager } from "../../debug/manager.js";
 import type { SessionManager } from "../../terminal/session-manager.js";
 import type { McpToolResponse } from "../../types/index.js";
-import { csharpDevKitArgumentsSchema, csharpDevKitCommandSchema, csharpDevKitEmptySchema, csharpDevKitListCommandsSchema, csharpDevKitNoArgumentsSchema, csharpDevKitReadinessArgumentsSchema, csharpDevKitRestartArgumentsSchema, toJsonSchema } from "./schemas.js";
+import { csharpDevKitArgumentsSchema, csharpDevKitCommandSchema, csharpDevKitEmptySchema, csharpDevKitListCommandsSchema, csharpDevKitNoArgumentsSchema, csharpDevKitProjectLaunchArgumentsSchema, csharpDevKitReadinessArgumentsSchema, csharpDevKitRestartArgumentsSchema, toJsonSchema } from "./schemas.js";
 import { DEBUG_TOOLS, handleActiveDebugSession, handleDebugHostReadiness, handleRestartDebugSession, handleStopDebugSession } from "./debug.js";
 
 const CSHARP_DEV_KIT_EXTENSION_ID = "ms-dotnettools.csdevkit";
@@ -64,6 +64,7 @@ type CSharpDevKitCommand = {
   menuContexts: string[];
   registered: boolean;
   argumentsSchema: Record<string, unknown>;
+  argumentsExample?: unknown[];
 };
 
 const EXISTING_DEBUG_DEVKIT_COMMANDS = new Set([
@@ -158,8 +159,13 @@ async function getCSharpDevKitCommands(): Promise<CSharpDevKitCommand[]> {
       menuContexts: menuContexts.get(item.command) ?? [],
       registered: registeredCommands.has(item.command),
       argumentsSchema: DEBUG_LAUNCH_COMMANDS.has(item.command)
-        ? toJsonSchema(z.array(z.object({ scheme: z.literal("file"), fsPath: z.string().min(1) }).passthrough()).length(1))
+        ? item.command === "csdevkit.debug.projectDebugLaunch"
+          ? toJsonSchema(csharpDevKitProjectLaunchArgumentsSchema)
+          : toJsonSchema(z.array(z.object({ scheme: z.literal("file"), fsPath: z.string().min(1) }).passthrough()).length(1))
         : toJsonSchema(csharpDevKitArgumentsSchema),
+      ...(item.command === "csdevkit.debug.projectDebugLaunch"
+        ? { argumentsExample: [{ path: "/absolute/path/to/Project.csproj" }] }
+        : {}),
     }));
 
   return [...declaredCommands, ...ADDITIONAL_CSHARP_DEV_KIT_COMMANDS, ...DEBUG_DEVKIT_COMMANDS];
@@ -170,7 +176,7 @@ function getInvocationSyntax(command: CSharpDevKitCommand): string {
     return `Call csharp_devkit_execute_command with commandId "${command.command}" and arguments containing the file URI object for the target project, for example [{"scheme":"file","fsPath":"<absolute Esi.Web .csproj path>"}]. The C# Dev Kit resolves the project launch settings, including its configured port.`;
   }
   if (command.command === "csdevkit.debug.projectDebugLaunch") {
-    return `Call csharp_devkit_execute_command with commandId "${command.command}" and arguments containing the project URI object, for example [{"scheme":"file","fsPath":"<absolute .csproj path>"}].`;
+    return `Call csharp_devkit_execute_command with commandId "${command.command}" and arguments containing one project context object with its absolute path, for example [{"path":"<absolute .csproj path>"}]. The C# Dev Kit converts it to a VS Code file URI.`;
   }
   if (VIRTUAL_DEBUG_COMMANDS.has(command.command)) {
     return command.argumentsSchema.maxItems === 0
@@ -220,15 +226,15 @@ async function findProjectForActiveEditor(): Promise<vscode.Uri | undefined> {
 }
 
 async function resolveProjectLaunchArguments(argumentsValue: unknown[] | undefined): Promise<unknown[]> {
-  if (argumentsValue && argumentsValue.length > 0) return argumentsValue;
+  if (argumentsValue && argumentsValue.length > 0) return csharpDevKitProjectLaunchArgumentsSchema.parse(argumentsValue);
 
   const projectUri = await findProjectForActiveEditor();
-  if (projectUri) return [projectUri];
+  if (projectUri) return [{ path: projectUri.fsPath }];
 
   const projects = await vscode.workspace.findFiles("**/*.csproj", "**/{bin,obj,node_modules}/**");
-  if (projects.length === 1) return [projects[0]];
+  if (projects.length === 1) return [{ path: projects[0].fsPath }];
 
-  throw new Error("C# Dev Kit project launch requires a project URI; select a project in Solution Explorer or pass its file URI as the first argument");
+  throw new Error("C# Dev Kit project launch requires a project context; select a project in Solution Explorer or pass { path: \"<absolute .csproj path>\" } as the first argument");
 }
 
 async function executeHotReloadSilently(command: string, argumentsValue: unknown[]): Promise<unknown> {

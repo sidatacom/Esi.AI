@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Esi.AI.Backend.OpenVino</RootNamespace>
+    <PackageId>Esi.AI.Backend.OpenVino</PackageId>
+    <Version>0.1.0</Version>
+    <Description>OpenVINO inference backend module for Esi.AI.</Description>
+    <PackageTags>esi-ai;backend;openvino;inference</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Esi.AI.Backend.Abstractions/Esi.AI.Backend.Abstractions.csproj" />
+    <ProjectReference Include="../Esi.AI.Models/Esi.AI.Models.csproj" />
+    <ProjectReference Include="../../../origins/sidatacom/OpenVINO-CSharp-API/src/OpenVINO.CSharp.API/OpenVINO.CSharp.API.csproj" />
+    <PackageReference Include="JYPPX.OpenVINO.GenAI.runtime.ubuntu.26-x86_64" Version="2026.3.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
+    <PackageReference Include="OpenVINO.runtime.ubuntu.26-x86_64" Version="2026.3.1" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Esi.AI.Backend.OpenVino.Tests" />
+  </ItemGroup>
+
+</Project>

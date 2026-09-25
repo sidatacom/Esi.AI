@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
+using Esi.AI.Backend.Abstractions;
 using Esi.AI.Core.Chat;
 using Esi.AI.Models;
 using Microsoft.Extensions.Hosting;
@@ -19,6 +21,7 @@ public interface IModelRuntimeShutdown
 
 public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDisposable
 {
+    private static readonly JsonSerializerOptions BackendConfigurationJsonOptions = new(JsonSerializerDefaults.Web);
     private readonly LlamaModelLoader llama;
     private readonly OpenVinoModelLoader openVino;
     private readonly PythonInferenceServer python;
@@ -32,6 +35,7 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
     private readonly IModelRuntimeStatusPublisher statusPublisher;
     private readonly ModelLifecycleCoordinator lifecycleCoordinator;
     private readonly OpenVinoLoadGate openVinoLoadGate;
+    private readonly IBackendRuntimeResolver? backendRuntimeResolver;
     private readonly ILogger<ModelRuntime> logger;
     private readonly ConcurrentDictionary<string, PendingModel> pendingModels = new(StringComparer.OrdinalIgnoreCase);
     private int stopStarted;
@@ -55,7 +59,8 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         IModelRuntimeStatusPublisher? statusPublisher = null,
         ModelLifecycleCoordinator? lifecycleCoordinator = null,
         ILogger<ModelRuntime>? logger = null,
-        OpenVinoLoadGate? openVinoLoadGate = null)
+        OpenVinoLoadGate? openVinoLoadGate = null,
+        IBackendRuntimeResolver? backendRuntimeResolver = null)
     {
         this.llama = llama ?? throw new ArgumentNullException(nameof(llama));
         this.openVino = openVino ?? throw new ArgumentNullException(nameof(openVino));
@@ -71,13 +76,15 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         this.lifecycleCoordinator = lifecycleCoordinator ?? new ModelLifecycleCoordinator();
         this.logger = logger ?? NullLogger<ModelRuntime>.Instance;
         this.openVinoLoadGate = openVinoLoadGate ?? new OpenVinoLoadGate();
+        this.backendRuntimeResolver = backendRuntimeResolver;
     }
 
     /// <inheritdoc />
     public Task StartAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        OpenVinoModelLoader.InitializeRuntime();
+        if (backendRuntimeResolver?.Runtimes.Any(runtime => runtime.Descriptor.Family == ConfigurationBackend.OpenVino) != true)
+            OpenVinoModelLoader.InitializeRuntime();
         return Task.CompletedTask;
     }
 
@@ -88,13 +95,19 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         var openVinoStatus = openVino.GetStatus();
         var pythonStatus = python.GetStatus();
         var dotLlmStatus = dotLlm.GetStatus();
+        var backendRuntimeStatuses = backendRuntimeResolver?.Runtimes.Select(runtime => runtime.GetStatus()).ToArray() ?? [];
+        var backendLoadedModels = backendRuntimeStatuses.SelectMany(status => status.LoadedModels).ToArray();
         var loadedModels = llamaStatus.LoadedModels
             .Concat(CreateOpenVinoLoadedModels(openVinoStatus))
             .Concat(pythonStatus.LoadedModels)
             .Concat(dotLlmStatus.LoadedModels)
-            .Concat(CreatePendingModelStatuses(llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus))
+            .Concat(backendLoadedModels)
+            .Concat(CreatePendingModelStatuses(llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus, backendLoadedModels))
             .ToArray();
 
+        var activeBackendStatus = backendRuntimeStatuses.FirstOrDefault(status => status.IsModelLoaded);
+        if (activeBackendStatus is not null)
+            return activeBackendStatus with { LoadedModels = loadedModels };
         if (dotLlmStatus.IsModelLoaded)
             return dotLlmStatus with { LoadedModels = loadedModels };
         if (pythonStatus.IsModelLoaded || pythonStatus.ModelPath is not null)
@@ -118,13 +131,40 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         return llama.GetStatus() with { LoadedModels = aggregateStatus.LoadedModels };
     }
 
-    public OpenVinoModelLoadStatus GetOpenVinoStatus() => openVino.GetStatus();
+    public OpenVinoModelLoadStatus GetOpenVinoStatus()
+    {
+        var packagedStatus = TryResolveBackendRuntime("openvino")?.GetStatus();
+        if (packagedStatus is not null)
+            return new OpenVinoModelLoadStatus(
+                packagedStatus.ModelPath,
+                packagedStatus.Backend,
+                packagedStatus.IsModelLoaded,
+                null,
+                null,
+                packagedStatus.LoadLog);
+        return openVino.GetStatus();
+    }
 
     /// <summary>Returns the current lifecycle state for all model loading operations.</summary>
     public IReadOnlyList<ModelLifecycleState> ReadLifecycleStates() => lifecycleCoordinator.ReadAll();
 
     public bool SupportsImageInput(string backend, string? modelPath)
     {
+        var matchingRuntimes = backendRuntimeResolver?.Runtimes
+            .Where(runtime => runtime.GetStatus().LoadedModels.Any(model =>
+                string.Equals(model.ModelPath, modelPath, StringComparison.OrdinalIgnoreCase)))
+            .ToArray() ?? [];
+        if (matchingRuntimes.Length == 1)
+            return matchingRuntimes[0].SupportsImageInput(modelPath);
+        if (matchingRuntimes.Length > 1)
+        {
+            var matchingRoute = matchingRuntimes.SingleOrDefault(runtime =>
+                string.Equals(runtime.Descriptor.Route, backend, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(runtime.Descriptor.Id, backend, StringComparison.OrdinalIgnoreCase));
+            if (matchingRoute is not null)
+                return matchingRoute.SupportsImageInput(modelPath);
+        }
+
         try
         {
             return runtimeRegistry.Resolve(backend).SupportsImageInput(modelPath);
@@ -135,8 +175,19 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         }
     }
 
-    public Task LoadAsync(LoadModelRequest request, CancellationToken cancellationToken = default) =>
-        TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.Llama, request.Backend, async () =>
+    public Task LoadAsync(LoadModelRequest request, CancellationToken cancellationToken = default)
+    {
+        var packagedRuntime = TryResolveBackendRuntime(ConfigurationBackend.Llama, request.Backend);
+        if (packagedRuntime is not null)
+        {
+            var packagedRequest = new BackendLoadRequest(
+                request.ModelPath,
+                packagedRuntime.Descriptor.Id,
+                JsonSerializer.SerializeToElement(request, BackendConfigurationJsonOptions));
+            return LoadBackendAsync(packagedRequest, cancellationToken);
+        }
+
+        return TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.Llama, request.Backend, async () =>
         {
             await prerequisites.PrepareAsync(
                 ConfigurationBackend.Llama,
@@ -144,23 +195,99 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
                 devices: [$"{request.Backend.ToLowerInvariant()}:0"]).ConfigureAwait(false);
             await llamaAdapter.LoadAsync(request, cancellationToken).ConfigureAwait(false);
         });
+    }
 
     public Task LoadAsync(
         OpenVinoLoadRequest request,
-        CancellationToken cancellationToken = default) =>
-        ExecuteOpenVinoLoadAsync(() => TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.OpenVino, request.Device, async () =>
+        CancellationToken cancellationToken = default)
+    {
+        if (TryResolveBackendRuntime("openvino") is { } packagedRuntime)
+        {
+            var packagedRequest = new BackendLoadRequest(
+                request.ModelPath,
+                packagedRuntime.Descriptor.Id,
+                JsonSerializer.SerializeToElement(request, BackendConfigurationJsonOptions));
+            return LoadBackendAsync(packagedRequest, cancellationToken);
+        }
+
+        return ExecuteOpenVinoLoadAsync(() => TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.OpenVino, request.Device, async () =>
         {
             await prerequisites.PrepareAsync(ConfigurationBackend.OpenVino, cancellationToken: cancellationToken).ConfigureAwait(false);
             await openVinoAdapter.LoadAsync(request, cancellationToken).ConfigureAwait(false);
         }));
+    }
 
-    public Task LoadAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default) =>
-        TrackPendingModelAsync(request.ModelPath, request.Backend, request.Backend switch
+    public Task LoadAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default)
+    {
+        var variantId = request.Backend == ConfigurationBackend.Vllm
+            ? request.EnableXpuGraph || request.Device.Contains("xpu", StringComparison.OrdinalIgnoreCase) || request.Devices?.Any(device => device.Contains("xpu", StringComparison.OrdinalIgnoreCase)) == true
+                ? "vllm.xpu"
+                : "vllm.cuda12"
+            : string.Empty;
+        if (!string.IsNullOrWhiteSpace(variantId) && TryResolveBackendRuntime(variantId) is { } packagedRuntime)
+        {
+            var packagedRequest = new BackendLoadRequest(
+                request.ModelPath,
+                packagedRuntime.Descriptor.Id,
+                JsonSerializer.SerializeToElement(request, BackendConfigurationJsonOptions));
+            return LoadBackendAsync(packagedRequest, cancellationToken);
+        }
+
+        return TrackPendingModelAsync(request.ModelPath, request.Backend, request.Backend switch
         {
             ConfigurationBackend.Vllm => "vLLM",
             ConfigurationBackend.Sglang => "SGLang",
             _ => request.Backend.ToString()
         }, () => pythonAdapter.LoadAsync(request, cancellationToken));
+    }
+
+    public Task LoadBackendAsync(BackendLoadRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var runtime = backendRuntimeResolver?.Resolve(request.VariantId)
+            ?? throw new InvalidOperationException("No packaged backend runtime resolver is registered.");
+        if (runtime.Descriptor.Family == ConfigurationBackend.Sglang || runtime.Descriptor.Family == ConfigurationBackend.DotLlm)
+            throw new InvalidOperationException($"Backend family '{runtime.Descriptor.Family}' cannot be loaded by a packaged runtime in this host.");
+
+        return TrackPendingModelAsync(request.ModelPath, runtime.Descriptor.Family, runtime.Descriptor.RuntimeName,
+            () => runtime.LoadAsync(request, cancellationToken), request.VariantId);
+    }
+
+    public bool HasBackendRuntime(string variantId) => TryResolveBackendRuntime(variantId) is not null;
+
+    public string? GetBackendRoute(string variantId) => TryResolveBackendRuntime(variantId)?.Descriptor.Route;
+
+    public string? GetLoadedBackendVariantId(string? modelPath)
+    {
+        if (backendRuntimeResolver is null || string.IsNullOrWhiteSpace(modelPath))
+            return null;
+        var matches = backendRuntimeResolver.Runtimes
+            .SelectMany(runtime => runtime.GetStatus().LoadedModels)
+            .Where(model => model.IsModelLoaded && string.Equals(model.ModelPath, modelPath, StringComparison.OrdinalIgnoreCase))
+            .Select(model => model.BackendVariantId)
+            .Where(variantId => !string.IsNullOrWhiteSpace(variantId))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return matches.Length switch
+        {
+            0 => null,
+            1 => matches[0],
+            _ => throw new InvalidOperationException($"Multiple packaged backend variants have loaded '{modelPath}'.")
+        };
+    }
+
+    public Task<GenerationResult> GenerateBackendAsync(
+        OpenAiBackendChatRequest request,
+        Func<string, Task>? onToken = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (string.IsNullOrWhiteSpace(request.BackendVariantId))
+            throw new ArgumentException("A packaged backend variant ID is required.", nameof(request));
+        var runtime = backendRuntimeResolver?.Resolve(request.BackendVariantId)
+            ?? throw new InvalidOperationException("No packaged backend runtime resolver is registered.");
+        return runtime.GenerateAsync(request, onToken, cancellationToken);
+    }
 
     public Task LoadAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default) =>
         TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.DotLlm, "dotLLM / In-Process", async () =>
@@ -182,6 +309,11 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
     public async Task StopLlamaAsync(CancellationToken cancellationToken = default)
     {
         await llama.StopAsync(cancellationToken).ConfigureAwait(false);
+        if (backendRuntimeResolver is not null)
+        {
+            foreach (var runtime in backendRuntimeResolver.Runtimes.Where(runtime => runtime.Descriptor.Family == ConfigurationBackend.Llama))
+                await runtime.StopAsync(cancellationToken).ConfigureAwait(false);
+        }
         await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
     }
 
@@ -200,6 +332,11 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         await StopRuntimeAsync("OpenVINO", () => ExecuteOpenVinoOperationAsync(() => openVino.UnloadAsync(cancellationToken)), failures).ConfigureAwait(false);
         await StopRuntimeAsync("Python", () => python.StopAsync(cancellationToken), failures).ConfigureAwait(false);
         await StopRuntimeAsync("dotLLM", () => dotLlm.StopAsync(cancellationToken), failures).ConfigureAwait(false);
+        if (backendRuntimeResolver is not null)
+        {
+            foreach (var runtime in backendRuntimeResolver.Runtimes)
+                await StopRuntimeAsync(runtime.Descriptor.Id, () => runtime.StopAsync(cancellationToken), failures).ConfigureAwait(false);
+        }
         await PublishStatusAsync(
             "LoadedModel_Delete",
             () => statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken)).ConfigureAwait(false);
@@ -210,6 +347,14 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
 
     public async Task UnloadLlamaAsync(string modelPath, CancellationToken cancellationToken = default)
     {
+        var variantId = GetLoadedBackendVariantId(modelPath);
+        if (!string.IsNullOrWhiteSpace(variantId))
+        {
+            await backendRuntimeResolver!.Resolve(variantId).UnloadAsync(modelPath, cancellationToken).ConfigureAwait(false);
+            await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         await llama.UnloadAsync(modelPath, cancellationToken).ConfigureAwait(false);
         await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
     }
@@ -230,6 +375,15 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
 
     public async Task UnloadOpenVinoAsync(CancellationToken cancellationToken = default)
     {
+        var packagedRuntime = TryResolveBackendRuntime("openvino");
+        var packagedModelPath = packagedRuntime?.GetStatus().ModelPath;
+        if (packagedRuntime is not null && !string.IsNullOrWhiteSpace(packagedModelPath))
+        {
+            await packagedRuntime.UnloadAsync(packagedModelPath, cancellationToken).ConfigureAwait(false);
+            await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         await ExecuteOpenVinoOperationAsync(() => openVino.UnloadAsync(cancellationToken)).ConfigureAwait(false);
         await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
     }
@@ -237,6 +391,11 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
     public async Task StopPythonAsync(CancellationToken cancellationToken = default)
     {
         await python.StopAsync(cancellationToken).ConfigureAwait(false);
+        if (backendRuntimeResolver is not null)
+        {
+            foreach (var runtime in backendRuntimeResolver.Runtimes.Where(runtime => runtime.Descriptor.Family == ConfigurationBackend.Vllm))
+                await runtime.StopAsync(cancellationToken).ConfigureAwait(false);
+        }
         await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
     }
 
@@ -250,8 +409,28 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task UnloadAsync(string modelPath, ConfigurationBackend backend, CancellationToken cancellationToken = default)
+    public async Task UnloadAsync(
+        string modelPath,
+        ConfigurationBackend backend,
+        CancellationToken cancellationToken = default,
+        string backendVariantId = "")
     {
+        var packagedVariantId = string.IsNullOrWhiteSpace(backendVariantId)
+            ? GetLoadedBackendVariantId(modelPath)
+            : backendVariantId;
+        if (!string.IsNullOrWhiteSpace(packagedVariantId))
+        {
+            var packagedRuntime = backendRuntimeResolver!.Resolve(packagedVariantId);
+            if (packagedRuntime.Descriptor.Family != backend)
+                throw new ArgumentException(
+                    $"Backend variant '{packagedVariantId}' belongs to '{packagedRuntime.Descriptor.Family}', not '{backend}'.",
+                    nameof(backendVariantId));
+
+            await packagedRuntime.UnloadAsync(modelPath, cancellationToken).ConfigureAwait(false);
+            await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
         if (backend == ConfigurationBackend.OpenVino)
             await ExecuteOpenVinoOperationAsync(() => openVino.UnloadAsync(cancellationToken));
         else if (backend is ConfigurationBackend.Vllm or ConfigurationBackend.Sglang)
@@ -272,10 +451,15 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         dotLlm.Dispose();
     }
 
-    private async Task TrackPendingModelAsync(string modelPath, ConfigurationBackend backend, string runtime, Func<Task> load)
+    private async Task TrackPendingModelAsync(
+        string modelPath,
+        ConfigurationBackend backend,
+        string runtime,
+        Func<Task> load,
+        string backendVariantId = "")
     {
-        var key = $"{backend}|{modelPath}";
-        pendingModels[key] = new PendingModel(modelPath, backend, runtime);
+        var key = $"{backend}|{backendVariantId}|{modelPath}";
+        pendingModels[key] = new PendingModel(modelPath, backend, runtime, backendVariantId);
         lifecycleCoordinator.Begin(modelPath, backend, runtime);
         var completed = false;
         Exception? loadFailure = null;
@@ -359,9 +543,10 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         ModelLoadStatus llamaStatus,
         OpenVinoModelLoadStatus openVinoStatus,
         ModelLoadStatus pythonStatus,
-        ModelLoadStatus dotLlmStatus) =>
+        ModelLoadStatus dotLlmStatus,
+        IReadOnlyCollection<LoadedModelStatus> backendLoadedModels) =>
         pendingModels.Values
-            .Where(pending => !IsAlreadyLoaded(pending, llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus))
+            .Where(pending => !IsAlreadyLoaded(pending, llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus, backendLoadedModels))
             .Select(pending => new LoadedModelStatus(
                 pending.ModelPath,
                 pending.Backend,
@@ -373,15 +558,23 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
                 null,
                 GetPendingLoadLog(pending.Backend, llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus),
                 true,
-                false)).ToArray();
+                false,
+                pending.BackendVariantId)).ToArray();
 
     private static bool IsAlreadyLoaded(
         PendingModel pending,
         ModelLoadStatus llamaStatus,
         OpenVinoModelLoadStatus openVinoStatus,
         ModelLoadStatus pythonStatus,
-        ModelLoadStatus dotLlmStatus)
+        ModelLoadStatus dotLlmStatus,
+        IReadOnlyCollection<LoadedModelStatus> backendLoadedModels)
     {
+        if (!string.IsNullOrWhiteSpace(pending.BackendVariantId))
+            return backendLoadedModels.Any(model =>
+                model.IsModelLoaded &&
+                string.Equals(model.BackendVariantId, pending.BackendVariantId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(model.ModelPath, pending.ModelPath, StringComparison.OrdinalIgnoreCase));
+
         if (pending.Backend == ConfigurationBackend.OpenVino)
             return openVinoStatus.IsModelLoaded && string.Equals(openVinoStatus.ModelPath, pending.ModelPath, StringComparison.OrdinalIgnoreCase);
 
@@ -434,7 +627,18 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
             IsModelLoaded: true)];
     }
 
-    private sealed record PendingModel(string ModelPath, ConfigurationBackend Backend, string Runtime);
+    private IBackendRuntime? TryResolveBackendRuntime(string variantId) =>
+        string.IsNullOrWhiteSpace(variantId)
+            ? null
+            : backendRuntimeResolver?.Runtimes.FirstOrDefault(runtime =>
+                string.Equals(runtime.Descriptor.Id, variantId, StringComparison.OrdinalIgnoreCase));
+
+    private IBackendRuntime? TryResolveBackendRuntime(ConfigurationBackend family, string route) =>
+        backendRuntimeResolver?.Runtimes.FirstOrDefault(runtime =>
+            runtime.Descriptor.Family == family &&
+            string.Equals(runtime.Descriptor.Route, route, StringComparison.OrdinalIgnoreCase));
+
+    private sealed record PendingModel(string ModelPath, ConfigurationBackend Backend, string Runtime, string BackendVariantId);
 
     private sealed class NoOpModelRuntimeStatusPublisher : IModelRuntimeStatusPublisher
     {

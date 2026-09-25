@@ -14,6 +14,16 @@ Model: `Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16`.
 | [Eager MTP4](tests/06-eager-mtp4.md) | Qwen3.8-27B GPTQ INT4 G128 | vLLM XPU 0.28.0 | FP8 | MTP4 | Disabled | `max_num_seqs=1`, batch 8192 | 132 output tokens | 21.765 tok/s |
 | [Graph MTP2](tests/07-graph-mtp2.md) | Qwen3.8-27B GPTQ INT4 G128 | vLLM XPU 0.28.0 | FP8 | MTP2 | Enabled | `max_num_seqs=1`, batch 8192 | 132 output tokens | 51.857 tok/s |
 
+## External references and optimization notes
+
+These reports are not local Studio measurements and are not directly comparable to the table above.
+
+| Report | Evidence | Result |
+|---|---|---:|
+| [Reddit reference](tests/08-reddit-reference.md) | External vLLM XPU reference, five measured runs | 84.65 tok/s median |
+| [Optimization lab FP8 KV](tests/09-optimization-lab-fp8.md) | External result; quality-rejected checkpoint | 83.7019 tok/s |
+| [Optimization lab native KV](tests/10-optimization-lab-native-kv.md) | External result; quality-rejected checkpoint | 87.6054 tok/s |
+
 ## Shared local parameters
 
 - GPU memory utilization: `0.88`

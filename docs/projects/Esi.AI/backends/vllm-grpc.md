@@ -10,8 +10,8 @@ Native runtimes are bundled with Studio. When either Python backend is loaded
 with the default `PythonExecutable` value `python3`, Studio automatically
 creates and prepares an isolated environment:
 
-- `~/.venvs/esi-ai-vllm` for vLLM
-- `~/.venvs/esi-ai-sglang` for SGLang
+- `~/.venvs/esi-ai-vllm` for vLLM CUDA and `~/.venvs/esi-ai-vllm-xpu` for vLLM XPU
+- `~/.venvs/esi-ai-sglang` for SGLang XPU and `~/.venvs/esi-ai-sglang-cuda` for SGLang CUDA
 
 Only missing dependencies are installed. The environment is shared by later
 loads of the same backend, but vLLM and SGLang never share an environment.
@@ -21,8 +21,8 @@ The equivalent manual installation is:
 python3 -m venv ~/.venvs/esi-ai-vllm
 ~/.venvs/esi-ai-vllm/bin/python -m pip install -r src/Esi.AI/Esi.AI.Core/Python/vllm-requirements.txt
 
-python3 -m venv ~/.venvs/esi-ai-sglang
-~/.venvs/esi-ai-sglang/bin/python -m pip install -r src/Esi.AI/Esi.AI.Core/Python/sglang-requirements.txt
+python3 -m venv ~/.venvs/esi-ai-sglang-cuda
+~/.venvs/esi-ai-sglang-cuda/bin/python -m pip install -r src/Esi.AI/Esi.AI.Core/Python/sglang-cuda-requirements.txt
 ```
 
 The environment root can be changed with `ESI_PYTHON_ENV_ROOT`. Existing

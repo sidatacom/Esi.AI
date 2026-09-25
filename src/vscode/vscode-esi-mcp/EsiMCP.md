@@ -34,6 +34,25 @@ EsiMCP exposes the installed Microsoft C# Dev Kit as a separate command area:
 
 Manifest command execution is restricted to command IDs declared by `ms-dotnettools.csdevkit/package.json`; virtual DebugManager commands use an explicit EsiMCP allowlist. Arbitrary VS Code commands are rejected.
 
+### Launching a C# Dev Kit Project
+
+For a manual C# start, Microsoft documents **Start New Instance** from the project context menu in Solution Explorer, and **Debug: Select and Start Debugging** / **Show all automatic debug configurations** for creating and choosing dynamic configurations in the Debug view. See [C# debugging in VS Code](https://code.visualstudio.com/docs/csharp/debugging). A `launch.json` is not required for the normal C# Dev Kit flow.
+
+For EsiMCP automation, invoke the declared `csdevkit.debug.projectDebugLaunch` command with a project command-context object as its first positional argument:
+
+```json
+{
+	"commandId": "csdevkit.debug.projectDebugLaunch",
+	"arguments": [
+		{
+			"path": "/absolute/path/to/Project.csproj"
+		}
+	]
+}
+```
+
+The wrapper forwards supplied arguments unchanged. The C# Dev Kit accepts this command context and converts its `path` value to a VS Code file URI. If omitted, EsiMCP tries the active editor's containing project, then a workspace with exactly one `.csproj`; multi-project workspaces must pass the project explicitly. `csdevkit.debug.selectStartupProject` selects a startup project but does not create/select a Run and Debug configuration. After launch, verify the session with `csdevkit.debug.active.session` and host readiness with `csdevkit.debug.check.host.readyness`; command dispatch alone is not evidence that the process started. A 2026-09-25 test dispatched the command with the context above but produced no session or port listener, so this automated launch path remains unverified in that workspace; recover through **Start New Instance** or **Debug: Select and Start Debugging** rather than treating the dispatch as a successful start.
+
 ## Release Process
 
 When publishing a new version, follow these steps in order:

@@ -21,6 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../Esi.AI.Backend.Abstractions/Esi.AI.Backend.Abstractions.csproj" />
     <ProjectReference Include="../Esi.AI.Models/Esi.AI.Models.csproj" />
     <ProjectReference Include="../../../origins/sidatacom/LLamaSharp/LLama/LLamaSharp.csproj" />
     <ProjectReference Include="../../../origins/sidatacom/OpenVINO-CSharp-API/src/OpenVINO.CSharp.API/OpenVINO.CSharp.API.csproj" />

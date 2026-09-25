@@ -18,7 +18,9 @@
 
 ## Esi.AI Studio Startregel
 
-- Starte `Esi.AI.Studio` mit C# Dev Kit über `csdevkit.debug.projectDebugLaunch` beziehungsweise **Start New Instance** im Solution Explorer.
+- Starte `Esi.AI.Studio` mit C# Dev Kit. Für automatisierte Starts verwende `csdevkit.debug.projectDebugLaunch` mit dem expliziten Studio-Projekt-Kontext aus `.github/skills/vscode-debug/SKILL.md`; manuell verwende **Start New Instance** am Studio-Projekt im Solution Explorer.
+- `csdevkit.debug.selectStartupProject` wählt nur das Startup-Projekt und ersetzt weder eine Run-and-Debug-Konfiguration noch den Startbefehl. Für manuelle F5-/Debug-View-Starts erzeuge oder wähle die dynamische C#-Konfiguration über **Debug: Select and Start Debugging** oder **Show all automatic debug configurations**.
+- Ein gesendeter `projectDebugLaunch`-Befehl ist kein Startnachweis. Prüfe danach `csdevkit.debug.active.session`; bei `null` lies die Debug-Ausgabe und behebe den Launch-Kontext, statt wiederholt blind zu starten.
 - C# Dev Kit verwendet dynamische, speicherinterne Debugkonfigurationen. Für den normalen Start dürfen keine `.vscode/launch.json` oder `.vscode/tasks.json` vorausgesetzt oder neu erzeugt werden.
 - Verwende `csdevkit.debug.hotReload` für Hot Reload und `csdevkit.debug.showHotReloadPanel` zur Diagnose.
 - Für den Klartext der Debug-Console verwende bei aktiver Session `csdevkit.debug.output.diagnostics` über EsiMCP. Die Antwort enthält `output` und `lastLine`; bei der Frage nach der letzten Zeile ist `lastLine` maßgeblich. `csdevkit.debug.showHotReloadPanel` öffnet nur das VS-Code-Panel und ersetzt diese strukturierte Diagnose nicht.

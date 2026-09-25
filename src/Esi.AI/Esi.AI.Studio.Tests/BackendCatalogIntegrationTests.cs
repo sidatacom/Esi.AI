@@ -1,3 +1,4 @@
+using Esi.AI.Backend.Abstractions;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
 using Esi.AI.Studio.Data;
@@ -5,6 +6,7 @@ using Esi.AI.Studio.Hubs;
 using Esi.AI.Studio.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.SignalR;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -13,6 +15,20 @@ namespace Esi.AI.Studio.Tests;
 [TestClass]
 public sealed class BackendCatalogIntegrationTests
 {
+    [TestMethod]
+    public void AddEsiAiBackendModules_RegistersEveryPackagedVariant()
+    {
+        using var provider = new ServiceCollection()
+            .AddEsiAiBackendModules()
+            .BuildServiceProvider();
+        var runtimeIds = provider.GetRequiredService<IBackendRuntimeResolver>()
+            .Runtimes.Select(runtime => runtime.Descriptor.Id).ToArray();
+
+        CollectionAssert.AreEquivalent(
+            new[] { "llama.cuda12", "llama.sycl", "llama.vulkan", "openvino", "vllm.cuda12", "vllm.xpu" },
+            runtimeIds);
+    }
+
     [TestMethod]
     public void BackendReferenceModels_DefineOneEntryPerBackend()
     {
@@ -723,6 +739,8 @@ public sealed class BackendCatalogIntegrationTests
 
         Assert.AreEqual(ConfigurationBackend.Llama, savedLlama.Backend);
         Assert.AreEqual(ConfigurationBackend.Vllm, savedPython.Backend);
+        Assert.AreEqual("llama.cpu", savedLlama.BackendVariantId);
+        Assert.AreEqual("vllm.cuda12", savedPython.BackendVariantId);
         Assert.AreEqual(2, configurations.Count(configuration => configuration.Name == "Shared defaults"));
     }
 

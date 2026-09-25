@@ -173,7 +173,7 @@ public sealed class OpenAiCompatibleController(
         CancellationToken cancellationToken) =>
         ExecuteApplicationModelOperationAsync(
             request,
-            modelRequest => RequireDataService().UnloadModelAsync(modelRequest.ModelPath, modelRequest.Backend, cancellationToken),
+            modelRequest => RequireDataService().UnloadModelAsync(modelRequest.ModelPath, modelRequest.Backend, cancellationToken, modelRequest.BackendVariantId),
             cancellationToken,
             requestValidator: modelRequest => string.IsNullOrWhiteSpace(modelRequest.ModelPath)
                 ? CreateError("ModelPath is required.", "invalid_request_error")
@@ -412,7 +412,8 @@ public sealed class OpenAiCompatibleController(
         var currentStatus = modelRuntime.LoadedModel_Read();
         var matchingModel = currentStatus.LoadedModels.FirstOrDefault(model =>
             string.Equals(model.ModelPath, configuration.ModelPath, StringComparison.OrdinalIgnoreCase) &&
-            model.Backend == configuration.Backend);
+            model.Backend == configuration.Backend &&
+            string.Equals(model.BackendVariantId, configuration.BackendVariantId, StringComparison.OrdinalIgnoreCase));
         if (matchingModel is null)
         {
             if (!configuration.AutoLaunch)
@@ -428,7 +429,7 @@ public sealed class OpenAiCompatibleController(
         }
         else if (!matchingModel.IsLoading)
         {
-            return GetLoadedModelStatus(currentStatus, configuration.ModelPath, configuration.Backend);
+            return GetLoadedModelStatus(currentStatus, configuration.ModelPath, configuration.Backend, configuration.BackendVariantId);
         }
 
         var loadTask = dataService.LoadModelConfigurationAsync(configuration.Id, cancellationToken);
@@ -452,7 +453,7 @@ public sealed class OpenAiCompatibleController(
         }
 
         await TraceAsync(requestId, "Backend", "in", "Konfiguration geladen", $"{configuration.Name} ist bereit").ConfigureAwait(false);
-        return GetLoadedModelStatus(loadedStatus, configuration.ModelPath, configuration.Backend);
+        return GetLoadedModelStatus(loadedStatus, configuration.ModelPath, configuration.Backend, configuration.BackendVariantId);
     }
 
     private ModelLoadStatus GetLoadedModelStatus(string? requestedModel, ConfigurationBackend? requestedBackend = null) =>
@@ -461,7 +462,8 @@ public sealed class OpenAiCompatibleController(
     private ModelLoadStatus GetLoadedModelStatus(
         ModelLoadStatus status,
         string? requestedModel,
-        ConfigurationBackend? requestedBackend = null)
+        ConfigurationBackend? requestedBackend = null,
+        string? requestedVariantId = null)
     {
         if (!status.IsModelLoaded || string.IsNullOrWhiteSpace(status.Backend))
             throw new InvalidOperationException("No model is currently loaded.");
@@ -472,13 +474,16 @@ public sealed class OpenAiCompatibleController(
         var loadedModel = status.LoadedModels.FirstOrDefault(model =>
             (string.Equals(model.ModelPath, requestedModel, StringComparison.OrdinalIgnoreCase) ||
              string.Equals(Path.GetFileName(model.ModelPath), requestedModel, StringComparison.OrdinalIgnoreCase)) &&
-            (!requestedBackend.HasValue || model.Backend == requestedBackend));
+            (!requestedBackend.HasValue || model.Backend == requestedBackend) &&
+            (string.IsNullOrWhiteSpace(requestedVariantId) || string.Equals(model.BackendVariantId, requestedVariantId, StringComparison.OrdinalIgnoreCase)));
         if (loadedModel is null)
             throw new InvalidOperationException($"The selected model '{requestedModel}' is not loaded. Load it in Esi.AI Studio first.");
 
         var backend = loadedModel.Backend switch
         {
-            ConfigurationBackend.Llama => loadedModel.Runtime,
+            ConfigurationBackend.Llama => string.IsNullOrWhiteSpace(loadedModel.BackendVariantId)
+                ? loadedModel.Runtime
+                : modelRuntime.GetBackendRoute(loadedModel.BackendVariantId) ?? loadedModel.Runtime,
             ConfigurationBackend.OpenVino => "OpenVINO",
             ConfigurationBackend.Vllm => "vLLM",
             ConfigurationBackend.Sglang => "SGLang",
@@ -495,7 +500,8 @@ public sealed class OpenAiCompatibleController(
             Devices = loadedModel.Devices,
             CpuModelBufferMiB = loadedModel.CpuModelBufferMiB,
             LoadLog = loadedModel.LoadLog,
-            IsModelLoaded = !loadedModel.IsLoading
+            IsModelLoaded = !loadedModel.IsLoading,
+            BackendVariantId = loadedModel.BackendVariantId
         };
     }
 

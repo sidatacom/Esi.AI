@@ -132,6 +132,9 @@ export const csharpDevKitListCommandsSchema = z.object({
   commandId: z.string().min(1).max(256).optional().describe("Optional command ID to return only that command and its invocation syntax"),
 }).strict();
 export const csharpDevKitArgumentsSchema = z.array(z.unknown()).max(20).describe("Optional positional arguments forwarded to the C# Dev Kit command; the extension does not publish command-specific argument metadata");
+export const csharpDevKitProjectLaunchArgumentsSchema = z.array(z.object({
+  path: z.string().min(1).describe("Absolute path to the project .csproj file"),
+}).strict()).length(1).describe("Pass one C# Dev Kit command-context object with a path property; C# Dev Kit converts it to a VS Code file URI");
 export const csharpDevKitReadinessArgumentsSchema = z.array(z.object({ sessionId: z.string().min(1).optional() }).strict()).max(1).describe("Optional active debug session ID; when omitted, EsiMCP reads vscode.debug.activeDebugSession at call time");
 export const csharpDevKitRestartArgumentsSchema = z.array(debugRestartSchema).max(1).describe("Optional restart settings; rebuildTaskName must match a task name from tasks.json");
 export const csharpDevKitNoArgumentsSchema = z.array(z.unknown()).max(0).describe("This virtual command does not accept arguments");

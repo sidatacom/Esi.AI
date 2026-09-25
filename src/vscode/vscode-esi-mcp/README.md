@@ -20,7 +20,7 @@ Direct local HTTP MCP server for visible VS Code terminals, debugging, C# Dev Ki
 
 The complete Esi.AI Studio debug lifecycle, including the virtual readiness,
 restart, and stop commands, is documented in
-[`docs/esimcp-debug-lifecycle.md`](../../../docs/esimcp-debug-lifecycle.md).
+[`EsiMCP Debug-Lifecycle`](../../../docs/projects/Esi.AI/development/esimcp-debug-lifecycle.md).
 
 ## How It Works
 

@@ -1,3 +1,5 @@
+using System.Text.Json;
+using Esi.AI.Backend.Abstractions;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -18,6 +20,39 @@ public sealed class ModelRuntimeTests
 
         Assert.IsFalse(loader.LoadedModel_Read().IsModelLoaded);
         Assert.IsFalse(loader.GetOpenVinoStatus().IsModelLoaded);
+    }
+
+    [TestMethod]
+    public async Task PackagedRuntime_LoadGenerateAndUnload_UsesSelectedVariant()
+    {
+        var runtime = new RecordingBackendRuntime();
+        using var modelRuntime = new ModelRuntime(
+            new LlamaModelLoader(),
+            new OpenVinoModelLoader(),
+            new PythonInferenceServer(),
+            new DotLlmInProcessRuntime(),
+            backendRuntimeResolver: new BackendRuntimeResolver([runtime]));
+        const string modelPath = "/models/variant.gguf";
+        var loadRequest = new BackendLoadRequest(modelPath, runtime.Descriptor.Id, JsonSerializer.SerializeToElement(new { }));
+
+        await modelRuntime.LoadBackendAsync(loadRequest);
+        Assert.AreEqual(runtime.Descriptor.Id, modelRuntime.LoadedModel_Read().LoadedModels.Single().BackendVariantId);
+
+        var chatRequest = new OpenAiBackendChatRequest(
+            "CUDA",
+            "variant",
+            modelPath,
+            [],
+            [new ChatMessage("user", "hello")],
+            null,
+            new ChatGenerationOptions(),
+            BackendVariantId: runtime.Descriptor.Id);
+        var generated = await modelRuntime.GenerateBackendAsync(chatRequest);
+
+        Assert.AreSame(chatRequest, runtime.LastRequest);
+        Assert.AreEqual("fake response", generated.Text);
+        await modelRuntime.UnloadAsync(modelPath, ConfigurationBackend.Llama);
+        Assert.IsFalse(modelRuntime.LoadedModel_Read().LoadedModels.Any());
     }
 
     [TestMethod]
@@ -162,6 +197,58 @@ public sealed class ModelRuntimeTests
             if (ThrowOnDelete)
                 throw new InvalidOperationException("delete publication failed");
             return Task.CompletedTask;
+        }
+    }
+
+    private sealed class RecordingBackendRuntime : IBackendRuntime
+    {
+        private string? modelPath;
+
+        public BackendVariantDescriptor Descriptor { get; } = new(
+            "llama.test",
+            ConfigurationBackend.Llama,
+            "Test backend",
+            "Test runtime",
+            "CUDA");
+
+        public OpenAiBackendChatRequest? LastRequest { get; private set; }
+
+        public ModelLoadStatus GetStatus()
+        {
+            var loadedModels = modelPath is null
+                ? Array.Empty<LoadedModelStatus>()
+                : [new LoadedModelStatus(modelPath, ConfigurationBackend.Llama, Descriptor.RuntimeName, 0, 0, 0, [], null, BackendVariantId: Descriptor.Id)];
+            return new ModelLoadStatus(modelPath, Descriptor.Route, 0, 0, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), loadedModels.Length > 0, loadedModels, Descriptor.Id);
+        }
+
+        public bool SupportsImageInput(string? path) => false;
+
+        public Task LoadAsync(BackendLoadRequest request, CancellationToken cancellationToken = default)
+        {
+            modelPath = request.ModelPath;
+            return Task.CompletedTask;
+        }
+
+        public Task UnloadAsync(string path, CancellationToken cancellationToken = default)
+        {
+            modelPath = null;
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken = default)
+        {
+            modelPath = null;
+            return Task.CompletedTask;
+        }
+
+        public Task<GenerationResult> GenerateAsync(OpenAiBackendChatRequest request, Func<string, Task>? onToken = null, CancellationToken cancellationToken = default)
+        {
+            LastRequest = request;
+            return Task.FromResult(new GenerationResult("fake response", 2, TimeSpan.Zero, 0));
+        }
+
+        public void Dispose()
+        {
         }
     }
 }
