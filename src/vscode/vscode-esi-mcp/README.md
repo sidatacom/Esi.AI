@@ -85,11 +85,12 @@ For a new Esi.Web launch, dispatch `csharp_devkit_execute_command` with
 `commandId: "csdevkit.debug.check.host.readyness"` and `arguments: []` in the same parallel tool-call batch. The backend owns
 `csdevkit.debug.start`; the frontend must invoke `csdevkit.debug.check.host.readyness` immediately and keep
 the blocking call open until it returns.
-The readiness tool reads live shell execution output when available and can also probe the
-configured `esimcp.debugHostReadinessUrl` for an active debug session. A result of
-`{ "ready": true }` confirms either the readiness string or the configured host endpoint was
-observed. `{ "ready": false }` means only that the timeout expired. `Canceled: Canceled` is
-external cancellation, not a timeout; stop the workflow and do not continue to browser actions.
+The readiness tool reads live shell execution output when available and probes the configured
+`esimcp.debugHostReadinessUrl`. A successful probe recognizes an already-running host even
+without an active debug session. Without a session or accepted launch, an unsuccessful probe
+returns `{ "ready": false }` immediately; an accepted launch remains pending until it is ready,
+fails, is canceled, terminates, or times out. `Canceled: Canceled` is external cancellation,
+not a timeout; stop the workflow and do not continue to browser actions.
 
 ## Usage Patterns
 

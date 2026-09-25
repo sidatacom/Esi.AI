@@ -11,6 +11,7 @@ import { log, logError } from "../utils/logger.js";
 
 export const DEBUG_SESSION_EXCEPTION_ERROR_CODE = "DEBUG_SESSION_EXCEPTION";
 const MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS = 64 * 1024;
+const MAX_DEBUG_HOST_PROBE_TIMEOUT_MS = 1000;
 const ESI_WEB_DEBUG_TERMINAL_NAME = "Esi.Web.dll";
 
 export class DebugSessionExceptionError extends Error {
@@ -46,17 +47,22 @@ interface DebugReadinessState {
   buffer: string;
 }
 
-type DebugReadinessSource = Pick<DebugManager, "getActiveSessionId" | "onDebugEvent"> & Partial<Pick<DebugManager, "onDebugOutput">>;
+type DebugReadinessSource = Pick<DebugManager, "onDebugEvent"> & Partial<Pick<DebugManager, "getActiveSessionId" | "onDebugOutput">>;
+type DebugReadinessTrackingSource = Pick<DebugManager, "onDebugEvent" | "onDebugOutput"> & Partial<Pick<DebugManager, "getActiveSessionId">>;
 
 export class SessionManager {
   private sessions = new Map<string, TerminalSession>();
   private outputWaiters = new Set<OutputWaiterState>();
   private debugReadinessBySession = new Map<string, DebugReadinessState>();
+  private closedDebugReadinessSessions = new Set<string>();
   private debugConsoleOutputBySession = new Map<string, string>();
+  private debugReadinessWaiters = new Set<(event?: DebugEvent) => void>();
+  private debugReadinessSource: DebugReadinessTrackingSource | undefined;
   private debugEventDisposable: vscode.Disposable | null = null;
   private debugOutputDisposable: vscode.Disposable | null = null;
   private terminalOutputDisposable: vscode.Disposable | null = null;
   private debugLaunchInProgress = false;
+  private debugLaunchSessionId: string | undefined;
   private debugLaunchTerminals = new Set<vscode.Terminal>();
   private debugReadinessByTerminal = new Map<vscode.Terminal, { ready: boolean; failed: boolean; buffer: string }>();
   private onSessionsChangedEmitter = new vscode.EventEmitter<void>();
@@ -71,14 +77,16 @@ export class SessionManager {
     // Listen for terminals being closed externally
     vscode.window.onDidCloseTerminal((terminal) => {
       this.debugLaunchTerminals.delete(terminal);
-      for (const state of this.debugReadinessBySession.values()) {
+      for (const [sessionId, state] of this.debugReadinessBySession) {
         if (state.terminal === terminal) {
-          state.terminal = null;
-          state.ready = false;
-          state.buffer = "";
+          this.debugReadinessBySession.delete(sessionId);
+          this.debugConsoleOutputBySession.delete(sessionId);
+          this.closedDebugReadinessSessions.add(sessionId);
+          log(`Removed debug readiness for closed terminal: session=${sessionId}, terminal=${terminal.name}`);
         }
       }
       this.debugReadinessByTerminal.delete(terminal);
+      this.notifyDebugReadinessWaiters();
       for (const [id, session] of this.sessions) {
         if (session.getTerminal() === terminal) {
           log(`Terminal closed externally for session ${id}`);
@@ -99,15 +107,18 @@ export class SessionManager {
 
   prepareDebugHostReadiness(): void {
     this.debugLaunchInProgress = true;
+    this.debugLaunchSessionId = undefined;
     this.debugLaunchTerminals.clear();
     this.debugReadinessByTerminal.clear();
-    this.resetDebugHostReadiness();
+    this.notifyDebugReadinessWaiters();
   }
 
   bindDebugHostReadiness(session: vscode.DebugSession): void {
     const terminal = [...this.debugLaunchTerminals].find((candidate) => this.isEsiWebDebugTerminal(candidate)) ?? null;
     const existing = this.debugReadinessBySession.get(session.id);
     const terminalState = terminal ? this.debugReadinessByTerminal.get(terminal) : undefined;
+    this.debugLaunchSessionId = session.id;
+    this.closedDebugReadinessSessions.delete(session.id);
     this.debugReadinessBySession.set(session.id, {
       sessionId: session.id,
       terminal,
@@ -119,6 +130,7 @@ export class SessionManager {
     this.debugLaunchInProgress = false;
     this.debugLaunchTerminals.clear();
     log(`Bound debug readiness: session=${session.id}, terminal=${terminal?.name ?? "none"}`);
+    this.notifyDebugReadinessWaiters();
   }
 
   private isEsiWebDebugTerminal(terminal: vscode.Terminal | null): terminal is vscode.Terminal {
@@ -128,6 +140,7 @@ export class SessionManager {
   cancelPendingDebugHostReadiness(): void {
     this.debugLaunchInProgress = false;
     this.debugLaunchTerminals.clear();
+    this.notifyDebugReadinessWaiters();
   }
 
   private captureTerminalOutput(): void {
@@ -154,15 +167,24 @@ export class SessionManager {
     log(`Terminal output: terminal=${terminal.name}, length=${chunk.length}, normalizedLength=${normalizedChunk.length}, sessions=${[...this.debugReadinessBySession.keys()].join(",") || "none"}`);
     const pendingState = this.debugReadinessByTerminal.get(terminal) ?? { ready: false, failed: false, buffer: "" };
     pendingState.buffer = `${pendingState.buffer}${normalizedChunk}`.slice(-MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS);
-    pendingState.ready = pendingState.buffer.includes(readyString);
+    pendingState.ready = pendingState.ready || pendingState.buffer.includes(readyString);
     pendingState.failed = pendingState.failed || this.containsStartupFailure(pendingState.buffer);
     this.debugReadinessByTerminal.set(terminal, pendingState);
     log(`Terminal readiness candidate: terminal=${terminal.name}, pendingBufferLength=${pendingState.buffer.length}, matched=${pendingState.ready}, tail=${JSON.stringify(pendingState.buffer.slice(-160))}`);
+
+    const activeSessionId = this.debugReadinessSource?.getActiveSessionId() ?? undefined;
+    const unboundStates = [...this.debugReadinessBySession.values()].filter((state) => !state.terminal);
+    const stateToBind = activeSessionId
+      ? this.debugReadinessBySession.get(activeSessionId)
+      : unboundStates.length === 1
+        ? unboundStates[0]
+        : undefined;
+    if (stateToBind && !stateToBind.terminal && (!activeSessionId || stateToBind.sessionId === activeSessionId)) {
+      stateToBind.terminal = terminal;
+      log(`Late-bound debug readiness terminal: session=${stateToBind.sessionId}, terminal=${terminal.name}`);
+    }
+
     for (const state of this.debugReadinessBySession.values()) {
-      if (!state.terminal) {
-        state.terminal = terminal;
-        log(`Late-bound debug readiness terminal: session=${state.sessionId}, terminal=${terminal.name}`);
-      }
       if (state.terminal !== terminal) {
         log(`Terminal readiness skipped session=${state.sessionId}: sameTerminal=${state.terminal === terminal}, boundTerminal=${state.terminal?.name ?? "none"}`);
         continue;
@@ -174,9 +196,11 @@ export class SessionManager {
         log(`Debug host readiness latched from terminal: session=${state.sessionId}, terminal=${terminal.name}`);
       }
     }
+    this.notifyDebugReadinessWaiters();
   }
 
   private updateDebugHostReadinessFromDebugOutput(session: vscode.DebugSession, chunk: string): void {
+    if (this.closedDebugReadinessSessions.has(session.id)) return;
     const readyString = this.getDebugReadyString();
     if (!readyString) return;
 
@@ -189,7 +213,7 @@ export class SessionManager {
       buffer: "",
     };
     existingState.buffer = `${existingState.buffer}${normalizedChunk}`.slice(-MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS);
-    existingState.ready = existingState.buffer.includes(readyString);
+    existingState.ready = existingState.ready || existingState.buffer.includes(readyString);
     existingState.failed = existingState.failed || this.containsStartupFailure(existingState.buffer);
     this.debugReadinessBySession.set(session.id, existingState);
 
@@ -197,6 +221,7 @@ export class SessionManager {
     this.debugConsoleOutputBySession.set(session.id, output.slice(-MAX_DEBUG_CONSOLE_BUFFER_CHARACTERS));
     if (existingState.ready) {
       for (let currentSession: vscode.DebugSession | undefined = session; currentSession; currentSession = currentSession.parentSession) {
+        if (this.closedDebugReadinessSessions.has(currentSession.id)) continue;
         const state = this.debugReadinessBySession.get(currentSession.id) ?? {
           sessionId: currentSession.id,
           terminal: null,
@@ -213,16 +238,23 @@ export class SessionManager {
     } else if (normalizedChunk.toLowerCase().includes("ready")) {
       log(`Debug readiness candidate did not match configured string: session=${session.id}, readyString=${JSON.stringify(readyString)}`);
     }
+    this.notifyDebugReadinessWaiters();
   }
 
-  attachDebugManager(debugManager: Pick<DebugManager, "onDebugEvent" | "onDebugOutput">): void {
+  attachDebugManager(debugManager: DebugReadinessTrackingSource): void {
     log("Attaching debug manager to readiness tracking");
+    this.debugReadinessSource = debugManager;
     this.debugEventDisposable?.dispose();
     this.debugOutputDisposable?.dispose();
     this.debugEventDisposable = debugManager.onDebugEvent((event) => {
       if (event.type === "terminated") {
+        const state = this.debugReadinessBySession.get(event.sessionId);
+        if (state?.terminal) this.debugReadinessByTerminal.delete(state.terminal);
         this.debugReadinessBySession.delete(event.sessionId);
         this.debugConsoleOutputBySession.delete(event.sessionId);
+        this.closedDebugReadinessSessions.delete(event.sessionId);
+        this.notifyDebugReadinessWaiters(event);
+        if (this.debugLaunchSessionId === event.sessionId) this.debugLaunchSessionId = undefined;
       }
     });
     this.debugOutputDisposable = debugManager.onDebugOutput((session, output) => {
@@ -332,35 +364,139 @@ export class SessionManager {
       : 60000;
   }
 
+  private getDebugHostReadinessUrl(): string {
+    return vscode.workspace.getConfiguration("esimcp").get<string>("debugHostReadinessUrl", "").trim();
+  }
+
+  private async probeConfiguredDebugHost(
+    debugManager?: DebugReadinessSource,
+    targetSessionId?: string,
+  ): Promise<boolean> {
+    const url = this.getDebugHostReadinessUrl();
+    if (!url) return false;
+
+    const controller = new AbortController();
+    const probeTimer = setTimeout(
+      () => controller.abort(),
+      Math.min(MAX_DEBUG_HOST_PROBE_TIMEOUT_MS, this.getDebugHostReadinessTimeoutMs()),
+    );
+    const probe = (async () => {
+      try {
+        const response = await fetch(url, { method: "GET", signal: controller.signal });
+        const ready = response.ok;
+        await response.body?.cancel().catch(() => undefined);
+        log(`Configured host readiness probe completed: status=${response.status}, ready=${ready}`);
+        return ready;
+      } catch (error) {
+        log(`Configured host readiness probe failed: ${error instanceof Error ? error.message : String(error)}`);
+        return false;
+      } finally {
+        clearTimeout(probeTimer);
+      }
+    })();
+
+    if (!debugManager) return probe;
+
+    let debugEventDisposable: { dispose(): unknown } | undefined;
+    const interrupted = new Promise<boolean>((resolve, reject) => {
+      debugEventDisposable = debugManager.onDebugEvent((event) => {
+        if (event.type === "paused" && event.reason === "exception") {
+          reject(new DebugSessionExceptionError(event));
+          return;
+        }
+        if (
+          event.type === "terminated"
+          && (event.sessionId === targetSessionId
+            || (!targetSessionId && this.debugLaunchInProgress
+              && (!this.debugLaunchSessionId || event.sessionId === this.debugLaunchSessionId)))
+        ) {
+          resolve(false);
+        }
+      });
+    });
+    try {
+      return await Promise.race([probe, interrupted]);
+    } finally {
+      debugEventDisposable?.dispose();
+      controller.abort();
+    }
+  }
+
+  private markDebugHostReady(sessionId: string): void {
+    const state = this.debugReadinessBySession.get(sessionId) ?? {
+      sessionId,
+      terminal: null,
+      ready: false,
+      failed: false,
+      buffer: "",
+    };
+    state.ready = true;
+    this.debugReadinessBySession.set(sessionId, state);
+    this.notifyDebugReadinessWaiters();
+  }
+
+  private notifyDebugReadinessWaiters(event?: DebugEvent): void {
+    for (const waiter of [...this.debugReadinessWaiters]) waiter(event);
+  }
+
   resetDebugHostReadiness(sessionId?: string): void {
     log(`Resetting debug host readiness: session=${sessionId ?? "all"}`);
     if (sessionId) {
+      const state = this.debugReadinessBySession.get(sessionId);
+      if (state?.terminal) this.debugReadinessByTerminal.delete(state.terminal);
       this.debugReadinessBySession.delete(sessionId);
       this.debugConsoleOutputBySession.delete(sessionId);
+      this.closedDebugReadinessSessions.delete(sessionId);
     } else {
       this.debugReadinessBySession.clear();
       this.debugConsoleOutputBySession.clear();
       this.debugReadinessByTerminal.clear();
+      this.closedDebugReadinessSessions.clear();
     }
+    this.notifyDebugReadinessWaiters();
   }
 
   async waitForDebugHostReadiness(debugManager?: DebugReadinessSource, requestedSessionId?: string): Promise<boolean> {
     const timeoutMs = this.getDebugHostReadinessTimeoutMs();
     const startedAt = Date.now();
-    let sessionId = requestedSessionId;
+    const initialActiveSessionId = debugManager?.getActiveSessionId() ?? undefined;
+    let sessionId = requestedSessionId ?? initialActiveSessionId;
     log(`Waiting for debug host readiness: requestedSession=${requestedSessionId ?? "none"}, activeSession=${debugManager?.getActiveSessionId() ?? "none"}`);
+
+    if (requestedSessionId && debugManager && initialActiveSessionId !== requestedSessionId) return false;
+
+    const configuredHostReady = this.getDebugHostReadinessUrl()
+      ? await this.probeConfiguredDebugHost(debugManager, sessionId)
+      : false;
+    const activeSessionIdAfterProbe = debugManager?.getActiveSessionId() ?? undefined;
+    if (requestedSessionId && debugManager && activeSessionIdAfterProbe !== requestedSessionId) return false;
+    if (configuredHostReady) {
+      const readySessionId = requestedSessionId ?? activeSessionIdAfterProbe ?? sessionId;
+      if (readySessionId) this.markDebugHostReady(readySessionId);
+      return true;
+    }
+
+    sessionId = requestedSessionId
+      ?? activeSessionIdAfterProbe
+      ?? (this.debugLaunchInProgress ? this.debugLaunchSessionId : undefined);
+    if (!sessionId && !this.debugLaunchInProgress) {
+      log("Readiness check finished: no active debug session or pending launch, ready=false");
+      return false;
+    }
 
     return new Promise<boolean>((resolve, reject) => {
       let settled = false;
       let pollTimer: ReturnType<typeof setTimeout> | undefined;
       let timeoutTimer: ReturnType<typeof setTimeout> | undefined;
       let debugEventDisposable: { dispose(): unknown } | undefined;
+      let readinessWaiter: ((event?: DebugEvent) => void) | undefined;
       const finish = (error?: Error) => {
         if (settled) return;
         settled = true;
         if (pollTimer) clearTimeout(pollTimer);
         if (timeoutTimer) clearTimeout(timeoutTimer);
         debugEventDisposable?.dispose();
+        if (readinessWaiter) this.debugReadinessWaiters.delete(readinessWaiter);
         if (error) {
           log(`Readiness check failed: session=${sessionId ?? "none"}, error=${error.message}`);
           reject(error);
@@ -370,7 +506,33 @@ export class SessionManager {
         log(`Readiness check finished: session=${sessionId ?? "terminal"}, ready=${ready}, elapsedMs=${Date.now() - startedAt}`);
         resolve(ready);
       };
-      const checkReadiness = async () => {
+      const scheduleCheck = () => {
+        const remainingMs = timeoutMs - (Date.now() - startedAt);
+        if (remainingMs <= 0) {
+          log(`Readiness check timed out: session=${sessionId ?? "terminal"}, timeoutMs=${timeoutMs}`);
+          finish();
+          return;
+        }
+        pollTimer = setTimeout(checkReadiness, Math.min(1000, remainingMs));
+      };
+      const checkReadiness = (event?: DebugEvent) => {
+        if (settled) return;
+        if (event?.type === "paused" && event.reason === "exception") {
+          finish(new DebugSessionExceptionError(event));
+          return;
+        }
+        if (
+          event?.type === "terminated"
+          && (event.sessionId === sessionId || event.sessionId === requestedSessionId || event.sessionId === this.debugLaunchSessionId)
+        ) {
+          sessionId = event.sessionId;
+          this.debugReadinessBySession.delete(event.sessionId);
+          this.debugConsoleOutputBySession.delete(event.sessionId);
+          this.closedDebugReadinessSessions.delete(event.sessionId);
+          finish();
+          return;
+        }
+
         const activeSessionId = debugManager?.getActiveSessionId() ?? undefined;
         if (requestedSessionId) {
           if (debugManager && activeSessionId !== requestedSessionId) {
@@ -381,15 +543,33 @@ export class SessionManager {
           sessionId = requestedSessionId;
         } else if (activeSessionId) {
           sessionId = activeSessionId;
+        } else if (!sessionId && this.debugLaunchInProgress) {
+          sessionId = this.debugLaunchSessionId;
         }
 
         if (sessionId && debugManager && activeSessionId !== sessionId) {
+          if (!activeSessionId && this.debugLaunchInProgress && !this.debugLaunchSessionId) {
+            scheduleCheck();
+            return;
+          }
           log(`Readiness check observed session change: session=${sessionId}`);
           finish();
           return;
         }
+        if (!sessionId) {
+          if (this.debugLaunchInProgress) {
+            scheduleCheck();
+            return;
+          }
+          finish();
+          return;
+        }
+        if (this.closedDebugReadinessSessions.has(sessionId)) {
+          finish();
+          return;
+        }
         if (this.isDebugHostReady(sessionId)) {
-          log(`Readiness check observed latch: session=${sessionId ?? "terminal"}`);
+          log(`Readiness check observed latch: session=${sessionId}`);
           finish();
           return;
         }
@@ -399,28 +579,16 @@ export class SessionManager {
           finish();
           return;
         }
-
-        const remainingMs = timeoutMs - (Date.now() - startedAt);
-        if (remainingMs <= 0) {
-          log(`Readiness check timed out: session=${sessionId ?? "terminal"}, timeoutMs=${timeoutMs}`);
-          finish();
-          return;
-        }
-
-        pollTimer = setTimeout(() => { void checkReadiness(); }, Math.min(1000, remainingMs));
+        scheduleCheck();
       };
 
       debugEventDisposable = debugManager?.onDebugEvent((event) => {
-        if (event.type === "paused" && event.reason === "exception") finish(new DebugSessionExceptionError(event));
-        if (event.type === "terminated" && event.sessionId === sessionId) {
-          log(`Readiness check observed session termination: session=${sessionId}`);
-          this.debugReadinessBySession.delete(event.sessionId);
-          this.debugConsoleOutputBySession.delete(event.sessionId);
-          finish();
-        }
+        if (event.type === "paused" || event.type === "terminated") checkReadiness(event);
       });
-      timeoutTimer = setTimeout(() => finish(), timeoutMs);
-      void checkReadiness();
+      readinessWaiter = (event) => checkReadiness(event);
+      this.debugReadinessWaiters.add(readinessWaiter);
+      timeoutTimer = setTimeout(() => finish(), Math.max(0, timeoutMs - (Date.now() - startedAt)));
+      checkReadiness();
     });
   }
 

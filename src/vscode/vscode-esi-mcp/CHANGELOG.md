@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.2] - 2026-09-25
+
+### Fixed
+- Probe the configured host URL for an already-running server
+- Finish readiness immediately when no launch or active session remains
+- Stop waiting when a launch is canceled or its session/terminal ends
+
+## [2.0.1] - 2026-09-25
+
+### Fixed
+- Keep host readiness latched per debug session until its terminal or session ends
+
 ## [2.0.0] - 2026-09-24
 
 ### Removed

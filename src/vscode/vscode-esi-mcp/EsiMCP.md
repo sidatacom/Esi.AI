@@ -12,10 +12,11 @@ with `commandId: "csdevkit.debug.start"` and `arguments: [{ "workingDirectory": 
 
 1. The backend owns `csdevkit.debug.start`, which starts the configured VS Code debug session and waits for the debugger to attach.
 2. The frontend owns `csdevkit.debug.check.host.readyness` and must invoke it immediately, without waiting for `csdevkit.debug.start` to return.
-3. `csdevkit.debug.check.host.readyness` is a blocking call. It reads live shell execution output from VS Code terminals when available and can probe the configured `esimcp.debugHostReadinessUrl`; it does not read terminal scrollback.
-4. `{ "ready": true }` means the configured readiness string or the configured host endpoint was observed. The default string is `Now ready on:`.
-5. `{ "ready": false }` means only that the readiness timeout expired.
-6. `Canceled: Canceled` means the MCP call was externally canceled. It is not a timeout and must stop the workflow; do not continue to browser actions.
+3. `csdevkit.debug.check.host.readyness` reads live shell execution output and probes `esimcp.debugHostReadinessUrl` when configured; it does not read terminal scrollback. A successful HTTP response from the configured URL recognizes an already-running host, even when no debug session is active.
+4. `{ "ready": true }` means the configured readiness string or host URL responded successfully. The default string is `Now ready on:`.
+5. With no active session and no accepted launch, an unsuccessful or unset host probe returns `{ "ready": false }` immediately. During an accepted launch, the check remains pending until readiness, startup failure, cancellation, session/terminal termination, or timeout.
+6. `{ "ready": false }` can mean no active/pending launch, an unsuccessful host probe, startup failure, session/terminal termination, or timeout.
+7. `Canceled: Canceled` means the MCP call was externally canceled. It is not a timeout and must stop the workflow; do not continue to browser actions.
 
 For an integrated-terminal debugger whose output is not exposed through shell integration,
 set `esimcp.debugHostReadinessUrl` to the host URL, for example `https://localhost:5012`.
