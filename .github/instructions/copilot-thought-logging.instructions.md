@@ -19,7 +19,7 @@ description: 'See process Copilot is following where you can edit this to reshap
 # Phase 1: Initialization
 
 - Create directory `./docs/history/` if it does not exist
-- Create a new file `./docs/history/{year}/{month}/YYYYMMDD-HHmmss.md` for every session never append to a previous session log, use subfolders for year and month
+- Create a new file `./docs/history/{year}/{month}/{YYYYMMDD-HHmmss}.md` for every session never append to a previous session log, use subfolders for year and month
 - Populate the new session file with user request details
 - Work silently without announcements until complete.
 - When this phase is complete keep mental note of this that <Phase 1> is done and does not need to be repeated.
