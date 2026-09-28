@@ -29,7 +29,8 @@ public sealed class DataService(
     ApplicationSettingsService? applicationSettingsService = null,
     ProviderTraceStore? providerTraceStore = null,
     BackendRuntimeCatalogService? backendRuntimeCatalog = null,
-    BackendSandboxBroker? backendSandbox = null) : IDataService
+    BackendSandboxBroker? backendSandbox = null,
+    IOptimajetFlowRuntime? optimajetFlowRuntime = null) : IDataService
 {
     private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -39,6 +40,7 @@ public sealed class DataService(
     private readonly ApplicationSettingsService effectiveApplicationSettings = applicationSettingsService ?? new(dbContextFactory);
     private readonly BackendRuntimeCatalogService? effectiveBackendRuntimeCatalog = backendRuntimeCatalog;
     private readonly BackendSandboxBroker? effectiveBackendSandbox = backendSandbox;
+    private readonly IOptimajetFlowRuntime? effectiveOptimajetFlowRuntime = optimajetFlowRuntime;
     private readonly ConcurrentDictionary<Guid, Lazy<Task<ModelLoadStatus>>> configurationLoadTasks = new();
     private readonly object openVinoLoadSync = new();
     private CancellationTokenSource? openVinoLoadCancellation;
@@ -371,6 +373,132 @@ public sealed class DataService(
             ?? throw new KeyNotFoundException("The flow definition was not found.");
         db.FlowDefinitions.Remove(definition);
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    public async Task FlowDefinition_SeedDefaultsAsync(CancellationToken cancellationToken = default)
+    {
+        var definitions = await FlowDefinition_ReadAsync(cancellationToken).ConfigureAwait(false);
+        var existingNames = definitions.Select(definition => definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var defaults = new (string Name, string Trigger, string Target)[]
+        {
+            ("Chat request router", "Receive chat request", "Loaded local model"),
+            ("Vision request router", "Receive vision request", "Vision backend"),
+            ("Tool calling router", "Receive tool request", "Loaded local model")
+        };
+        var now = DateTime.UtcNow;
+
+        foreach (var (name, trigger, target) in defaults)
+        {
+            if (existingNames.Contains(name))
+                continue;
+
+            var json = JsonSerializer.Serialize(new
+            {
+                nodes = new[]
+                {
+                    new { name = trigger, detail = name, kind = "trigger" },
+                    new { name = $"Route to {target}", detail = target, kind = "backend" }
+                }
+            });
+            await FlowDefinition_CreateAsync(
+                new FlowDefinition(Guid.Empty, name, 1, true, json, now, now), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    public Task<FlowRoutingDecision> FlowRouteAsync(OpenAiChatRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        return FlowRouteCoreAsync(
+            FlowRoutingService.SelectWorkflowName(request.Tools is { Count: > 0 }, FlowRoutingService.ContainsImage(request.Messages)),
+            request.Model,
+            cancellationToken);
+    }
+
+    public Task<FlowRoutingDecision> FlowRouteAsync(ChatExchangeRequest request, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        var hasImages = request.Images is { Count: > 0 } || request.ContentParts?.Any(part => part.ImageIndex is not null) == true;
+        return FlowRouteCoreAsync(
+            FlowRoutingService.SelectWorkflowName(false, hasImages),
+            request.ModelPath,
+            cancellationToken);
+    }
+
+    private async Task<FlowRoutingDecision> FlowRouteCoreAsync(
+        string workflowName,
+        string? currentModelIdentifier,
+        CancellationToken cancellationToken)
+    {
+        var definition = (await FlowDefinition_ReadAsync(cancellationToken).ConfigureAwait(false))
+            .FirstOrDefault(item => item.IsPublished && string.Equals(item.Name, workflowName, StringComparison.OrdinalIgnoreCase));
+        if (definition is null)
+            throw new InvalidOperationException($"The published workflow '{workflowName}' is not configured.");
+
+        var routeTarget = FlowRoutingService.ReadRouteTarget(definition);
+        var executedTarget = await (effectiveOptimajetFlowRuntime
+            ?? throw new InvalidOperationException("The Optimajet workflow runtime is unavailable."))
+            .ExecuteRouteAsync(definition, routeTarget, cancellationToken).ConfigureAwait(false);
+        var configurations = await ModelConfiguration_ReadAsync(cancellationToken).ConfigureAwait(false);
+        var selectedConfiguration = configurations.FirstOrDefault(configuration =>
+            string.Equals(configuration.Name, executedTarget, StringComparison.OrdinalIgnoreCase));
+        if (selectedConfiguration is null && string.Equals(executedTarget, "Vision backend", StringComparison.OrdinalIgnoreCase))
+        {
+            var localModels = await LocalModel_ReadAsync(cancellationToken).ConfigureAwait(false);
+            var visionPath = localModels.FirstOrDefault(model => model.Capabilities?.ImageInput == true)?.Path;
+            selectedConfiguration = configurations.FirstOrDefault(configuration =>
+                string.Equals(configuration.ModelPath, visionPath, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var preservesIncomingModel = executedTarget.Equals("Loaded local model", StringComparison.OrdinalIgnoreCase) ||
+            executedTarget.Equals("Multimodal local model", StringComparison.OrdinalIgnoreCase) ||
+            executedTarget.Equals("Local chat backend", StringComparison.OrdinalIgnoreCase);
+        if (selectedConfiguration is null && !preservesIncomingModel)
+            throw new InvalidOperationException($"The workflow '{workflowName}' references an unavailable backend route '{executedTarget}'.");
+
+        return new FlowRoutingDecision(
+            definition.Name,
+            definition.Version,
+            executedTarget,
+            selectedConfiguration?.Name ?? currentModelIdentifier,
+            selectedConfiguration);
+    }
+
+    private async Task<(ChatExchangeRequest Request, string Backend)> ApplyChatFlowRouteAsync(
+        ChatExchangeRequest request,
+        CancellationToken cancellationToken)
+    {
+        var decision = await FlowRouteAsync(request, cancellationToken).ConfigureAwait(false);
+        if (decision.SelectedConfiguration is not { } configuration)
+            return (request, ValidateChatBackend(request.Backend));
+
+        var isLoaded = modelRuntime.LoadedModel_Read().LoadedModels.Any(model =>
+            !model.IsLoading &&
+            string.Equals(model.ModelPath, configuration.ModelPath, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(model.BackendVariantId, configuration.BackendVariantId, StringComparison.OrdinalIgnoreCase));
+        if (!isLoaded)
+        {
+            if (!configuration.AutoLaunch)
+                throw new InvalidOperationException($"The flow-selected configuration '{configuration.Name}' is not loaded and AutoLaunch is disabled.");
+
+            await LoadModelConfigurationAsync(configuration.Id, cancellationToken).ConfigureAwait(false);
+        }
+
+        var backend = configuration.Backend switch
+        {
+            ConfigurationBackend.Llama => configuration.BackendVariantId.ToLowerInvariant() switch
+            {
+                "llama.vulkan" => "Vulkan",
+                "llama.cuda12" => "CUDA",
+                "llama.sycl" => "SYCL",
+                _ => "CPU"
+            },
+            ConfigurationBackend.OpenVino => "OpenVINO",
+            ConfigurationBackend.Vllm => "vLLM",
+            ConfigurationBackend.Sglang => "SGLang",
+            ConfigurationBackend.DotLlm => "dotLLM",
+            _ => throw new ArgumentOutOfRangeException(nameof(configuration), configuration.Backend, "Unsupported backend family.")
+        };
+        return (request with { ModelPath = configuration.ModelPath, Backend = backend }, backend);
     }
 
     private async Task<FlowDefinition> FlowDefinition_SaveAsync(FlowDefinition definition, CancellationToken cancellationToken)
@@ -1150,15 +1278,18 @@ public sealed class DataService(
 
     public async Task<PersistedChat?> Chat_UpdateAsync(Guid id, ChatExchangeRequest request, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(request.Content) || string.IsNullOrWhiteSpace(request.ModelPath))
+        if (string.IsNullOrWhiteSpace(request.Content))
             return null;
-        var backend = ValidateChatBackend(request.Backend);
         var chat = await Chat_ReadAsync(id, cancellationToken);
         if (chat is null)
             return null;
 
-        var generation = await effectiveInferenceService.GenerateAsync(chat, request, backend, cancellationToken: cancellationToken);
-        return await Chat_UpdateCoreAsync(id, request.Content.Trim(), generation, request.ModelPath, backend, cancellationToken);
+        var (routedRequest, backend) = await ApplyChatFlowRouteAsync(request, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(routedRequest.ModelPath))
+            return null;
+
+        var generation = await effectiveInferenceService.GenerateAsync(chat, routedRequest, backend, cancellationToken: cancellationToken);
+        return await Chat_UpdateCoreAsync(id, request.Content.Trim(), generation, routedRequest.ModelPath, backend, cancellationToken);
     }
 
     public async IAsyncEnumerable<ChatStreamUpdate> Chat_UpdateStreamAsync(
@@ -1166,19 +1297,22 @@ public sealed class DataService(
         ChatExchangeRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(request.Content) || string.IsNullOrWhiteSpace(request.ModelPath))
+        if (string.IsNullOrWhiteSpace(request.Content))
             yield break;
 
-        var backend = ValidateChatBackend(request.Backend);
         var chat = await Chat_ReadAsync(id, cancellationToken);
         if (chat is null)
+            yield break;
+
+        var (routedRequest, backend) = await ApplyChatFlowRouteAsync(request, cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(routedRequest.ModelPath))
             yield break;
 
         var deltas = Channel.CreateUnbounded<string>();
         var generationTask = Task.Factory.StartNew(
             () => effectiveInferenceService.GenerateAsync(
                 chat,
-                request,
+                routedRequest,
                 backend,
                 delta =>
                 {
@@ -1196,7 +1330,7 @@ public sealed class DataService(
                 yield return new ChatStreamUpdate(id, delta);
 
         var generation = await generationTask.ConfigureAwait(false);
-        var persistedChat = await Chat_UpdateCoreAsync(id, request.Content.Trim(), generation, request.ModelPath, backend, cancellationToken);
+        var persistedChat = await Chat_UpdateCoreAsync(id, request.Content.Trim(), generation, routedRequest.ModelPath, backend, cancellationToken);
         if (persistedChat is not null)
             yield return new ChatStreamUpdate(id, string.Empty, true, persistedChat);
     }

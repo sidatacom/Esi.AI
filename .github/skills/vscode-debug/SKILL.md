@@ -1,117 +1,77 @@
 ---
 name: vscode-debug
-description: "MANDATORY for Esi.AI Studio and any C# Dev Kit lifecycle task: use when starting, stopping, restarting, or validating Esi.AI Studio; using Start New Instance, csdevkit.debug.projectDebugLaunch, C# Dev Kit, Run and Debug, Hot Reload, port 7010, Blazor Interactive Auto, WebAssembly debugging, localhost browser checks, or testing the Studio UI in a browser. Load this skill before the first lifecycle or browser tool call."
+description: "MANDATORY for EsiMCP VS Code debugging: use when starting, stopping, restarting, inspecting, or validating a debug session; configuring a debug launch; working with Hot Reload, breakpoints, DAP events, Esi.AI Studio, port 7010, Blazor WebAssembly debugging, or browser checks after a debug launch."
 ---
 
 # VS Code Debug
 
-Use this workflow for every debug-session lifecycle operation.
+Use this workflow for EsiMCP debug-session lifecycle operations. EsiMCP owns launch orchestration and uses the public VS Code Debug and Task APIs. Do not use C# Dev Kit commands, APIs, brokers, dynamic project models, or UI workflows.
 
-## Allowed EsiMCP tools
+## Allowed EsiMCP Tools
 
-Use only `csharp_devkit_list_commands` and `csharp_devkit_execute_command` for C# Dev Kit and debug lifecycle operations. Use only `vscode_terminal_list_commands` and `vscode_terminal_execute_command` for visible VS Code terminal operations. Do not use legacy `mcp_esimcp_debug_*`, `mcp_esimcp_terminal_*`, or `mcp_esimcp_csharp_devkit_*` names.
+- `vscode_debug_list_commands`: discover registered EsiMCP debug operations and their JSON schemas.
+- `vscode_debug_execute_command`: invoke one allowlisted `debug.*` operation with an object in `arguments`.
+- Use the separate VS Code terminal tools only for visible terminal work; load the `vscode-terminal` skill for that workflow.
 
-Esi.AI Studio is a .NET 10 Blazor Web App. For automated starts, invoke `csdevkit.debug.projectDebugLaunch` with the explicit Studio project context as its first positional argument. Through EsiMCP, pass a context object containing `path`; the installed C# Dev Kit converts it to a VS Code file URI. This is the programmatic project-launch action; it does not require a pre-existing `launch.json` or a previously selected in-memory debug configuration. For a manual start, right-click the Studio project in Solution Explorer and choose **Start New Instance**. Alternatively, use **Debug: Select and Start Debugging** or **Show all automatic debug configurations** in the Debug view to create/select a dynamic C# configuration before pressing F5. Microsoft documents these UI paths at [C# debugging in VS Code](https://code.visualstudio.com/docs/csharp/debugging).
+The live catalog returned by `vscode_debug_list_commands` is the source of truth. Read it before using an unfamiliar operation. Do not call arbitrary VS Code command IDs.
 
-Do not confuse `csdevkit.debug.selectStartupProject` with selecting a Run and Debug configuration: it only selects the startup project. EsiMCP passes JSON arguments to the C# Dev Kit command unchanged. Pass an array containing a command-context object with `path` set to the absolute `.csproj` path. In multi-project workspaces, always pass it explicitly; without arguments EsiMCP can only resolve a project from the active editor or from a workspace containing exactly one project.
+## Session Lifecycle
 
-## Session lifecycle
+1. Query `debug.active.session` before starting. Do not create a second session over an active one.
+2. Use `debug.launchProject` with a workspace-relative or absolute `.csproj` path to build and launch its resolved output with `coreclr`. Use `debug.launchFile` with a `launch.json` configuration name when configuration-specific launch settings are needed. Both stop all active VS Code debug sessions before building; select `workspaceFolder` for multi-root workspaces.
+3. `debug.launchProject` returns a build or debug result code and the corresponding logfile path on failure. `debug.launchFile` requires a `projectFile` or a process-based `preLaunchTask` so EsiMCP can build and capture output. The selected launch configuration must use `request: "launch"`.
+4. Both launch paths use `vscode.debug.startDebugging`, wait for the matching VS Code session-start event, and return the started session ID. Verify with `debug.active.session` when the workflow needs independent confirmation.
+5. For Esi.AI Studio, wait for `debug.check.host.readyness` before browser checks. The development endpoint is `http://localhost:7010`; a failed browser request is not proof that startup completed.
+6. For live code updates without C# Dev Kit, use `debug.hotReload` with `mode: "watch"` and a `.csproj` `projectFile`. This stops debug sessions and starts a visible `dotnet watch` task. Do not treat the task-start event as application readiness: `dotnet watch` must finish its initial build before the host starts. Wait for the app's readiness signal or health endpoint before editing or validating it. Once running, it applies supported edits live and restarts only when an edit cannot be applied. This is a runtime watch workflow, not a debugger-attached Edit and Continue session. Use `mode: "stopWatch"` to stop it. Use `mode: "rebuild"` only when an explicit full build and debugger relaunch is required; a failed build does not relaunch.
+7. Stop a standalone session with `debug.stop`. Use `debug.restart` only for a session already started from its saved configuration; an optional `rebuildTaskName` must exactly match a task in `tasks.json`.
+8. Before an independent Studio build or test, stop the active session and verify that port `7010` is no longer owned by the prior process.
 
-1. Inspect the active debug session before starting anything. Reuse it when it already matches the requested configuration.
-2. If a debug session is active and a fresh session is required, stop the existing session first with `csharp_devkit_execute_command` using `commandId: "csdevkit.debug.stop"`. Never start a second session on top of an existing one.
-3. Confirm that the previous session has stopped and that its application process or debug port is no longer owned by the old session.
-4. Before every debug start or restart, build `src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj` successfully. Do not launch or restart the debugger when the build exits non-zero; report the build diagnostics and fix or request resolution first.
-5. Start exactly one server debug session with `csdevkit.debug.projectDebugLaunch` and the explicit Studio project context below, or use **Start New Instance** in Solution Explorer.
-6. Do not treat command dispatch as a running session. Verify a non-null ID with `csdevkit.debug.active.session`; if it is `null`, inspect the C# Dev Kit/Debug Console output and fix the selected project or VS Code launch context before retrying.
-7. Once an active session exists, call `csdevkit.debug.check.host.readyness` and verify the shared browser page at `http://localhost:7010`.
-8. Reuse the existing shared browser page when possible, reload the target route, and verify the behavior that motivated the debug session.
-9. For WebAssembly breakpoints, verify the `inspectUri` in the server launch profile and use the `blazorwasm` attach configuration only when an explicit browser attach is needed.
-10. At the end of the task, leave the single intended session running only when further interactive verification is expected; otherwise stop it cleanly.
+The standalone MIT-licensed `ms-dotnettools.csharp` extension may provide the `coreclr` debug adapter. EsiMCP must not rely on C# Dev Kit for project discovery or launch. Check the selected launch configuration and `Properties/launchSettings.json` for the application URL, environment, and Blazor `inspectUri`; ensure `UseWebAssemblyDebugging()` is enabled in Development when client-side breakpoints are required.
 
-When the active session only needs to be refreshed, execute `csdevkit.debug.restart` with `csharp_devkit_execute_command`, then execute `csdevkit.debug.active.session` and `csdevkit.debug.check.host.readyness`, reselect `C#: Esi.AI.Studio [Default Configuration]` in Run and Debug when required, and verify the active session and host readiness after the restart.
+## Debug Case And Test Matrix
 
-### Change routing: Hot Reload versus restart
+Automated unit coverage:
 
-- For `.razor`, `.razor.css`, CSS, markup, and other client/UI changes, keep the active Studio debug session running and invoke `csdevkit.debug.hotReload` through `csharp_devkit_execute_command`. Verify the result in the existing browser page without a page reload when possible.
-- After such a UI edit, `csdevkit.debug.hotReload` is the agent's immediate next validation action. Do not run a separate build, test, `get_errors`, or diff-only check first; those do not replace Hot Reload while the Studio debug session is active.
-- Do not stop the session, run a separate build, or restart only because a UI change was made. Use `csdevkit.debug.showHotReloadPanel` only to open the VS Code panel interactively; its panel text is not returned by EsiMCP.
-- After Hot Reload, a restart, or a failed browser check, use `csdevkit.debug.output.diagnostics` with the active session ID to read the buffered Debug Console output. Inspect `lastLine` first for the latest error or readiness state, and inspect `output` when surrounding context is needed. Do not claim that the Debug Console is unreadable when this command returns a session object.
-- Use `csdevkit.debug.restart` only when Hot Reload reports that the change cannot be applied, or when the change affects server/project files, dependencies, startup configuration, or another runtime boundary that requires recompilation.
-- Before a required separate build or test, stop the active Studio debug session first and verify that port `7010` is free. For UI-only changes, Hot Reload takes precedence over a build.
+- Active-session lookup returns its ID or `null` when no session exists.
+- Project launch stops every active VS Code session before build, builds before launch, resolves MSBuild `TargetPath`, and returns the build exit code/log path without starting the debugger after failure.
+- Named launch-file selection parses JSONC, rejects missing/duplicate/attach configurations, captures supported build-task output, and removes EsiMCP-only build metadata before debugger launch.
+- Debug-start refusal or exceptions return a debug result code and logfile path; host readiness binds only after a matching session starts.
+- `debug.hotReload` starts/stops the tracked `dotnet watch` task and reports explicit rebuild results. Watch applies supported edits without a rebuild and restarts only for unsupported edits; rebuild stops before building and relaunches only after build success.
+- For a real `dotnet watch` integration check, wait for the initial build and app readiness first, then change only an existing C# method body in an ASP.NET Core Debug fixture. Verify the endpoint reflects the edit while the app PID remains unchanged. Do not count an unsupported/rude edit as a live-apply case; non-interactive watch may restart the app for such edits. ASP.NET Core Hot Reload and C# supported-edit references: [ASP.NET Core Hot Reload](https://learn.microsoft.com/de-de/aspnet/core/test/hot-reload?view=aspnetcore-10.0) and [supported C# code changes](https://learn.microsoft.com/de-de/visualstudio/debugger/supported-code-changes-csharp?view=visualstudio).
+- A launch passes the explicit VS Code configuration/workspace and returns the session observed through `onDidStartDebugSession`.
+- An existing session prevents overlapping start; a VS Code launch refusal returns `started: false` and removes the pending start listener.
+- Restart waits for old-session termination, optionally runs the exact named build task, then observes a new session; a reused session ID is rejected, and no active session is a no-op.
+- Readiness binds terminal output captured before or after the debug session event to the correct session only.
+- Readiness detects split and ANSI-decorated markers, remains latched after buffer trimming, and is isolated across parent/child sessions.
+- Startup exception, failed host probe, canceled launch, terminated session, closed terminal, and no-host/no-launch paths return the appropriate not-ready/error result.
+- Debug Console output is bounded and DAP output is forwarded to readiness tracking.
+- MCP tool catalog exposes the terminal, debug, and Access wrappers, excludes C# Dev Kit tools, and dispatches only allowlisted debug command IDs.
 
-When an agent must invoke C# Dev Kit programmatically through the EsiMCP server, use `csharp_devkit_list_commands` and `csharp_devkit_execute_command` for C# Dev Kit commands, including the virtual `active.session`, `check.host.readyness`, `stop`, and `restart` commands.
+Manual or integration scenarios when changing launch/runtime behavior:
 
-If `csdevkit.debug.projectDebugLaunch` reports a missing URI/scheme, verify the EsiMCP argument is an array containing `{ "path": "<absolute .csproj path>" }`; the installed C# Dev Kit converts this context to a VS Code URI. If the command is dispatched but `csdevkit.debug.active.session` remains `null`, the launch has failed: inspect C# Dev Kit output and use **Start New Instance** on the Studio project or **Debug: Select and Start Debugging** to resolve the dynamic launch context. Do not repeatedly dispatch the command, create a launch file, or substitute `dotnet run`/another server process. The automated command was dispatched with this context in the 2026-09-25 verification attempt, but no session or listener appeared; automated launch is not yet verified in this workspace.
+- Single-folder and multi-root launch selection; reject a folder outside the current workspace.
+- A start event for a different configuration must not satisfy the requested launch; verify timeout and listener cleanup.
+- Stop while the session is running or paused; verify termination and that the process releases its port.
+- For restart with a rebuild task, verify task failure prevents relaunch and successful task completion precedes the new session.
+- Studio startup: verify active session ID, configured readiness marker or readiness URL, then the intended browser route. Resume a paused process before browser checks.
+- Server breakpoint binds to the intended source line; WebAssembly client breakpoints require the configured `inspectUri` and Development debug proxy.
+- `dotnet watch` is the supported live-update path without C# Dev Kit. Do not describe it as debugger-attached Edit and Continue; reserve explicit rebuild/relaunch for changes that require it.
+- A passing task-start event alone does not prove Watch is usable. Require the initial build-success output followed by the host readiness signal before applying the supported method-body edit and checking value/PID.
 
-### EsiMCP Project Launch Invocation
+When adding a launch or lifecycle branch, add a focused unit test for its success path and rejection/cancellation boundary. Add integration coverage only when the behavior depends on actual VS Code event ordering, the debug adapter, task execution, or a running host.
 
-The EsiMCP wrapper forwards the command's positional arguments unchanged. Pass a command-context object with `path`; do not pass a URI-shaped JSON object with only `scheme` and `fsPath` because it is not a VS Code `Uri` instance:
+## Breakpoints And Inspection
 
-```json
-{
-	"commandId": "csdevkit.debug.projectDebugLaunch",
-	"arguments": [
-		{
-			"path": "/home/llm/Git/Esi.AI/src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj"
-		}
-	]
-}
-```
+- Use `debug.add.breakpoint` or `debug.add.logpoint` with an absolute source path and one-based line number. Check adapter binding in the response.
+- Use `debug.list.breakpoints`, `debug.remove.breakpoint`, and `debug.clear.all.breakpoints` to manage breakpoints.
+- Inspect only a paused frame. Use `debug.list.variable.names` before requesting specific names with `debug.get.variables.values`.
+- Use `debug.evaluate.expression` for a bounded expression in the paused frame. Do not use it for unrelated side effects.
+- Use `debug.wait.for.event` for paused, continued, or terminated events. Resume a paused server before browser or HTTP validation.
+- Use stepping and pause/continue operations only when the session state permits them.
 
-The JSON shape above is the EsiMCP wrapper's argument contract, not proof that a launch succeeded. The command ID is exposed by the installed C# Dev Kit manifest; Microsoft's public documentation describes the UI launch paths rather than this internal command payload. The wrapper can infer an omitted project argument from the active editor or from a workspace with exactly one `.csproj`; this workspace has multiple projects, so pass the Studio project explicitly. Verify success through the active debug-session ID and the shared browser page at `http://localhost:7010`; a command response without an active session is not a successful launch. For Hot Reload, use `csdevkit.debug.hotReload` against that active session and `csdevkit.debug.showHotReloadPanel` only to inspect Hot Reload diagnostics.
+## Studio And Browser Validation
 
-### Verified EsiMCP stop invocation
-
-Call `csharp_devkit_execute_command` with the virtual C# Dev Kit stop command:
-
-```json
-{
-	"commandId": "csdevkit.debug.stop",
-	"arguments": []
-}
-```
-
-The verified result is `{"stopped":true}`. Confirm the stop by checking that the active debug-session ID is `null` and that no process is listening on port `7010`.
-
-### Restart, readiness, and diagnostics sequence
-
-C# Dev Kit 3.20.207 exposes these lifecycle and diagnostic commands through the EsiMCP C# Dev Kit bridge. They are virtual commands in the extension command list (`registered: false`) and must be invoked through `csharp_devkit_execute_command`:
-
-- `csdevkit.debug.active.session`
-- `csdevkit.debug.check.host.readyness`
-- `csdevkit.debug.output.diagnostics`
-- `csdevkit.debug.stop`
-- `csdevkit.debug.restart`
-
-1. Check the active debug-session ID.
-2. Start with `csdevkit.debug.projectDebugLaunch` and the Studio project context shown above.
-3. Confirm the active debug-session ID with `csdevkit.debug.active.session`.
-4. Call `csharp_devkit_execute_command` with `{ "commandId": "csdevkit.debug.check.host.readyness", "arguments": [] }`.
-5. For a refresh, call `{ "commandId": "csdevkit.debug.restart", "arguments": [] }`, then query the new active session and run the readiness command again.
-6. Confirm a reachable browser page before browser checks.
-
-For structured diagnostics, call `{ "commandId": "csdevkit.debug.output.diagnostics", "arguments": [{ "sessionId": "<active-session-id>" }] }`. The response includes `sessionId`, `bufferedCharacters`, `readinessStringSeen`, `output`, and `lastLine`. Use `lastLine` as the concise answer when the user asks for the last Debug Console line; use `output` to investigate the surrounding messages. If no session is active, the command returns `null`, so first call `csdevkit.debug.active.session` and do not infer a console failure from `null`. The readiness command returned `{ "ready": true }`; these are the C# Dev Kit bridge checks, distinct from the legacy EsiMCP host-readiness helper.
-
-### Troubleshooting a missing launch session
-
-The EsiMCP wrapper does not construct VS Code `Uri` instances for explicit arguments. Pass the `{ "path": "<absolute .csproj path>" }` command context so C# Dev Kit can create the URI internally. If that command returns without an active session, the launch is still unsuccessful; use **Start New Instance** on `Esi.AI.Studio` or **Debug: Select and Start Debugging** to choose a dynamic configuration. Do not replace the C# Dev Kit launch with `dotnet run`; after a successful start, verify both the active session ID and `{ "ready": true }`.
-
-### Verified Razor Hot Reload check
-
-For a concrete Hot Reload test, change a visible value in `Backends.razor`, call `csdevkit.debug.hotReload`, then call `csdevkit.debug.showHotReloadPanel`. The panel command is a UI command and does not return its panel text through EsiMCP. Verify the result in the connected browser DOM without reloading the page. In the verified test, changing the `Loaded models` heading from `1rem` to `1.1rem` produced a computed browser font size of `17.6px` without a page reload.
-
-When terminals or tasks are stale, duplicated, or inconsistent with the active debug state, first stop all project-related terminal and task processes. Then verify that no old debug session or process still owns the application port, and only after that start exactly one new debug session. Do not leave old build or Studio terminals running beside the replacement session.
-
-## Esi.AI Studio defaults
-
-- C# Dev Kit project command: `csdevkit.debug.projectDebugLaunch`
-- C# Dev Kit Hot Reload command: `csdevkit.debug.hotReload`
-- Development port: `7010`
-- WebAssembly debug proxy: `/_framework/debug/ws-proxy`
-- Development URL: `http://localhost:7010`
-
-## Recovery rules
-
-- If the port is unavailable after stopping, inspect the owning process and terminate only the process belonging to the stale Studio session.
-- If the host is not ready, inspect the debug/task output before starting another session.
-- A browser connection failure is not evidence that a second debug session is needed; first verify the host and task state.
+- Before a Studio start, check the active debug session and port `7010`; clean up only a stale process that belongs to this Studio workspace.
+- After launch, verify the returned session ID and host readiness before opening or reloading a browser route.
+- Verify the route and behavior that motivated the session. An existing `/flow` error is not evidence about unrelated debug or MCP changes.
+- Stop the session at the end unless interactive follow-up is expected.

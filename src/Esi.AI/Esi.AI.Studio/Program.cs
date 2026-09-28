@@ -164,6 +164,9 @@ builder.Services.AddHostedService(services => services.GetRequiredService<ModelR
 builder.Services.AddSingleton<IInferenceFailureCoordinator, InferenceFailureCoordinator>();
 builder.Services.AddSingleton<ApplicationSettingsService>();
 builder.Services.AddSingleton<InferenceTimeoutPolicy>();
+builder.Services.AddSingleton<OptimajetFlowRuntime>();
+builder.Services.AddSingleton<IOptimajetFlowRuntime>(services => services.GetRequiredService<OptimajetFlowRuntime>());
+builder.Services.AddHostedService(services => services.GetRequiredService<OptimajetFlowRuntime>());
 builder.Services.AddScoped<IModelDownloadEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IModelRuntimeEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IBackendRequirementEvents, ServerModelDownloadEvents>();
@@ -208,6 +211,7 @@ using (var scope = app.Services.CreateScope())
     await library.RestoreDownloadsAsync();
     var dataService = scope.ServiceProvider.GetRequiredService<DataService>();
     await dataService.Model_UpdateAsync();
+    await dataService.FlowDefinition_SeedDefaultsAsync();
 }
 
 // Configure the HTTP request pipeline.

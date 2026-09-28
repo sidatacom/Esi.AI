@@ -25,6 +25,7 @@
     <ProjectReference Include="..\Esi.AI.Backend.Vllm.Cuda12\Esi.AI.Backend.Vllm.Cuda12.csproj" />
     <ProjectReference Include="..\Esi.AI.Backend.Vllm.Xpu\Esi.AI.Backend.Vllm.Xpu.csproj" />
     <ProjectReference Include="..\Esi.AI.Backend.Worker\Esi.AI.Backend.Worker.csproj" />
+    <ProjectReference Include="..\..\..\origins\optimajet\WorkflowEngine.NET\Providers\OptimaJet.Workflow.SQLite\Source\OptimaJet.Workflow.SQLite.csproj" Watch="false" />
     <ProjectReference Include="..\..\..\origins\sidatacom\fluentui-blazor\src\Core\Microsoft.FluentUI.AspNetCore.Components.csproj" Watch="false" />
     <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.Server" Version="10.0.11" />
     <PackageReference Include="Microsoft.AspNetCore.Diagnostics.EntityFrameworkCore" Version="10.0.11" />

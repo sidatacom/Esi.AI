@@ -1,156 +1,83 @@
-# EsiMCP Debug-Lifecycle
+# EsiMCP Debug Lifecycle
 
-Diese Anleitung beschreibt den verifizierten Live-Ablauf fuer `Esi.AI.Studio` mit
-den virtuellen EsiMCP-Commands `readyness`, `restart` und `stop`.
+This guide covers native EsiMCP project/configuration launch, rebuild, readiness, and stop behavior. EsiMCP uses public VS Code APIs; the standalone `ms-dotnettools.csharp` extension may supply the `coreclr` adapter. C# Dev Kit is not required.
 
-## Voraussetzungen
+## Prerequisites
 
-- VS Code mit C# Dev Kit
-- das Workspace-Projekt `Esi.AI`
-- die installierte EsiMCP-Extension
-- das Studio-Projekt `src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj`
-- ein freier Port `7010`
+- Open the project in the VS Code workspace.
+- Install the EsiMCP extension and .NET SDK.
+- Install the standalone C# extension when using the `coreclr` adapter.
+- For Studio, keep port `7010` available and use the correct Development launch settings.
 
-Der normale Start erfolgt ueber C# Dev Kit. Es ist keine manuelle
-`.vscode/launch.json` erforderlich.
+Discover the current command schemas with `vscode_debug_list_commands`. Execute lifecycle operations through `vscode_debug_execute_command` with object-valued `arguments`.
 
-## Command-Uebersicht
+## Launch a Project
 
-| Command | Zweck | Erwartetes Ergebnis |
-| --- | --- | --- |
-| `csdevkit.debug.active.session` | Aktive Debug-Session lesen | Session-ID als String oder `null` |
-| `csdevkit.debug.projectDebugLaunch` | Studio-Debug-Session starten | Startbefehl wird angenommen; danach ID pruefen |
-| `csdevkit.debug.check.host.readyness` | Bereitschaft des Hosts pruefen | `{ "ready": true }` |
-| `csdevkit.debug.restart` | Aktive Session stoppen und neu starten | `{ "restarted": true }` |
-| `csdevkit.debug.stop` | Aktive Session kontrolliert stoppen | `{ "stopped": true }` |
-
-`readyness` ist die bestehende Schreibweise des virtuellen Commands und muss
-genau so verwendet werden.
-
-## Verifizierter Ablauf
-
-### 1. Vorhandene Session pruefen
+`debug.launchProject` accepts a `.csproj` path and optional workspace folder, target framework, and MSBuild configuration. The project must be inside the selected workspace folder. EsiMCP stops all active VS Code debug sessions and their debugger-owned launch processes, runs `dotnet build`, resolves the MSBuild `TargetPath`, and launches it through `coreclr`.
 
 ```json
 {
-  "commandId": "csdevkit.debug.active.session",
-  "arguments": []
+  "commandId": "debug.launchProject",
+  "arguments": {
+    "projectFile": "src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj",
+    "workspaceFolder": "/home/llm/Git/Esi.AI",
+    "configuration": "Debug"
+  }
 }
 ```
 
-Wenn eine Session-ID zurueckkommt, zuerst `csdevkit.debug.stop` ausfuehren und
-anschliessend erneut pruefen. Eine zweite Studio-Session darf nicht parallel
-gestartet werden.
+Build failures return `stage: "build"`, the process exit `resultCode`, and `buildLogPath`. Debug startup refusal/errors return `stage: "debug"`, `resultCode`, and `debugLogPath`. Logs are stored in the OS temporary directory under `esi-mcp/debug/`. A successful launch returns a session ID and the build log path.
 
-### 2. Studio starten
+## Launch a Configuration
 
-Wenn kein Argument übergeben wird, ermittelt EsiMCP das Projekt aus dem aktiven
-Editor. Befindet sich der aktive Editor nicht unter einem eindeutigen C#-Projekt,
-muss der vollständige Datei-URI wie im folgenden Beispiel übergeben werden.
+`debug.launchFile` selects a unique configuration by name from `.vscode/launch.json`. The configuration must use `request: "launch"` and provide either a workspace-relative `projectFile` or a `preLaunchTask` defined as a VS Code `process` task. EsiMCP captures process-task output, removes `preLaunchTask` before calling the debugger to avoid running the build twice, and does not execute shell tasks or unresolved task variables.
 
 ```json
 {
-  "commandId": "csdevkit.debug.projectDebugLaunch",
-  "arguments": [
-    {
-      "scheme": "file",
-      "authority": "",
-      "path": "/home/llm/Git/Esi.AI/src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj",
-      "query": "",
-      "fragment": "",
-      "fsPath": "/home/llm/Git/Esi.AI/src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj"
-    }
-  ]
+  "commandId": "debug.launchFile",
+  "arguments": {
+    "configurationName": "Esi.AI Studio",
+    "workspaceFolder": "/home/llm/Git/Esi.AI"
+  }
 }
 ```
 
-Danach die Session-ID lesen und die Readiness pruefen:
+Build and debugger startup failures use the same structured result/log-path contract described above. A named configuration must be unique; attach configurations are not accepted by this launch operation.
+
+## Hot Reload And Rebuild
+
+For live code updates without C# Dev Kit, start a tracked .NET SDK watch task with `mode: "watch"`. It stops active debug sessions, starts the project under `dotnet watch`, applies supported edits live, and restarts the app only when an edit cannot be applied. This runs without an attached VS Code debugger; use the normal launch flow when breakpoints are required.
 
 ```json
 {
-  "commandId": "csdevkit.debug.active.session",
-  "arguments": []
+  "commandId": "debug.hotReload",
+  "arguments": {
+    "mode": "watch",
+    "projectFile": "src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj",
+    "workspaceFolder": "/home/llm/Git/Esi.AI"
+  }
 }
 ```
+
+Stop the tracked task with `mode: "stopWatch"`. Starting the same project twice reuses the existing task; starting another project stops the previous task first.
+
+Use `mode: "rebuild"` only when a full build and debugger relaunch is explicitly needed. Pass exactly one project or configuration target. EsiMCP stops Watch and debug sessions before the build and starts a new debug session only after a successful build:
 
 ```json
 {
-  "commandId": "csdevkit.debug.check.host.readyness",
-  "arguments": []
+  "commandId": "debug.hotReload",
+  "arguments": {
+    "mode": "rebuild",
+    "projectFile": "src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj",
+    "workspaceFolder": "/home/llm/Git/Esi.AI"
+  }
 }
 ```
 
-Der Host ist bereit, wenn `{ "ready": true }` zurueckkommt. Bei Studio ist
-Port `7010` der erwartete Entwicklungsport.
+Stopping a session terminates the host owned by that debugger launch. EsiMCP does not scan for or kill arbitrary detached processes; verify port ownership separately before a fresh Studio start and stop only a process whose project ownership is established.
 
-### 3. Restart mit ID-Pruefung
+## Studio Readiness And Stop
 
-```json
-{
-  "commandId": "csdevkit.debug.restart",
-  "arguments": []
-}
-```
+After launch, inspect `debug.active.session`, then call `debug.check.host.readyness`. Do not infer readiness from the accepted launch result alone. Verify the actual Studio route only after readiness succeeds.
 
-Nach `{ "restarted": true }` muss `active.session` erneut aufgerufen werden.
-Die neue ID muss sich von der ID vor dem Restart unterscheiden. Eine von VS
-Code recycelte ID wird absichtlich als Fehler behandelt. Anschliessend erneut
-`check.host.readyness` aufrufen.
-
-Optional kann zwischen Stop und Start ein exakt benannter Task aus
-`tasks.json` ausgefuehrt werden:
-
-```json
-{
-  "commandId": "csdevkit.debug.restart",
-  "arguments": [
-    { "rebuildTaskName": "build" }
-  ]
-}
-```
-
-Der Taskname muss exakt mit einem vorhandenen Tasknamen uebereinstimmen.
-
-### 4. Session stoppen
-
-```json
-{
-  "commandId": "csdevkit.debug.stop",
-  "arguments": []
-}
-```
-
-Danach muessen beide Checks erfolgreich sein:
-
-```json
-{
-  "commandId": "csdevkit.debug.active.session",
-  "arguments": []
-}
-```
-
-Erwartet wird `null`. Zusaetzlich muss Port `7010` frei sein, zum Beispiel:
-
-```bash
-ss -ltn '( sport = :7010 )'
-```
-
-Eine Ausgabe ohne Listener-Zeile bestaetigt, dass keine Studio-Instanz mehr auf
-dem Port lauscht.
-
-## Live-Test vom 6. September 2026
-
-Der Ablauf wurde mit EsiMCP `1.0.29` live ausgefuehrt:
-
-1. Vor dem Start: aktive Session `null`.
-2. Start erfolgreich; Session-ID `a44a6f53-8e54-4f1c-bb60-67d39837b4a1`.
-3. Readiness: `{ "ready": true }`.
-4. Restart: `{ "restarted": true }`.
-5. Neue Session-ID `65e065bf-20de-4926-9eba-0ca3c0ff0065`; sie unterscheidet sich von der ersten ID.
-6. Readiness nach Restart: `{ "ready": true }`.
-7. Stop: `{ "stopped": true }`.
-8. Nach dem Stop: aktive Session `null`.
-9. Port `7010` war frei.
-
-Die vollstaendige Sitzungsaufzeichnung liegt in
-`docs/history/20260906-214000.md`.
+Use `debug.stop` for the active debug session. Then verify that the session is gone and that port `7010` is no longer held by the Studio process. Before independent builds/tests of Studio, stop its debug session first.

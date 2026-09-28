@@ -53,6 +53,23 @@ h2 {
     border-bottom: 1px solid #d9e0e5;
 }
 
+.backend-visibility-selector {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin: .85rem 0 .35rem;
+    padding: .75rem 0;
+    border-bottom: 1px solid #e9eef2;
+}
+
+.backend-visibility-heading .eyebrow { margin-bottom: .2rem; }
+.backend-visibility-heading h2 { font-size: .9rem; }
+.backend-visibility-options { display: flex; flex-wrap: wrap; gap: .45rem 1rem; }
+.backend-visibility-option { display: inline-flex; align-items: center; gap: .4rem; color: #486581; font-size: .78rem; cursor: pointer; }
+.backend-visibility-option input { margin: 0; accent-color: #087f8c; }
+.backend-visibility-option input:disabled { cursor: not-allowed; }
+
 .backend-tab {
     display: flex;
     flex-direction: column;
@@ -323,6 +340,9 @@ h2 {
 @media (max-width: 520px) {
     .backend-tabs { overflow-x: hidden; }
     .backend-tab { flex: 1 1 9.5rem; min-width: 0; }
+    .backend-visibility-selector { align-items: flex-start; flex-direction: column; }
+    .backend-visibility-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: .65rem .5rem; }
+    .backend-visibility-option { min-width: 0; }
     .backend-support-matrix { padding: 1rem; }
     .model-load-row { grid-template-columns: 1fr; }
     .model-actions { padding-top: 0; }

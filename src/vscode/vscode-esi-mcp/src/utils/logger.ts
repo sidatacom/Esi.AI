@@ -1,6 +1,7 @@
 import * as vscode from "vscode";
 
 let outputChannel: vscode.OutputChannel | undefined;
+let debugOutputChannel: vscode.OutputChannel | undefined;
 
 export function initLogger(): vscode.OutputChannel {
   if (!outputChannel) {
@@ -21,7 +22,23 @@ export function logError(message: string, error?: unknown): void {
   outputChannel?.appendLine(`[${timestamp}] ERROR: ${message} - ${errorStr}`);
 }
 
+export function beginDebugOutput(message: string): void {
+  debugOutputChannel ??= vscode.window.createOutputChannel("EsiMCP Debug");
+  debugOutputChannel.appendLine(`\n[${new Date().toISOString()}] ${message}`);
+  debugOutputChannel.show(true);
+}
+
+export function appendDebugOutput(chunk: string): void {
+  debugOutputChannel?.append(chunk);
+}
+
+export function finishDebugOutput(message: string, exitCode: number): void {
+  debugOutputChannel?.appendLine(`\n[${new Date().toISOString()}] ${message}: exit code ${exitCode}`);
+}
+
 export function disposeLogger(): void {
   outputChannel?.dispose();
+  debugOutputChannel?.dispose();
   outputChannel = undefined;
+  debugOutputChannel = undefined;
 }

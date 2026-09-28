@@ -161,7 +161,7 @@ describe("SessionManager terminal recovery", () => {
     manager.dispose();
   });
 
-  it("binds terminal readiness to a C# Dev Kit-launched debug session", async () => {
+  it("binds terminal readiness to a native VS Code debug session", async () => {
     const manager = new SessionManager();
     const openedTerminal = new MockTerminal("Esi.Web.dll");
     const openListener = mockState.onDidOpenTerminal.mock.calls[0]?.[0] as ((terminal: MockTerminal) => void);

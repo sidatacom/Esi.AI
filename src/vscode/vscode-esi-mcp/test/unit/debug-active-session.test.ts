@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockState = vi.hoisted(() => ({
   activeDebugSession: undefined as { id: string; name: string } | undefined,
+  sessions: [] as Array<{ id: string; name: string }>,
   terminationListeners: [] as Array<(session: { id: string; name: string }) => void>,
   startListeners: [] as Array<(session: { id: string; name: string }) => void>,
   taskEndListeners: [] as Array<(event: { execution: { task: { name: string } }; exitCode?: number }) => void>,
@@ -12,6 +13,7 @@ const mockState = vi.hoisted(() => ({
 vi.mock("vscode", () => ({
   debug: {
     get activeDebugSession() { return mockState.activeDebugSession; },
+    get sessions() { return mockState.sessions; },
     onDidChangeActiveStackItem: () => ({ dispose: vi.fn() }),
     onDidTerminateDebugSession: (listener: (session: { id: string; name: string }) => void) => {
       mockState.terminationListeners.push(listener);
@@ -25,9 +27,12 @@ vi.mock("vscode", () => ({
       mockState.trackerFactory = factory ?? undefined;
       return { dispose: vi.fn() };
     },
-    stopDebugging: vi.fn(async (session: { id: string; name: string }) => {
-      mockState.activeDebugSession = undefined;
-      mockState.terminationListeners.slice().forEach((listener) => listener(session));
+    stopDebugging: vi.fn(async (session?: { id: string; name: string }) => {
+      const stoppedSessions = session ? [session] : [...mockState.sessions];
+      if (session) mockState.sessions = mockState.sessions.filter((candidate) => candidate.id !== session.id);
+      else mockState.sessions = [];
+      if (!session || mockState.activeDebugSession?.id === session.id) mockState.activeDebugSession = undefined;
+      stoppedSessions.forEach((stoppedSession) => mockState.terminationListeners.slice().forEach((listener) => listener(stoppedSession)));
     }),
     startDebugging: vi.fn(() => new Promise<boolean>((resolve) => {
       mockState.resolveStart = (started = true) => {
@@ -42,6 +47,7 @@ vi.mock("vscode", () => ({
   },
   tasks: {
     fetchTasks: vi.fn(async () => mockState.tasks),
+    registerTaskProvider: vi.fn(() => ({ dispose: vi.fn() })),
     executeTask: vi.fn(async (task: { name: string }) => {
       queueMicrotask(() => mockState.taskEndListeners.slice().forEach((listener) => listener({ execution: { task }, exitCode: 0 })));
       return { task };
@@ -65,6 +71,7 @@ import { DebugManager } from "../../src/debug/manager.js";
 describe("DebugManager active session", () => {
   beforeEach(() => {
     mockState.activeDebugSession = undefined;
+    mockState.sessions.length = 0;
     mockState.terminationListeners.length = 0;
     mockState.startListeners.length = 0;
     mockState.taskEndListeners.length = 0;
@@ -80,6 +87,55 @@ describe("DebugManager active session", () => {
 
   it("returns null when no session is active", () => {
     expect(new DebugManager().getActiveSessionId()).toBeNull();
+  });
+
+  it("does not start another debug session when one is already active", async () => {
+    const session = { id: "session-existing", name: "Esi.AI Studio" };
+    mockState.activeDebugSession = session;
+    const vscode = await import("vscode");
+    vi.mocked(vscode.debug.startDebugging).mockClear();
+    const manager = new DebugManager();
+
+    await expect(manager.startDebugging({ configurationName: session.name })).resolves.toEqual({
+      started: false,
+      sessionId: null,
+    });
+    expect(vscode.debug.startDebugging).not.toHaveBeenCalled();
+    manager.dispose();
+  });
+
+  it("cleans up the start-event listener when VS Code declines the launch", async () => {
+    const vscode = await import("vscode");
+    vi.mocked(vscode.debug.startDebugging).mockResolvedValueOnce(false);
+    const manager = new DebugManager();
+    const listenerCountBeforeStart = mockState.startListeners.length;
+
+    await expect(manager.startDebugging({ configurationName: "Esi.AI Studio" })).resolves.toEqual({
+      started: false,
+      sessionId: null,
+    });
+    expect(mockState.startListeners).toHaveLength(listenerCountBeforeStart);
+    manager.dispose();
+  });
+
+  it("starts an explicit VS Code configuration and returns its session", async () => {
+    const session = { id: "session-native", name: "Esi.AI Studio" };
+    const configuration = { name: session.name, type: "coreclr", request: "launch", program: "/workspace/bin/Esi.AI.Studio.dll" };
+    const vscode = await import("vscode");
+    vi.mocked(vscode.debug.startDebugging).mockImplementationOnce(async () => {
+      mockState.activeDebugSession = session;
+      mockState.startListeners.slice().forEach((listener) => listener(session));
+      return true;
+    });
+
+    const manager = new DebugManager();
+    await expect(manager.startDebugging({ configuration })).resolves.toMatchObject({
+      started: true,
+      sessionId: session.id,
+      session,
+    });
+    expect(vscode.debug.startDebugging).toHaveBeenCalledWith(undefined, configuration);
+    manager.dispose();
   });
 
   it("forwards DAP output events to readiness listeners", () => {
@@ -104,6 +160,22 @@ describe("DebugManager active session", () => {
     await new DebugManager().stopDebugging();
 
     expect(mockState.activeDebugSession).toBeUndefined();
+  });
+
+  it("stops every debug session before a new launch", async () => {
+    const firstSession = { id: "session-first", name: "First" };
+    const secondSession = { id: "session-second", name: "Second" };
+    mockState.sessions.push(firstSession, secondSession);
+    const vscode = await import("vscode");
+    vi.mocked(vscode.debug.stopDebugging).mockClear();
+    const manager = new DebugManager();
+
+    await manager.stopAllDebugging();
+
+    expect(vscode.debug.stopDebugging).toHaveBeenCalledOnce();
+    expect(vscode.debug.stopDebugging).toHaveBeenCalledWith();
+    expect(mockState.sessions).toEqual([]);
+    manager.dispose();
   });
 
   it("completes restart after the old session terminates and a new one starts", async () => {

@@ -1,11 +1,13 @@
 import type { ZodType } from "zod";
+import type * as vscode from "vscode";
 import type { McpToolResponse } from "../../types/index.js";
 import type { DebugManager } from "../../debug/manager.js";
 import type { SessionManager } from "../../terminal/session-manager.js";
 import {
   debugBreakpointSchema, debugEmptySchema, debugEvaluateSchema, debugLogpointSchema,
   debugSettingsSchema, debugVariableValuesSchema, debugVariablesSchema, debugWaitForEventSchema,
-  debugCheckHostReadinessSchema, debugRestartSchema,
+  debugCheckHostReadinessSchema, debugRestartSchema, debugStartSchema,
+  debugLaunchProjectSchema, debugLaunchFileSchema, debugHotReloadSchema,
 } from "./schemas.js";
 
 export interface DebugToolDefinition {
@@ -18,6 +20,22 @@ export interface DebugToolDefinition {
 const text = (value: unknown): McpToolResponse => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
 const empty = debugEmptySchema;
 export const handleActiveDebugSession = async (_: unknown, manager: DebugManager): Promise<McpToolResponse> => text(manager.getActiveSessionId());
+export const handleStartDebugSession = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
+  const input = debugStartSchema.parse(params ?? {});
+  sessionManager.prepareDebugHostReadiness();
+  try {
+    const result = await manager.startDebugging(input);
+    if (!result.started || !result.session) {
+      sessionManager.cancelPendingDebugHostReadiness();
+      return text({ started: false, sessionId: null });
+    }
+    sessionManager.bindDebugHostReadiness(result.session);
+    return text({ started: true, sessionId: result.sessionId });
+  } catch (error) {
+    sessionManager.cancelPendingDebugHostReadiness();
+    throw error;
+  }
+};
 export const handleDebugHostReadiness = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
   const input = debugCheckHostReadinessSchema.parse(params ?? {});
   const sessionId = input.sessionId ?? manager.getActiveSessionId() ?? undefined;
@@ -36,10 +54,67 @@ export const handleRestartDebugSession = async (params: unknown, manager: DebugM
   const restarted = await manager.restartDebugging(input.rebuildTaskName);
   return text(restarted ? { restarted: true } : { restarted: false, message: "No active debug session" });
 };
+export const handleLaunchProject = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
+  const input = debugLaunchProjectSchema.parse(params ?? {});
+  sessionManager.prepareDebugHostReadiness();
+  try {
+    const result = await manager.launchProject(input);
+    const session = result.session as vscode.DebugSession | undefined;
+    if (!result.success || !session) {
+      sessionManager.cancelPendingDebugHostReadiness();
+      return text(result);
+    }
+    sessionManager.bindDebugHostReadiness(session);
+    const { session: _session, ...response } = result;
+    return text(response);
+  } catch (error) {
+    sessionManager.cancelPendingDebugHostReadiness();
+    throw error;
+  }
+};
+export const handleLaunchConfiguration = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
+  const input = debugLaunchFileSchema.parse(params ?? {});
+  sessionManager.prepareDebugHostReadiness();
+  try {
+    const result = await manager.launchConfiguration(input);
+    if (!result.started || !result.session) {
+      sessionManager.cancelPendingDebugHostReadiness();
+      return text(result);
+    }
+    sessionManager.bindDebugHostReadiness(result.session);
+    const { session: _session, ...response } = result;
+    return text(response);
+  } catch (error) {
+    sessionManager.cancelPendingDebugHostReadiness();
+    throw error;
+  }
+};
+export const handleHotReload = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
+  const input = debugHotReloadSchema.parse(params ?? {});
+  if (input.mode === "rebuild") sessionManager.prepareDebugHostReadiness();
+  try {
+    const result = await manager.hotReload(input);
+    const session = result.session as vscode.DebugSession | undefined;
+    if (input.mode === "rebuild" && (!result.success || !session)) {
+      sessionManager.cancelPendingDebugHostReadiness();
+    }
+    if (!session) return text(result);
+    sessionManager.bindDebugHostReadiness(session);
+    const { session: _session, ...response } = result;
+    return text(response);
+  } catch (error) {
+    if (input.mode === "rebuild") sessionManager.cancelPendingDebugHostReadiness();
+    throw error;
+  }
+};
 
 export const DEBUG_TOOLS: DebugToolDefinition[] = [
   { name: "debug.active.session", description: "EsiMCP Debug: return the ID of the active VS Code debug session", schema: empty, handler: handleActiveDebugSession },
   { name: "debug.settings", description: "EsiMCP Debug: read a setting from the active VS Code workspace configuration", schema: debugSettingsSchema, handler: async (params, manager) => { const input = debugSettingsSchema.parse(params); return text(manager.getSetting(input.setting)); } },
+  { name: "debug.start", description: "EsiMCP Debug: start an explicit VS Code debug configuration through vscode.debug.startDebugging", schema: debugStartSchema, handler: handleStartDebugSession },
+  { name: "debug.launchProject", description: "EsiMCP Debug: stop active sessions, stream .NET build output to the EsiMCP Debug output channel, and launch the project with the coreclr debugger", schema: debugLaunchProjectSchema, handler: handleLaunchProject },
+  { name: "debug.launchFile", description: "EsiMCP Debug: stop sessions, stream build output to the EsiMCP Debug output channel, and launch a named VS Code launch.json configuration", schema: debugLaunchFileSchema, handler: handleLaunchConfiguration },
+  { name: "debug.hotReload", description: "EsiMCP: start or stop a visible dotnet watch task for live code updates, or explicitly rebuild and relaunch a debug target", schema: debugHotReloadSchema, handler: handleHotReload },
   { name: "debug.check.host.readyness", description: "EsiMCP Debug: check the configured readiness string in active dotnet: terminals and abort if the debug session raises an exception", schema: debugCheckHostReadinessSchema, handler: handleDebugHostReadiness },
   { name: "debug.wait.for.event", description: "EsiMCP Debug: wait for a debugger pause, exception, continue, or termination event", schema: debugWaitForEventSchema, handler: async (params, manager) => { const input = debugWaitForEventSchema.parse(params); return text(await manager.waitForDebugEvent(input.timeoutMs, input.type)); } },
   { name: "debug.stop", description: "EsiMCP Debug: stop the active debug session", schema: empty, handler: handleStopDebugSession },
@@ -53,7 +128,7 @@ export const DEBUG_TOOLS: DebugToolDefinition[] = [
   { name: "debug.add.logpoint", description: "EsiMCP Debug: add a source logpoint and report adapter binding", schema: debugLogpointSchema, handler: async (params, manager) => { const input = debugLogpointSchema.parse(params); return text(await manager.addBreakpoint(input.fileFullPath, input.line, input.condition, input.logMessage)); } },
   { name: "debug.remove.breakpoint", description: "EsiMCP Debug: remove a source breakpoint", schema: debugBreakpointSchema.omit({ condition: true }), handler: async (params, manager) => { const input = debugBreakpointSchema.omit({ condition: true }).parse(params); await manager.removeBreakpoint(input.fileFullPath, input.line); return text({ removed: true }); } },
   { name: "debug.clear.all.breakpoints", description: "EsiMCP Debug: remove all breakpoints", schema: empty, handler: async (_, manager) => { manager.clearAllBreakpoints(); return text({ cleared: true }); } },
-  { name: "debug.list.breakpoints", description: "EsiMCP Debug: list source breakpoints", schema: empty, handler: async (_, manager) => text(manager.listBreakpoints()) },
+  { name: "debug.list.breakpoints", description: "EsiMCP Debug: list source breakpoints", schema: empty, handler: async (_, manager) => text(await manager.listBreakpoints()) },
   { name: "debug.list.variable.names", description: "EsiMCP Debug: list bounded names from a paused debug scope", schema: debugVariablesSchema, handler: async (params, manager) => text(await manager.listVariableNames(debugVariablesSchema.parse(params).scope)) },
   { name: "debug.get.variables.values", description: "EsiMCP Debug: read explicitly requested variables from a paused debug scope", schema: debugVariableValuesSchema, handler: async (params, manager) => { const input = debugVariableValuesSchema.parse(params); return text(await manager.getVariablesValues(input.variableNames, input.scope)); } },
   { name: "debug.evaluate.expression", description: "EsiMCP Debug: evaluate one bounded expression in the paused frame", schema: debugEvaluateSchema, handler: async (params, manager) => text(await manager.evaluateExpression(debugEvaluateSchema.parse(params).expression)) },

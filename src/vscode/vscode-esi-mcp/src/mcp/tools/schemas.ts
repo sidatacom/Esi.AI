@@ -118,6 +118,43 @@ export const terminalSendInputSchema = z.object({
 const debugScopeSchema = z.enum(["local", "global", "all"]).default("local");
 const variableNameSchema = z.string().min(1).max(128).refine((name) => !name.includes("*") && name.toLowerCase() !== "all", { message: "Wildcard and all-variable requests are not allowed" });
 export const debugEmptySchema = z.object({}).strict();
+const debugConfigurationSchema = z.object({
+  name: z.string().min(1),
+  type: z.string().min(1),
+  request: z.enum(["launch", "attach"]),
+}).passthrough();
+export const debugStartSchema = z.object({
+  workspaceFolder: z.string().min(1).optional().describe("Absolute path to the workspace folder for this debug session; required when the workspace has multiple folders"),
+  configurationName: z.string().min(1).optional().describe("Name of an existing VS Code launch configuration"),
+  configuration: debugConfigurationSchema.optional().describe("Explicit VS Code DebugConfiguration passed to vscode.debug.startDebugging"),
+}).strict().refine((input) => Boolean(input.configurationName) !== Boolean(input.configuration), {
+  message: "Provide exactly one of configurationName or configuration",
+});
+export const debugLaunchProjectSchema = z.object({
+  projectFile: z.string().min(1).describe("Absolute or workspace-relative path to a .NET project file"),
+  workspaceFolder: z.string().min(1).optional().describe("Workspace folder containing the project; required in a multi-root workspace"),
+  targetFramework: z.string().min(1).optional().describe("Target framework to build for multi-target projects"),
+  configuration: z.string().min(1).optional().default("Debug").describe("MSBuild configuration (default: Debug)"),
+}).strict();
+export const debugLaunchFileSchema = z.object({
+  configurationName: z.string().min(1).describe("Name of an existing VS Code launch.json configuration"),
+  workspaceFolder: z.string().min(1).optional().describe("Workspace folder containing launch.json; required in a multi-root workspace"),
+  projectFile: z.string().min(1).optional().describe("Optional workspace-relative .csproj path when the launch configuration has no preLaunchTask"),
+}).strict();
+export const debugHotReloadSchema = z.object({
+  mode: z.enum(["watch", "stopWatch", "rebuild"]).optional().default("watch"),
+  projectFile: z.string().min(1).optional().describe("Workspace-relative or absolute .csproj path for the dotnet watch workflow"),
+  configurationName: z.string().min(1).optional().describe("Named launch.json configuration for explicit full rebuild mode"),
+  workspaceFolder: z.string().min(1).optional(),
+  targetFramework: z.string().min(1).optional(),
+  configuration: z.string().min(1).optional().default("Debug"),
+}).strict().refine((input) => {
+  if (input.mode === "watch") return Boolean(input.projectFile) && !input.configurationName;
+  if (input.mode === "stopWatch") return !input.projectFile && !input.configurationName;
+  return Boolean(input.projectFile) !== Boolean(input.configurationName);
+}, {
+  message: "Watch requires only projectFile; stopWatch takes no target; rebuild requires exactly one projectFile or configurationName",
+});
 export const debugWaitForEventSchema = z.object({ timeoutMs: z.coerce.number().int().min(100).max(120000).optional().default(30000), type: z.enum(["paused", "continued", "terminated"]).optional() }).strict();
 export const debugBreakpointSchema = z.object({ fileFullPath: z.string().min(1), line: z.number().int().min(1), condition: z.string().max(1000).optional() }).strict();
 export const debugLogpointSchema = debugBreakpointSchema.extend({ logMessage: z.string().min(1).max(2000) }).strict();
@@ -127,31 +164,6 @@ export const debugEvaluateSchema = z.object({ expression: z.string().min(1).max(
 export const debugSettingsSchema = z.object({ setting: z.string().min(3).max(128).refine((setting) => setting.includes(".") && !/[\\*]/.test(setting), { message: "A fully qualified setting name without wildcards is required" }) }).strict();
 export const debugRestartSchema = z.object({ rebuildTaskName: z.string().min(1).optional().describe("Optional exact task name from tasks.json to run after stopping and before restarting") }).strict();
 export const debugCheckHostReadinessSchema = z.object({ sessionId: z.string().min(1).optional() }).strict();
-export const csharpDevKitEmptySchema = debugEmptySchema;
-export const csharpDevKitListCommandsSchema = z.object({
-  commandId: z.string().min(1).max(256).optional().describe("Optional command ID to return only that command and its invocation syntax"),
-}).strict();
-export const csharpDevKitArgumentsSchema = z.array(z.unknown()).max(20).describe("Optional positional arguments forwarded to the C# Dev Kit command; the extension does not publish command-specific argument metadata");
-export const csharpDevKitProjectLaunchArgumentsSchema = z.array(z.object({
-  path: z.string().min(1).describe("Absolute path to the project .csproj file"),
-}).strict()).length(1).describe("Pass one C# Dev Kit command-context object with a path property; C# Dev Kit converts it to a VS Code file URI");
-export const csharpDevKitReadinessArgumentsSchema = z.array(z.object({ sessionId: z.string().min(1).optional() }).strict()).max(1).describe("Optional active debug session ID; when omitted, EsiMCP reads vscode.debug.activeDebugSession at call time");
-export const csharpDevKitRestartArgumentsSchema = z.array(debugRestartSchema).max(1).describe("Optional restart settings; rebuildTaskName must match a task name from tasks.json");
-export const csharpDevKitNoArgumentsSchema = z.array(z.unknown()).max(0).describe("This virtual command does not accept arguments");
-export const csharpDevKitInteractionStatusSchema = z.object({
-  executionId: z.string().min(1).optional(),
-  waitMs: z.number().int().min(0).max(30000).optional().default(1000),
-}).strict();
-export const csharpDevKitInteractionResponseSchema = z.object({
-  executionId: z.string().min(1),
-  interactionId: z.string().min(1),
-  response: z.unknown().optional(),
-  waitMs: z.number().int().min(0).max(30000).optional().default(1000),
-}).strict();
-export const csharpDevKitCommandSchema = z.object({
-  commandId: z.string().min(1).max(256),
-  arguments: z.array(z.unknown()).max(20).optional(),
-}).strict();
 export const vscodeCommandSchema = z.object({
   commandId: z.string().min(1).max(256),
   arguments: z.record(z.unknown()).optional(),

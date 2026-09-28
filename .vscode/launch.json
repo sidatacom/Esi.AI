@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Esi.AI Studio",
+      "type": "coreclr",
+      "request": "launch",
+      "projectFile": "src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj",
+      "program": "${workspaceFolder}/src/Esi.AI/Esi.AI.Studio/bin/Debug/net10.0/Esi.AI.Studio.dll",
+      "cwd": "${workspaceFolder}/src/Esi.AI/Esi.AI.Studio",
+      "console": "internalConsole",
+      "args": ["--urls", "http://localhost:7010"],
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "LD_LIBRARY_PATH": "/home/llm/Git/Esi.AI/src/Esi.AI/Esi.AI.Studio/bin/Debug/net10.0/runtimes/linux-x64/native/sycl",
+        "UR_ADAPTERS_FORCE_LOAD": "/home/llm/Git/Esi.AI/src/Esi.AI/Esi.AI.Studio/bin/Debug/net10.0/runtimes/linux-x64/native/sycl/libur_adapter_level_zero_v2.so.0",
+        "ZE_ENABLE_ALT_DRIVERS": "/home/llm/Git/Esi.AI/src/Esi.AI/Esi.AI.Studio/bin/Debug/net10.0/runtimes/linux-x64/native/sycl/libze_intel_gpu.so.1",
+        "ZES_ENABLE_SYSMAN": "1",
+        "ONEAPI_DEVICE_SELECTOR": "level_zero:gpu"
+      }
+    }
+  ]
+}

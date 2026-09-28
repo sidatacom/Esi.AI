@@ -2,9 +2,14 @@
 
 ## Verbindliches Skill-Routing
 
-- Vor jedem Starten, Stoppen, Neustarten oder Prüfen von `Esi.AI.Studio`, jeder C#-Dev-Kit-Debugsession, jedem Hot-Reload-Lauf und jeder anschließenden Browserprüfung muss der Skill `vscode-debug` geladen und vollständig befolgt werden.
-- Das gilt auch dann, wenn der Benutzer nur indirekt von Starten, Testen, Browserprüfung, Port `7010`, Debugging, Hot Reload oder C# Dev Kit spricht.
-- Vor dem ersten Lifecycle-Toolaufruf muss die Skilldatei `.github/skills/vscode-debug/SKILL.md` gelesen werden. Erst danach dürfen C#-Dev-Kit- oder Browser-Tools verwendet werden.
+- Bei EsiMCP-Debugoperationen (Start/Stop/Restart, Debugzustand, Breakpoints, Host-Readiness, Hot Reload oder anschließender Browserprüfung) muss vor dem ersten Toolaufruf `.github/skills/vscode-debug/SKILL.md` vollständig gelesen und befolgt werden. Verwende ausschließlich `vscode_debug_list_commands` und `vscode_debug_execute_command` für Debugoperationen.
+- Bei EsiMCP-Terminaloperationen muss vor dem ersten Toolaufruf `.github/skills/vscode-terminal/SKILL.md` vollständig gelesen und befolgt werden. Verwende ausschließlich `vscode_terminal_list_commands` und `vscode_terminal_execute_command` für EsiMCP-Terminals.
+- Bei EsiMCP-Microsoft-Access-Operationen muss vor dem ersten Toolaufruf `.github/skills/msaccess/SKILL.md` vollständig gelesen und befolgt werden. Verwende ausschließlich `msaccess_list_commands` und `msaccess_execute_command` für Access-Tools; Ressourcen und Prompts bleiben eigene MCP-Methoden.
+- Vor jedem Starten, Stoppen, Neustarten oder Prüfen von `Esi.AI.Studio`, jeder Debugsession, jedem Hot-Reload-Lauf und jeder anschließenden Browserprüfung muss der Skill `vscode-debug` geladen und vollständig befolgt werden.
+- Das gilt auch dann, wenn der Benutzer nur indirekt von Starten, Testen, Browserprüfung, Port `7010`, Debugging oder Hot Reload spricht.
+- Vor dem ersten Lifecycle-Toolaufruf muss `.github/skills/vscode-debug/SKILL.md` gelesen werden. Für EsiMCP-Lifecycle-Aktionen sind ausschließlich `vscode_debug_list_commands` und `vscode_debug_execute_command` sowie `vscode_terminal_list_commands` und `vscode_terminal_execute_command` zu verwenden.
+- C# Dev Kit ist keine Abhängigkeit und darf in EsiMCP weder integriert noch über MCP-Tools, Command-IDs, Broker, UI oder dynamische Projektkonfigurationen verwendet werden. Die MIT-lizenzierte Standalone-Erweiterung `ms-dotnettools.csharp` darf als Debug-Adapter verwendet werden; EsiMCP startet Sessions ausschließlich über öffentliche VS Code APIs.
+- Debug-Projektstarts laufen über EsiMCP `debug.launchProject` (Projektpfad) oder `debug.launchFile` (Name aus `.vscode/launch.json`). Beide stoppen aktive Debugsessions vor dem Build und starten anschließend über öffentliche VS-Code-APIs. Für Live-Updates ohne C# Dev Kit `debug.hotReload` mit `mode: "watch"` und einem `.csproj` verwenden: `dotnet watch` wendet unterstützte Edits live an und startet nur bei nicht unterstützten Änderungen neu. Diese Watch-Session ist nicht an den VS-Code-Debugger angehängt. `mode: "rebuild"` bleibt der ausdrückliche vollständige Build mit Debugger-Neustart.
 - Bei Konflikten zwischen einer allgemeinen Vorgehensweise und `vscode-debug` hat `vscode-debug` für Debug-, Start-, Restart-, Hot-Reload- und Browser-Lifecycle Vorrang.
 
 ## Root-Cause-Regel
@@ -18,33 +23,29 @@
 
 ## Esi.AI Studio Startregel
 
-- Starte `Esi.AI.Studio` mit C# Dev Kit. Für automatisierte Starts verwende `csdevkit.debug.projectDebugLaunch` mit dem expliziten Studio-Projekt-Kontext aus `.github/skills/vscode-debug/SKILL.md`; manuell verwende **Start New Instance** am Studio-Projekt im Solution Explorer.
-- `csdevkit.debug.selectStartupProject` wählt nur das Startup-Projekt und ersetzt weder eine Run-and-Debug-Konfiguration noch den Startbefehl. Für manuelle F5-/Debug-View-Starts erzeuge oder wähle die dynamische C#-Konfiguration über **Debug: Select and Start Debugging** oder **Show all automatic debug configurations**.
-- Ein gesendeter `projectDebugLaunch`-Befehl ist kein Startnachweis. Prüfe danach `csdevkit.debug.active.session`; bei `null` lies die Debug-Ausgabe und behebe den Launch-Kontext, statt wiederholt blind zu starten.
-- C# Dev Kit verwendet dynamische, speicherinterne Debugkonfigurationen. Für den normalen Start dürfen keine `.vscode/launch.json` oder `.vscode/tasks.json` vorausgesetzt oder neu erzeugt werden.
-- Verwende `csdevkit.debug.hotReload` für Hot Reload und `csdevkit.debug.showHotReloadPanel` zur Diagnose.
-- Für den Klartext der Debug-Console verwende bei aktiver Session `csdevkit.debug.output.diagnostics` über EsiMCP. Die Antwort enthält `output` und `lastLine`; bei der Frage nach der letzten Zeile ist `lastLine` maßgeblich. `csdevkit.debug.showHotReloadPanel` öffnet nur das VS-Code-Panel und ersetzt diese strukturierte Diagnose nicht.
+- Starte das Studio über `debug.launchProject` mit dem Projektpfad oder `debug.launchFile` mit dem Namen der expliziten VS-Code-Debugkonfiguration. Beide warten auf den passenden `onDidStartDebugSession`-Event; verwende keine implizite Auswahl im Debug-UI.
+- Build- und Debugstartfehler müssen einen Result-Code und den Pfad zum jeweiligen Logfile liefern. Ein MCP-Aufruf allein ist kein Startnachweis.
+- Ein akzeptierter MCP-Aufruf ist kein Startnachweis. Prüfe danach die aktive Session über `debug.active.session`, warte auf den passenden `onDidStartDebugSession`-Event und prüfe anschließend Host-Readiness.
+- Die Standalone-Erweiterung `ms-dotnettools.csharp` darf den `coreclr`-Debug-Adapter bereitstellen. C#-Projektauflösung und Startkonfiguration besitzt EsiMCP; sie dürfen nicht an Dev-Kit-Projektmodelle delegiert werden.
+- Für clientseitige Breakpoints muss `Properties/launchSettings.json` die Microsoft-`inspectUri` enthalten und die Anwendung muss in Development `UseWebAssemblyDebugging()` aktivieren.
+- Prüfe vor jedem Start, dass kein alter Studio-Prozess den Port `7010` belegt. Beende verwaiste projektbezogene Prozesse kontrolliert, bevor eine neue Debugsession gestartet wird.
 - Für clientseitige Breakpoints muss `Properties/launchSettings.json` die Microsoft-`inspectUri` enthalten und die Anwendung muss in Development `UseWebAssemblyDebugging()` aktivieren.
 - Prüfe vor jedem Start, dass kein alter Studio-Prozess den Port `7010` belegt. Beende verwaiste projektbezogene Prozesse kontrolliert, bevor eine neue Debugsession gestartet wird.
 - Ein separater Watchdog, eine PID-Datei und eine Startblockade im Anwendungscode gehören nicht zum Blazor-Debugging und dürfen nicht eingeführt werden.
 
 ## Esi.AI Studio Hot Reload
 
-- Bei einer laufenden Studio-Debugsession ist für reine UI-Änderungen zuerst Hot Reload zu verwenden.
-- Nach jeder Änderung an `.razor`, `.razor.css`, CSS oder Markup ist bei einer aktiven Studio-Debugsession die unmittelbar nächste Validierungsaktion `csdevkit.debug.hotReload`; ein separater Build, `get_errors`, Testlauf oder bloßes `git diff` darf davor nicht als Ersatz ausgeführt werden.
-- Als Hot-Reload-fähige UI-Änderungen gelten insbesondere Änderungen an `.razor`, `.razor.css`, CSS, Markup und anderem Client-Code, sofern VS Code und die laufende Anwendung die Änderung übernehmen können.
-- Für solche Änderungen darf die Debugsession nicht nur wegen einer anschließenden Browserprüfung oder eines unnötigen separaten Builds gestoppt werden. Die laufende Session bleibt aktiv, und die Änderung wird direkt im Browser validiert.
-- Ein kontrollierter Debug-Restart oder ein Stop vor einem Build ist erst erforderlich, wenn Hot Reload die Änderung nicht anwenden kann, ein vollständiger Build ausdrücklich nötig ist oder die Änderung Server-/Projektdateien betrifft, die einen Neustart verlangen.
-- Nach einem Hot-Reload-Lauf sind Host-Readiness, Browserzustand und gegebenenfalls die betroffene Route zu prüfen. Danach darf die Session für weitere Arbeit aktiv bleiben.
+- `debug.hotReload` mit `mode: "watch"` startet den ausgewählten `.csproj` unter `dotnet watch`; der SDK-eigene Hot-Reload-Mechanismus wendet unterstützte Edits live an und startet die App nur bei nicht unterstützten Änderungen neu. `mode: "stopWatch"` beendet den von EsiMCP gestarteten Task.
+- Watch beendet aktive Debugsessions, startet aber keine Debugsession für den Watch-Prozess. Für einen angehängten Debugger ist ein expliziter `debug.launchProject`-/`debug.launchFile`-Start erforderlich.
+- Für `mode: "rebuild"` muss genau ein `projectFile` oder `configurationName` angegeben werden. EsiMCP beendet zuerst Watcher und Debugsessions und startet nur nach erfolgreichem Build erneut.
+- Nach erfolgreichem Neustart Host-Readiness und die betroffene Browserroute prüfen.
 
 ## Esi.AI Studio Build- und Debug-Lebenszyklus
 
 - Vor jedem Build, Rebuild oder Test des Studio-Projekts muss die aktive VS-Code-Debugsession geprüft werden.
-- Vor jedem separaten Compile-, Build-, Rebuild- oder Test-Befehl muss eine laufende Studio-Debugsession kontrolliert gestoppt werden. Kein solcher Befehl darf gestartet werden, solange die Debugsession noch läuft.
-- Nach dem Stoppen muss geprüft werden, dass kein alter Studio-Prozess den Port `7010` belegt. Erst danach darf der separate Compile-, Build-, Rebuild- oder Test-Befehl gestartet werden.
-- Für reine `.razor`-, `.razor.css`-, CSS- oder Markup-Änderungen gilt ausschließlich die Hot-Reload-Regel oben; dafür darf die Debugsession aktiv bleiben und es darf kein unnötiger separater Build gestartet werden.
-- Wenn die Debugsession weiter benötigt wird, ist stattdessen ein kontrollierter Debug-Restart zu verwenden; dieser führt den notwendigen Rebuild aus. Danach muss die Host-Readiness erneut geprüft werden.
-- Für Änderungen am Studio gilt daher: aktive Debugsession prüfen, zunächst Hot Reload versuchen, anschließend die laufende UI validieren und nur bei Bedarf kontrolliert stoppen oder per Debug-Restart neu bauen. Nach einem Neustart muss die Host-Readiness erneut geprüft werden.
+- Vor jedem separaten Build-/Test-Befehl muss eine laufende Studio-Debugsession kontrolliert gestoppt werden, sofern kein Hot-Reload-Update innerhalb der aktiven `debug.launchProject`-Session verwendet wird.
+- Nach dem Stoppen muss geprüft werden, dass kein alter Studio-Prozess Port `7010` belegt.
+- Für UI-only Änderungen zuerst `debug.hotReload` mit `mode: "watch"` verwenden, wenn eine Debugger-freie Watch-Session genügt. `mode: "rebuild"` nur für Änderungen, die einen vollständigen Debugger-Neustart erfordern, und anschließend Host-Readiness prüfen.
 
 ## Long-Running Commands
 

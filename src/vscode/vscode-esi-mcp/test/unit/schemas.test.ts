@@ -9,6 +9,9 @@ import {
   debugWaitForEventSchema,
   debugVariableValuesSchema,
   debugEvaluateSchema,
+  debugLaunchProjectSchema,
+  debugLaunchFileSchema,
+  debugHotReloadSchema,
 } from "../../src/mcp/tools/schemas.js";
 
 describe("Zod Schemas", () => {
@@ -143,6 +146,27 @@ describe("Zod Schemas", () => {
 });
 
 describe("Debug Schemas", () => {
+  it("requires a project file and applies the Debug build default", () => {
+    expect(debugLaunchProjectSchema.safeParse({}).success).toBe(false);
+    expect(debugLaunchProjectSchema.parse({ projectFile: "src/App.csproj" }).configuration).toBe("Debug");
+  });
+
+  it("requires a named launch.json configuration", () => {
+    expect(debugLaunchFileSchema.safeParse({}).success).toBe(false);
+    expect(debugLaunchFileSchema.safeParse({ configurationName: "App" }).success).toBe(true);
+  });
+
+  it("requires a project for watch and exactly one launch target for rebuild", () => {
+    expect(debugHotReloadSchema.parse({ mode: "stopWatch" }).mode).toBe("stopWatch");
+    expect(debugHotReloadSchema.safeParse({}).success).toBe(false);
+    expect(debugHotReloadSchema.parse({ mode: "watch", projectFile: "App.csproj" }).mode).toBe("watch");
+    expect(debugHotReloadSchema.safeParse({ mode: "watch", configurationName: "App" }).success).toBe(false);
+    expect(debugHotReloadSchema.safeParse({ mode: "stopWatch", projectFile: "App.csproj" }).success).toBe(false);
+    expect(debugHotReloadSchema.safeParse({ mode: "rebuild" }).success).toBe(false);
+    expect(debugHotReloadSchema.safeParse({ mode: "rebuild", projectFile: "App.csproj" }).success).toBe(true);
+    expect(debugHotReloadSchema.safeParse({ mode: "rebuild", projectFile: "App.csproj", configurationName: "App" }).success).toBe(false);
+  });
+
   it("accepts filtered debugger event waits and applies the timeout default", () => {
     const result = debugWaitForEventSchema.safeParse({ type: "paused" });
     expect(result.success).toBe(true);

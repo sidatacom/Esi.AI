@@ -1,8 +1,8 @@
 {
   "name": "vscode-esi-mcp",
   "displayName": "EsiMCP",
-  "description": "Direct local HTTP MCP server for VS Code terminals, debugging, C# Dev Kit, and Microsoft Access MCP operations.",
-  "version": "2.0.6",
+  "description": "Direct local HTTP MCP server for VS Code terminals, debugging, and Microsoft Access MCP operations.",
+  "version": "2.0.11",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
@@ -37,6 +37,26 @@
   ],
   "main": "./dist/extension.js",
   "contributes": {
+    "taskDefinitions": [
+      {
+        "type": "esiMcpDotnetWatch",
+        "required": ["projectFile"],
+        "properties": {
+          "projectFile": {
+            "type": "string",
+            "description": "Absolute path to the .NET project being watched"
+          },
+          "configuration": {
+            "type": "string",
+            "description": ".NET build configuration"
+          },
+          "targetFramework": {
+            "type": "string",
+            "description": "Optional .NET target framework"
+          }
+        }
+      }
+    ],
     "configuration": {
       "title": "EsiMCP",
       "properties": {
@@ -204,12 +224,14 @@
     "lint": "eslint src/ --ext .ts",
     "format": "prettier --write \"src/**/*.ts\"",
     "test": "vitest run",
+    "test:integration": "npm run build && node test/integration/run.cjs",
     "test:watch": "vitest",
     "prepackage": "npm run version:check",
     "package": "vsce package"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.9.0",
+    "jsonc-parser": "^3.3.1",
     "strip-ansi": "^7.1.0",
     "uuid": "^9.0.0",
     "zod": "^3.24.0",

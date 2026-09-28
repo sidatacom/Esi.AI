@@ -97,6 +97,12 @@ public sealed class ApplicationSettingsService(
                 !double.IsFinite(setting.SecondsPerPrefillToken) || setting.SecondsPerPrefillToken < 0))
             throw new ArgumentException("Every backend requires finite, non-negative inference timeout values.", nameof(settings));
 
+        if (settings.EnabledBackendIds is { } enabledBackendIds &&
+            (enabledBackendIds.Count == 0 ||
+                enabledBackendIds.Any(string.IsNullOrWhiteSpace) ||
+                enabledBackendIds.Distinct(StringComparer.OrdinalIgnoreCase).Count() != enabledBackendIds.Count))
+            throw new ArgumentException("At least one valid, unique backend ID must be enabled.", nameof(settings));
+
         var sandbox = settings.BackendSandbox ?? new BackendSandboxSettings();
         if (sandbox.CpuQuotaPercent <= 0 ||
             sandbox.TaskLimit <= 0 ||

@@ -32,7 +32,9 @@ public sealed record ApplicationSettings(
     IReadOnlyList<InferenceTimeoutSettings> InferenceTimeouts,
     ConfigurationBackend? LastSelectedBackend = null,
     BackendSandboxSettings? BackendSandbox = null,
-    ModelLibrarySettings? ModelLibrary = null);
+    ModelLibrarySettings? ModelLibrary = null,
+    string? LastSelectedBackendId = null,
+    IReadOnlyList<string>? EnabledBackendIds = null);
 
 /// <summary>Stores the resource limits and timeouts for isolated backend worker processes.</summary>
 public sealed record BackendSandboxSettings(

@@ -357,6 +357,12 @@ public sealed class OpenAiCompatibleController(
         string? completionId,
         CancellationToken cancellationToken)
     {
+        var flowRoute = dataService is null
+            ? null
+            : await dataService.FlowRouteAsync(request, cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(flowRoute?.ModelIdentifier))
+            request = request with { Model = flowRoute.ModelIdentifier };
+
         var status = await EnsureConfigurationLoadedAsync(request.Model, requestId, completionId, cancellationToken).ConfigureAwait(false);
         var backendRequest = backendMiddleware.Prepare(request, status);
         if (dataService is not null && !string.IsNullOrWhiteSpace(status.ModelPath))
@@ -378,11 +384,15 @@ public sealed class OpenAiCompatibleController(
             "Routing",
             "out",
             "An lokales Backend geroutet",
-            $"{backendRequest.Backend} · Modell {backendRequest.Model}",
+            $"{backendRequest.Backend} · Modell {backendRequest.Model}" +
+                (flowRoute is null ? string.Empty : $" · Flow {flowRoute.WorkflowName} v{flowRoute.Version}"),
             SerializeTracePayload(new
             {
                 backendRequest.Backend,
                 backendRequest.Model,
+                Flow = flowRoute?.WorkflowName,
+                FlowVersion = flowRoute?.Version,
+                FlowRoute = flowRoute?.RouteTarget,
                 MessageCount = backendRequest.Messages.Count,
                 ToolCount = backendRequest.Tools?.Count ?? 0,
                 backendRequest.InferenceTimeout

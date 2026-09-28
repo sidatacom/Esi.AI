@@ -9,19 +9,19 @@
     <header class="flow-header">
         <div>
             <p class="eyebrow">WORKFLOW ROUTING</p>
-            <h1>Flow routing</h1>
-            <p class="lede">Open-Source-Elsa-Designer für die Esi.AI-Routing-Workflows.</p>
+            <h1>Flow</h1>
+            <p class="lede">Optimajet WorkflowEngine.NET</p>
         </div>
         <div class="flow-actions">
-            <span class="engine-status"><span class="status-dot"></span> Elsa designer ready</span>
-            <button class="primary-button" type="button" @onclick="PublishFlowAsync" disabled="@isSaving">Publish</button>
+            <span class="engine-status"><span class="status-dot"></span> Runtime online</span>
+            <button class="primary-button" type="button" @onclick="PublishFlowAsync" disabled="@isSaving || isLoading">Publish</button>
         </div>
     </header>
 
     <section class="flow-toolbar" aria-label="Flow controls">
         <div class="toolbar-group">
             <span class="toolbar-label">Workflow</span>
-            <select value="@selectedWorkflow" @onchange="OnWorkflowChangedAsync">
+            <select value="@selectedWorkflow" @onchange="OnWorkflowChangedAsync" disabled="@isLoading">
                 <option>Chat request router</option>
                 <option>Vision request router</option>
                 <option>Tool calling router</option>
@@ -29,13 +29,21 @@
             <span class="version-label">v@(currentDefinition?.Version ?? 1) · @(currentDefinition?.IsPublished == true ? "Published" : "Draft")</span>
         </div>
         <div class="toolbar-group toolbar-right">
-            <button class="tool-button" type="button" @onclick="() => SaveFlowAsync()" disabled="@isSaving">@(isSaving ? "Saving..." : "Save draft")</button>
+            <button class="tool-button" type="button" @onclick="() => SaveFlowAsync()" disabled="@isSaving || isLoading">@(isSaving ? "Saving..." : "Save draft")</button>
         </div>
     </section>
 
-    <main class="flow-workspace">
-        <EsiAiWorkflowDesigner DefinitionJson="@definitionJson"
-                               DefinitionJsonChanged="DefinitionChangedCallback" />
+    <main class="flow-workspace" aria-label="Workflow route editor">
+        @if (isLoading)
+        {
+            <p class="workspace-message">Loading workflows...</p>
+        }
+        else
+        {
+            <EsiAiWorkflowDesigner DefinitionJson="@editorDefinitionJson"
+                                   IsReadOnly="false"
+                                   DefinitionJsonChanged="OnDefinitionJsonChangedAsync" />
+        }
     </main>
 
     @if (!string.IsNullOrWhiteSpace(statusMessage))
@@ -48,7 +56,7 @@
     .flow-shell { min-height: calc(100vh - 5rem); padding: 1.4rem 1.25rem 2rem; color: #203033; }
     .flow-header, .flow-toolbar, .toolbar-group, .flow-actions { display: flex; align-items: center; gap: 1rem; }
     .flow-header { justify-content: space-between; margin: 0 auto 1.25rem; max-width: 1500px; }
-    .flow-header h1 { margin: .25rem 0 .4rem; font-size: clamp(1.8rem, 3vw, 2.8rem); }
+    .flow-header h1 { margin: .25rem 0 .4rem; font-size: 2rem; }
     .flow-header .lede { max-width: 42rem; margin: 0; }
     .flow-actions { flex-wrap: wrap; justify-content: flex-end; }
     .engine-status { display: inline-flex; align-items: center; gap: .45rem; color: #35675e; font-size: .82rem; font-weight: 700; }
@@ -59,24 +67,23 @@
     .toolbar-label, .version-label { color: #667976; font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
     .flow-toolbar select { border: 1px solid #c4d0cc; background: #fff; color: #203033; font: inherit; padding: .5rem .6rem; }
     .toolbar-right { margin-left: auto; }.tool-button { padding: .5rem .8rem; }
-    .flow-workspace { max-width: 1500px; height: 44rem; margin: 0 auto; border: 1px solid #cbd8d3; background: #fff; overflow: hidden; }
-    .flow-workspace ::deep .esi-ai-elsa-designer { min-height: 44rem; height: 100%; }
+    .flow-workspace { max-width: 1500px; height: min(72vh, 820px); min-height: 34rem; margin: 0 auto; overflow: hidden; border: 1px solid #cbd8d3; background: #fff; }
+    .workspace-message { padding: 3rem; text-align: center; color: #667976; }
     .save-status { max-width: 1500px; margin: .75rem auto; padding: .45rem .7rem; border: 1px solid #b9d5c8; background: #f1faf4; color: #35675e; font-size: .75rem; }
-    @@media (max-width: 680px) { .flow-shell { padding: 1rem .75rem; }.flow-header, .flow-toolbar { align-items: stretch; flex-direction: column; }.flow-actions, .toolbar-right { justify-content: flex-start; margin-left: 0; }.flow-workspace { height: 36rem; } .flow-workspace ::deep .esi-ai-elsa-designer { min-height: 36rem; } }
+    @@media (max-width: 680px) { .flow-shell { padding: 1rem .75rem; }.flow-header, .flow-toolbar { align-items: stretch; flex-direction: column; }.flow-actions, .toolbar-right { justify-content: flex-start; margin-left: 0; }.toolbar-group { align-items: flex-start; flex-wrap: wrap; }.flow-workspace { height: 72vh; min-height: 30rem; } }
 </style>
 
 @code {
     private string selectedWorkflow = "Chat request router";
-    private string definitionJson = "{}";
+    private string editorDefinitionJson = "{}";
     private FlowDefinition? currentDefinition;
     private string? statusMessage;
     private bool isSaving;
-
-    private EventCallback<string> DefinitionChangedCallback => EventCallback.Factory.Create<string>(this, OnDefinitionChangedAsync);
-
+    private bool isLoading = true;
     protected override async Task OnInitializedAsync()
     {
         await LoadWorkflowAsync();
+        isLoading = false;
     }
 
     private async Task OnWorkflowChangedAsync(ChangeEventArgs args)
@@ -89,41 +96,20 @@
     {
         var definitions = await DataService.FlowDefinition_ReadAsync();
         currentDefinition = definitions.FirstOrDefault(definition => definition.Name == selectedWorkflow);
-                definitionJson = currentDefinition?.DefinitionJson ?? CreateDefaultDefinitionJson(selectedWorkflow);
+        editorDefinitionJson = currentDefinition?.DefinitionJson
+            ?? CreateDefinitionJson(selectedWorkflow, DefaultRoute(selectedWorkflow));
         statusMessage = null;
     }
 
-        private static string CreateDefaultDefinitionJson(string workflowName) => workflowName switch
-        {
-                "Vision request router" => """
-                        {
-                            "nodes": [
-                                { "name": "Receive vision request", "detail": "Vision request", "kind": "trigger" },
-                                { "name": "Route to vision backend", "detail": "Vision backend", "kind": "backend" }
-                            ]
-                        }
-                        """,
-                "Tool calling router" => """
-                        {
-                            "nodes": [
-                                { "name": "Receive tool request", "detail": "Tool calling request", "kind": "trigger" },
-                                { "name": "Route to tool backend", "detail": "Loaded local model", "kind": "backend" }
-                            ]
-                        }
-                        """,
-                _ => """
-                        {
-                            "nodes": [
-                                { "name": "Receive chat request", "detail": "Chat request", "kind": "trigger" },
-                                { "name": "Route to chat backend", "detail": "Loaded local model", "kind": "backend" }
-                            ]
-                        }
-                        """
-        };
+    private static string DefaultRoute(string workflowName) =>
+        string.Equals(workflowName, "Vision request router", StringComparison.OrdinalIgnoreCase)
+            ? "Vision backend"
+            : "Loaded local model";
 
-    private Task OnDefinitionChangedAsync(string value)
+    private Task OnDefinitionJsonChangedAsync(string definitionJson)
     {
-        definitionJson = value;
+        editorDefinitionJson = definitionJson;
+        statusMessage = null;
         return Task.CompletedTask;
     }
 
@@ -140,7 +126,7 @@
                 selectedWorkflow,
                 currentDefinition is null ? 1 : currentDefinition.Version + 1,
                 publish || currentDefinition?.IsPublished == true,
-                definitionJson,
+                editorDefinitionJson,
                 currentDefinition?.CreatedAtUtc ?? DateTime.UtcNow,
                 DateTime.UtcNow);
             currentDefinition = currentDefinition is null
@@ -157,4 +143,14 @@
             isSaving = false;
         }
     }
+
+    private static string CreateDefinitionJson(string workflowName, string routeTarget) =>
+        System.Text.Json.JsonSerializer.Serialize(new
+        {
+            nodes = new[]
+            {
+                new { name = "Incoming request", detail = workflowName, kind = "trigger" },
+                new { name = "Backend route", detail = routeTarget, kind = "backend" }
+            }
+        });
 }

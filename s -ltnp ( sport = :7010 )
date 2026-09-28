@@ -1,0 +1,10 @@
+src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj:28: trailing whitespace.
+[32m+[m[32m    <ProjectReference Include="..\..\..\origins\optimajet\WorkflowEngine.NET\Providers\OptimaJet.Workflow.SQLite\Source\OptimaJet.Workflow.SQLite.csproj" Watch="false" />[m[41m[m
+src/Esi.AI/Esi.AI.Studio/Program.cs:167: trailing whitespace.
+[32m+[m[32mbuilder.Services.AddSingleton<OptimajetFlowRuntime>();[m[41m[m
+src/Esi.AI/Esi.AI.Studio/Program.cs:168: trailing whitespace.
+[32m+[m[32mbuilder.Services.AddSingleton<IOptimajetFlowRuntime>(services => services.GetRequiredService<OptimajetFlowRuntime>());[m[41m[m
+src/Esi.AI/Esi.AI.Studio/Program.cs:169: trailing whitespace.
+[32m+[m[32mbuilder.Services.AddHostedService(services => services.GetRequiredService<OptimajetFlowRuntime>());[m[41m[m
+src/Esi.AI/Esi.AI.Studio/Program.cs:214: trailing whitespace.
+[32m+[m[32m    await dataService.FlowDefinition_SeedDefaultsAsync();[m[41m[m

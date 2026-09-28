@@ -12,7 +12,7 @@ import type { SessionManager } from "../../src/terminal/session-manager.js";
 import type { DebugManager } from "../../src/debug/manager.js";
 
 describe("EsiMCP tool catalog", () => {
-  it("exposes namespaced Terminal, C# Dev Kit, and Access tools without standalone Debug tools", async () => {
+  it("exposes only the supported EsiMCP tool families", async () => {
     const handler = createMcpRequestHandler({} as SessionManager, {} as DebugManager);
     const result = await handler("tools/list") as { tools: Array<{ name: string; description: string }> };
     const names = result.tools.map((tool) => tool.name);
@@ -20,14 +20,80 @@ describe("EsiMCP tool catalog", () => {
     expect(names).toEqual([
       "vscode_terminal_list_commands",
       "vscode_terminal_execute_command",
-      "csharp_devkit_list_commands",
-      "csharp_devkit_execute_command",
-      "csharp_devkit_get_interaction_status",
-      "csharp_devkit_respond_to_interaction",
+      "vscode_debug_list_commands",
+      "vscode_debug_execute_command",
       "msaccess_list_commands",
       "msaccess_execute_command",
     ]);
     expect(result.tools.every((tool) => tool.description.startsWith("EsiMCP "))).toBe(true);
+  });
+
+  it("runs the popup-free debug restart through the legacy vscode_debug path", async () => {
+    const restartDebugging = vi.fn().mockResolvedValue(true);
+    const handler = createMcpRequestHandler({} as SessionManager, { restartDebugging } as unknown as DebugManager);
+
+    const result = await handler("tools/call", {
+      name: "vscode_debug_execute_command",
+      arguments: { commandId: "debug.restart", arguments: { rebuildTaskName: "build" } },
+    }) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0].text)).toEqual({ restarted: true });
+    expect(restartDebugging).toHaveBeenCalledWith("build");
+  });
+
+  it("lists project/file launch and Hot Reload debug operations", async () => {
+    const handler = createMcpRequestHandler({} as SessionManager, {} as DebugManager);
+    const result = await handler("tools/call", {
+      name: "vscode_debug_list_commands",
+      arguments: {},
+    }) as { content: Array<{ text: string }> };
+    const payload = JSON.parse(result.content[0].text) as { commands: Array<{ command: string }> };
+
+    expect(payload.commands.map((command) => command.command)).toContain("debug.launchProject");
+    expect(payload.commands.map((command) => command.command)).toContain("debug.launchFile");
+    expect(payload.commands.map((command) => command.command)).toContain("debug.hotReload");
+  });
+
+  it("returns structured build failures from project launch", async () => {
+    const failure = { success: false, stage: "build", resultCode: 1, buildLogPath: "/tmp/build.log" };
+    const launchProject = vi.fn().mockResolvedValue(failure);
+    const cancelPendingDebugHostReadiness = vi.fn();
+    const sessionManager = {
+      prepareDebugHostReadiness: vi.fn(),
+      cancelPendingDebugHostReadiness,
+    } as unknown as SessionManager;
+    const handler = createMcpRequestHandler(sessionManager, { launchProject } as unknown as DebugManager);
+
+    const result = await handler("tools/call", {
+      name: "vscode_debug_execute_command",
+      arguments: { commandId: "debug.launchProject", arguments: { projectFile: "App.csproj" } },
+    }) as { content: Array<{ text: string }> };
+
+    expect(JSON.parse(result.content[0].text)).toEqual(failure);
+    expect(cancelPendingDebugHostReadiness).toHaveBeenCalledOnce();
+    expect(launchProject).toHaveBeenCalledWith({ projectFile: "App.csproj", configuration: "Debug" });
+  });
+
+  it("starts an explicit VS Code configuration and binds readiness to its session", async () => {
+    const session = { id: "session-started", name: "Esi.AI Studio" };
+    const startDebugging = vi.fn().mockResolvedValue({ started: true, sessionId: session.id, session });
+    const prepareDebugHostReadiness = vi.fn();
+    const bindDebugHostReadiness = vi.fn();
+    const sessionManager = { prepareDebugHostReadiness, bindDebugHostReadiness } as unknown as SessionManager;
+    const handler = createMcpRequestHandler(sessionManager, { startDebugging } as unknown as DebugManager);
+    const configuration = { name: "Esi.AI Studio", type: "coreclr", request: "launch", program: "/workspace/bin/Esi.AI.Studio.dll" };
+
+    const result = await handler("tools/call", {
+      name: "vscode_debug_execute_command",
+      arguments: { commandId: "debug.start", arguments: { workspaceFolder: "/workspace", configuration } },
+    }) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0].text)).toEqual({ started: true, sessionId: "session-started" });
+    expect(prepareDebugHostReadiness).toHaveBeenCalledOnce();
+    expect(bindDebugHostReadiness).toHaveBeenCalledWith(session);
+    expect(startDebugging).toHaveBeenCalledWith({ workspaceFolder: "/workspace", configuration });
   });
 
   it("returns the debug exception error code when readiness is aborted", async () => {
@@ -36,8 +102,8 @@ describe("EsiMCP tool catalog", () => {
     const handler = createMcpRequestHandler(sessionManager, { getActiveSessionId: vi.fn(() => "session-123") } as unknown as DebugManager);
 
     const result = await handler("tools/call", {
-      name: "csharp_devkit_execute_command",
-      arguments: { commandId: "csdevkit.debug.check.host.readyness", arguments: [] },
+      name: "vscode_debug_execute_command",
+      arguments: { commandId: "debug.check.host.readyness", arguments: {} },
     }) as { content: Array<{ text: string }>; isError?: boolean; errorCode?: string };
 
     expect(result.isError).toBe(true);
@@ -48,7 +114,7 @@ describe("EsiMCP tool catalog", () => {
     });
   });
 
-  it("preserves the existing C# Dev Kit restart behavior when no session is active", async () => {
+  it("returns immediately when direct debug restart has no active session", async () => {
     const restartDebugging = vi.fn().mockResolvedValue(false);
     const debugManager = {
       restartDebugging,
@@ -56,8 +122,8 @@ describe("EsiMCP tool catalog", () => {
     const handler = createMcpRequestHandler({} as SessionManager, debugManager);
 
     const result = await handler("tools/call", {
-      name: "csharp_devkit_execute_command",
-      arguments: { commandId: "csdevkit.debug.restart", arguments: [{ rebuildTaskName: "build" }] },
+      name: "vscode_debug_execute_command",
+      arguments: { commandId: "debug.restart", arguments: { rebuildTaskName: "build" } },
     }) as { content: Array<{ text: string }>; isError?: boolean };
 
     expect(result.isError).toBeUndefined();
@@ -66,21 +132,6 @@ describe("EsiMCP tool catalog", () => {
       message: "No active debug session",
     });
     expect(restartDebugging).toHaveBeenCalledWith("build");
-  });
-
-  it("lists command syntax for every virtual C# Dev Kit command", async () => {
-    const handler = createMcpRequestHandler({} as SessionManager, {} as DebugManager);
-
-    const result = await handler("tools/call", {
-      name: "csharp_devkit_list_commands",
-      arguments: {},
-    }) as { content: Array<{ text: string }> };
-
-    const payload = JSON.parse(result.content[0].text) as { commands: Array<{ command: string; invocationSyntax: string }> };
-    expect(payload.commands.map((command) => command.command)).toContain("csdevkit.debug.stop");
-    expect(payload.commands.map((command) => command.command)).toContain("csdevkit.debug.restart");
-    expect(payload.commands.map((command) => command.command)).not.toContain("csdevkit.debug.start");
-    expect(payload.commands.every((command) => command.invocationSyntax.length > 0)).toBe(true);
   });
 
   it("lists the legacy terminal commands behind the VS Code terminal command tool", async () => {

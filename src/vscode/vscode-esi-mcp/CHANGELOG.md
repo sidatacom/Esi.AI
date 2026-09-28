@@ -2,6 +2,40 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.11] - 2026-09-26
+
+### Added
+- Replace the unsupported Hot Reload stub with a tracked `dotnet watch` task that applies supported edits live and restarts only for unsupported edits.
+- Add explicit Watch start/stop modes and stop Watch before debugger launches or full rebuilds.
+- Document the distinction between SDK Hot Reload and debugger-attached Edit and Continue.
+
+## [2.0.10] - 2026-09-26
+
+### Added
+- Add project and named launch.json operations with bounded build/debug logs and structured result codes.
+- Add an explicit Hot Reload apply result and a stop/build/restart operation without C# Dev Kit dependencies.
+- Add focused launch ordering, JSONC configuration, and process-log tests.
+
+## [2.0.9] - 2026-09-26
+
+### Added
+- Restore the standalone `vscode_debug_*` tools alongside the existing C# Dev Kit tools.
+- Provide popup-free rebuild and debug restart through the EsiMCP-owned `debug.restart` command and an explicit build task.
+
+## [2.0.8] - 2026-09-26
+
+### Fixed
+- Explain when a C# Dev Kit command is still running because its VS Code prompt could not be captured by EsiMCP.
+- Clarify that cross-extension UI prompts must be resolved in VS Code.
+
+## [2.0.7] - 2026-09-26
+
+### Fixed
+- Convert serialized project and file contexts to native VS Code URIs before dispatching C# Dev Kit launch commands.
+
+### Added
+- Add Extension Host integration coverage for debug launch variants, MCP interactions, and the debug lifecycle.
+
 ## [2.0.6] - 2026-09-25
 
 ### Added
