@@ -2,7 +2,7 @@ using Esi.AI.Models;
 
 namespace Esi.AI.Studio.Client.State;
 
-public sealed class LlamaState
+public sealed class LlamaState : IBackendTabConfigurationData
 {
     public LlamaAdvancedState Advanced { get; } = new();
     public string ModelPath { get; set; } = string.Empty;

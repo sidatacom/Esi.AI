@@ -3,7 +3,7 @@ using Esi.AI.Models;
 
 namespace Esi.AI.Studio.Client.State;
 
-public sealed class OpenVinoState
+public sealed class OpenVinoState : IBackendTabConfigurationData
 {
     public string ModelPath { get; set; } = string.Empty;
     public string Device { get; set; } = "CPU";

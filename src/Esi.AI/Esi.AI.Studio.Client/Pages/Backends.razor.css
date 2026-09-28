@@ -54,9 +54,9 @@ h2 {
 }
 
 .backend-visibility-selector {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(11rem, 13rem) minmax(0, 1fr);
     align-items: center;
-    justify-content: space-between;
     gap: 1rem;
     margin: .85rem 0 .35rem;
     padding: .75rem 0;
@@ -65,8 +65,12 @@ h2 {
 
 .backend-visibility-heading .eyebrow { margin-bottom: .2rem; }
 .backend-visibility-heading h2 { font-size: .9rem; }
-.backend-visibility-options { display: flex; flex-wrap: wrap; gap: .45rem 1rem; }
-.backend-visibility-option { display: inline-flex; align-items: center; gap: .4rem; color: #486581; font-size: .78rem; cursor: pointer; }
+.backend-visibility-groups { display: grid; grid-template-columns: 1.1fr .9fr 1.15fr; min-width: 0; }
+.backend-visibility-group { min-width: 0; padding: 0 .9rem; border-left: 1px solid #d9e0e5; }
+.backend-visibility-group:first-child { padding-left: 0; border-left: 0; }
+.backend-visibility-group h3 { margin: 0 0 .35rem; color: #627d98; font-size: .67rem; font-weight: 800; text-transform: uppercase; }
+.backend-visibility-options { display: flex; flex-wrap: wrap; gap: .35rem .8rem; }
+.backend-visibility-option { display: inline-flex; align-items: center; gap: .4rem; min-height: 1.5rem; color: #486581; font-size: .78rem; cursor: pointer; }
 .backend-visibility-option input { margin: 0; accent-color: #087f8c; }
 .backend-visibility-option input:disabled { cursor: not-allowed; }
 
@@ -340,9 +344,12 @@ h2 {
 @media (max-width: 520px) {
     .backend-tabs { overflow-x: hidden; }
     .backend-tab { flex: 1 1 9.5rem; min-width: 0; }
-    .backend-visibility-selector { align-items: flex-start; flex-direction: column; }
+    .backend-visibility-selector { grid-template-columns: 1fr; align-items: flex-start; }
+    .backend-visibility-groups { grid-template-columns: 1fr; }
+    .backend-visibility-group { padding: .65rem 0 0; border: 0; border-top: 1px solid #d9e0e5; }
+    .backend-visibility-group:first-child { padding-top: 0; border-top: 0; }
     .backend-visibility-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; gap: .65rem .5rem; }
-    .backend-visibility-option { min-width: 0; }
+    .backend-visibility-option { min-width: 0; overflow-wrap: anywhere; }
     .backend-support-matrix { padding: 1rem; }
     .model-load-row { grid-template-columns: 1fr; }
     .model-actions { padding-top: 0; }

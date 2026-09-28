@@ -2,7 +2,7 @@ using Esi.AI.Models;
 
 namespace Esi.AI.Studio.Client.State;
 
-public sealed class DotLlmState
+public sealed class DotLlmState : IBackendTabConfigurationData
 {
     public string ModelPath { get; set; } = string.Empty;
     public string Device { get; set; } = "cpu";

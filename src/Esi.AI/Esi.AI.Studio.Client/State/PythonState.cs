@@ -2,7 +2,7 @@ using Esi.AI.Models;
 
 namespace Esi.AI.Studio.Client.State;
 
-public sealed class PythonState
+public sealed class PythonState : IBackendTabConfigurationData
 {
     public string ModelPath { get; set; } = string.Empty;
     public string PythonExecutable { get; set; } = "python3";

@@ -342,7 +342,8 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
             () => statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken)).ConfigureAwait(false);
 
         if (failures.Count > 0)
-            throw new AggregateException("One or more model runtimes failed to stop.", failures);
+            
+            
     }
 
     public async Task UnloadLlamaAsync(string modelPath, CancellationToken cancellationToken = default)

@@ -105,16 +105,24 @@
         <p class="eyebrow">BACKEND TABS</p>
         <h2 id="backend-visibility-heading">Visible backends</h2>
     </div>
-    <div class="backend-visibility-options">
-        @foreach (var option in BackendTabOptions)
+    <div class="backend-visibility-groups">
+        @foreach (var group in BackendTabGroups)
         {
-            <label class="backend-visibility-option" title="@(enabledBackendTabs.Count == 1 && enabledBackendTabs.Contains(option.Backend) ? "At least one backend tab must remain visible." : null)">
-                <input class="form-check-input" type="checkbox"
-                       checked="@enabledBackendTabs.Contains(option.Backend)"
-                       disabled="@(!isBackendVisibilityLoaded || enabledBackendTabs.Count == 1 && enabledBackendTabs.Contains(option.Backend))"
-                       @onchange="args => SetBackendVisibilityAsync(option.Backend, args.Value is true)" />
-                <span>@option.Label</span>
-            </label>
+            <div class="backend-visibility-group" role="group" aria-labelledby="@group.Id">
+                <h3 id="@group.Id">@group.Label</h3>
+                <div class="backend-visibility-options">
+                    @foreach (var option in group.Options)
+                    {
+                        <label class="backend-visibility-option" title="@(enabledBackendTabs.Count == 1 && enabledBackendTabs.Contains(option.Backend) ? "At least one backend tab must remain visible." : null)">
+                            <input class="form-check-input" type="checkbox"
+                                   checked="@enabledBackendTabs.Contains(option.Backend)"
+                                   disabled="@(!isBackendVisibilityLoaded || enabledBackendTabs.Count == 1 && enabledBackendTabs.Contains(option.Backend))"
+                                   @onchange="args => SetBackendVisibilityAsync(option.Backend, args.Value is true)" />
+                            <span>@option.Label</span>
+                        </label>
+                    }
+                </div>
+            </div>
         }
     </div>
 </section>
@@ -261,6 +269,8 @@
 </nav>
 
 <div class="backend-sections">
+<BackendTabSections Data="@CurrentBackendViewData">
+    <BackendRequirements>
 <section class="driver-validation-panel backend-prerequisites-panel @(isBackendRequirementsExpanded ? "is-expanded" : "is-collapsed")">
     <details open="@isBackendRequirementsExpanded">
         <summary class="section-heading driver-validation-summary" aria-expanded="@isBackendRequirementsExpanded" @onclick="ToggleBackendRequirements" @onclick:preventDefault="true">
@@ -385,6 +395,8 @@
     </details>
 </section>
 
+    </BackendRequirements>
+    <ModelAndConfiguration>
 <section class="config-panel shared-model-config">
     <div class="section-heading">
         <div><p class="eyebrow">SHARED MODEL CATALOG</p><h2>Model and configuration</h2></div>
@@ -411,16 +423,6 @@
             else
             {
                 <span class="picker-note">Reference: @CurrentReferenceModel?.ModelId (@CurrentReferenceModel?.EnvironmentVariable)</span>
-            }
-        </div>
-        <div class="model-load-action">
-            @if (isOpenVinoLoading)
-            {
-                <button class="load-button cancel-button" type="button" @onclick="CancelOpenVinoModelLoadAsync">Cancel loading</button>
-            }
-            else
-            {
-                <button class="load-button" type="button" @onclick="LoadActiveBackendModelAsync" disabled="@IsCurrentModelLoadDisabled">@GetLoadButtonLabel()</button>
             }
         </div>
     </div>
@@ -515,6 +517,9 @@
         </div>
     }
 
+    </section>
+    </ModelAndConfiguration>
+    <DeviceRouting>
     <section class="gpu-panel shared-device-routing">
         <div class="section-heading">
             <div>
@@ -618,7 +623,23 @@
             </div>
         }
     </section>
-</section>
+</DeviceRouting>
+
+    <LoadConfiguration>
+    <section class="config-panel backend-load-actions">
+        <div class="section-heading">
+            <div><p class="eyebrow">BACKEND ACTION</p><h2>Load configuration</h2></div>
+            <span class="step-label">01</span>
+        </div>
+        @if (isOpenVinoLoading)
+        {
+            <button class="load-button cancel-button" type="button" @onclick="CancelOpenVinoModelLoadAsync">Cancel loading</button>
+        }
+        else
+        {
+            <button class="load-button" type="button" @onclick="LoadActiveBackendModelAsync" disabled="@IsCurrentModelLoadDisabled">@GetLoadButtonLabel()</button>
+        }
+    </section>
 
 @if (IsPythonBackendTab(activeBackend))
 {
@@ -662,31 +683,6 @@
         @if (!string.IsNullOrWhiteSpace(pythonStatus)) { <p class="mt-3" role="status">@pythonStatus</p> }
     </section>
 
-    @if (GetBackendLoadLog() is { } backendLoadLog)
-    {
-        <section class="telemetry-panel backend-load-log-panel" aria-labelledby="backend-load-log-heading">
-            <div class="section-heading">
-                <div><p class="eyebrow">BACKEND LOAD LOG</p><h2 id="backend-load-log-heading">@GetBackendLabel(activeBackend) output</h2></div>
-            </div>
-            <textarea class="form-control log-output" rows="14" readonly>@backendLoadLog</textarea>
-        </section>
-    }
-
-    <section class="telemetry-panel">
-        <div class="section-heading"><div><p class="eyebrow">RUNTIME TELEMETRY</p><h2>Python engine status</h2></div></div>
-        <dl class="telemetry-grid">
-            <dt>Engine</dt>
-            <dd>@GetBackendLabel(activeBackend)</dd>
-            <dt>Python executable</dt>
-            <dd>@pythonForm.PythonExecutable</dd>
-            <dt>Model</dt>
-            <dd>@(string.IsNullOrWhiteSpace(pythonForm.ModelPath) ? "Not selected" : pythonForm.ModelPath)</dd>
-            <dt>Transport</dt>
-            <dd>Local gRPC bridge</dd>
-            <dt>Runtime</dt>
-            <dd class="diagnostic-@(loadStatus?.Backend is "vLLM" or "SGLang" ? "ok" : "error")">@(isPythonLoading ? "Starting" : loadStatus?.Backend is "vLLM" or "SGLang" ? "Ready" : "Not running")</dd>
-        </dl>
-    </section>
 }
 
 @if (activeBackend == BackendTab.DotLlm)
@@ -702,17 +698,6 @@
         @if (!string.IsNullOrWhiteSpace(dotLlmStatus)) { <p class="mt-3" role="status">@dotLlmStatus</p> }
     </section>
 
-    <section class="telemetry-panel">
-        <div class="section-heading"><div><p class="eyebrow">RUNTIME TELEMETRY</p><h2>dotLLM status</h2></div></div>
-        <dl class="telemetry-grid">
-            <dt>Model</dt>
-            <dd>@(string.IsNullOrWhiteSpace(dotLlmForm.ModelPath) ? "Not selected" : dotLlmForm.ModelPath)</dd>
-            <dt>Device</dt>
-            <dd>@dotLlmForm.Device</dd>
-            <dt>Runtime</dt>
-            <dd class="diagnostic-@(loadStatus?.Backend == "dotLLM" ? "ok" : "error")">@(isDotLlmLoading ? "Loading in process" : loadStatus?.Backend == "dotLLM" ? "Ready in process" : "Not loaded")</dd>
-        </dl>
-    </section>
 }
 
 @if (IsLlamaBackendTab(activeBackend))
@@ -721,7 +706,7 @@
     <section class="config-panel">
         <div class="section-heading">
             <div>
-                <p class="eyebrow">MODEL INPUT</p>
+                <p class="eyebrow">LOAD CONFIGURATION</p>
                 <h2>Load configuration</h2>
             </div>
             <span class="step-label">01</span>
@@ -926,41 +911,79 @@ else if (activeBackend == BackendTab.OpenVino)
 
         </section>
 
-        <section class="telemetry-panel">
-            <div class="section-heading">
-                <div>
-                    <p class="eyebrow">RUNTIME TELEMETRY</p>
-                    <h2>OpenVINO status</h2>
-                </div>
-            </div>
-            <dl class="telemetry-grid">
-                @if (openVinoDiagnostics is not null)
-                {
-                    @foreach (var check in openVinoDiagnostics.Checks)
-                    {
-                        <dt>@check.Name</dt>
-                        <dd class="diagnostic-@(check.IsAvailable ? "ok" : "error")">@(check.IsAvailable ? "Available" : "Missing") - @check.Detail</dd>
-                    }
-                }
-                <dt>Device</dt>
-                <dd>@openVinoState.Device</dd>
-                <dt>Model</dt>
-                <dd>@(string.IsNullOrWhiteSpace(openVinoState.ModelPath) ? "Not selected" : Path.GetFileName(openVinoState.ModelPath.TrimEnd(Path.DirectorySeparatorChar)))</dd>
-                <dt>Runtime</dt>
-                <dd>@(openVinoStatus ?? "Ready for model loading")</dd>
-            </dl>
-        </section>
     </div>
 }
 
-@if (IsLlamaBackendTab(activeBackend) && isLoading)
+    </LoadConfiguration>
+    <RuntimeTelemetry>
+@if (IsPythonBackendTab(activeBackend))
 {
-    <p class="mt-3" role="status">Loading...</p>
+    @if (GetBackendLoadLog() is { } backendLoadLog)
+    {
+        <section class="telemetry-panel backend-load-log-panel" aria-labelledby="backend-load-log-heading">
+            <div class="section-heading"><div><p class="eyebrow">BACKEND LOAD LOG</p><h2 id="backend-load-log-heading">@GetBackendLabel(activeBackend) output</h2></div></div>
+            <textarea class="form-control log-output" rows="14" readonly>@backendLoadLog</textarea>
+        </section>
+    }
+    <section class="telemetry-panel">
+        <div class="section-heading"><div><p class="eyebrow">RUNTIME TELEMETRY</p><h2>Python engine status</h2></div></div>
+        <dl class="telemetry-grid">
+            <dt>Engine</dt><dd>@GetBackendLabel(activeBackend)</dd>
+            <dt>Python executable</dt><dd>@pythonForm.PythonExecutable</dd>
+            <dt>Model</dt><dd>@(string.IsNullOrWhiteSpace(pythonForm.ModelPath) ? "Not selected" : pythonForm.ModelPath)</dd>
+            <dt>Transport</dt><dd>Local gRPC bridge</dd>
+            <dt>Runtime</dt><dd class="diagnostic-@(loadStatus?.Backend is "vLLM" or "SGLang" ? "ok" : "error")">@(isPythonLoading ? "Starting" : loadStatus?.Backend is "vLLM" or "SGLang" ? "Ready" : "Not running")</dd>
+        </dl>
+    </section>
 }
-else if (!string.IsNullOrWhiteSpace(statusMessage))
+@if (activeBackend == BackendTab.DotLlm)
+{
+    <section class="telemetry-panel">
+        <div class="section-heading"><div><p class="eyebrow">RUNTIME TELEMETRY</p><h2>dotLLM status</h2></div></div>
+        <dl class="telemetry-grid">
+            <dt>Model</dt><dd>@(string.IsNullOrWhiteSpace(dotLlmForm.ModelPath) ? "Not selected" : dotLlmForm.ModelPath)</dd>
+            <dt>Device</dt><dd>@dotLlmForm.Device</dd>
+            <dt>Runtime</dt><dd class="diagnostic-@(loadStatus?.Backend == "dotLLM" ? "ok" : "error")">@(isDotLlmLoading ? "Loading in process" : loadStatus?.Backend == "dotLLM" ? "Ready in process" : "Not loaded")</dd>
+        </dl>
+    </section>
+}
+@if (IsLlamaBackendTab(activeBackend))
+{
+    var isActiveLlamaRuntimeLoaded = string.Equals(loadStatus?.BackendVariantId, CurrentBackendViewData.RuntimeId, StringComparison.OrdinalIgnoreCase);
+    <section class="telemetry-panel">
+        <div class="section-heading"><div><p class="eyebrow">RUNTIME TELEMETRY</p><h2>Llama runtime status</h2></div></div>
+        <dl class="telemetry-grid">
+            <dt>Engine</dt><dd>@CurrentBackendViewData.Label</dd>
+            <dt>Backend</dt><dd>@llamaState.Backend</dd>
+            <dt>Model</dt><dd>@(string.IsNullOrWhiteSpace(llamaState.ModelPath) ? "Not selected" : Path.GetFileName(llamaState.ModelPath))</dd>
+            <dt>Runtime</dt><dd class="diagnostic-@(isLoading || isActiveLlamaRuntimeLoaded ? "ok" : "error")">@(isLoading ? "Loading" : isActiveLlamaRuntimeLoaded ? "Ready" : "Not running")</dd>
+        </dl>
+    </section>
+}
+@if (activeBackend == BackendTab.OpenVino)
+{
+    <section class="telemetry-panel">
+        <div class="section-heading"><div><p class="eyebrow">RUNTIME TELEMETRY</p><h2>OpenVINO status</h2></div></div>
+        <dl class="telemetry-grid">
+            @if (openVinoDiagnostics is not null)
+            {
+                @foreach (var check in openVinoDiagnostics.Checks)
+                {
+                    <dt>@check.Name</dt><dd class="diagnostic-@(check.IsAvailable ? "ok" : "error")">@(check.IsAvailable ? "Available" : "Missing") - @check.Detail</dd>
+                }
+            }
+            <dt>Device</dt><dd>@openVinoState.Device</dd>
+            <dt>Model</dt><dd>@(string.IsNullOrWhiteSpace(openVinoState.ModelPath) ? "Not selected" : Path.GetFileName(openVinoState.ModelPath.TrimEnd(Path.DirectorySeparatorChar)))</dd>
+            <dt>Runtime</dt><dd>@(openVinoStatus ?? "Ready for model loading")</dd>
+        </dl>
+    </section>
+}
+@if (!string.IsNullOrWhiteSpace(statusMessage))
 {
     <p class="mt-3" role="status">@statusMessage</p>
 }
+    </RuntimeTelemetry>
+</BackendTabSections>
 
 </div>
 
@@ -1951,18 +1974,26 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         DotLlm
     }
 
-    private sealed record BackendTabOption(BackendTab Backend, string Id, string Label, string Description);
+    private sealed record BackendTabOption(BackendTab Backend, string Id, string Label, string Description, string GroupId);
+    private sealed record BackendTabGroup(string Id, string Label, IReadOnlyList<BackendTabOption> Options);
 
     private static readonly IReadOnlyList<BackendTabOption> BackendTabOptions =
     [
-        new(BackendTab.LlamaVulkan, "llama.vulkan", "Llama Vulkan", "Portable Vulkan inference"),
-        new(BackendTab.LlamaCuda12, "llama.cuda12", "Llama CUDA 12", "NVIDIA CUDA inference"),
-        new(BackendTab.LlamaSycl, "llama.sycl", "Llama SYCL 16", "Intel SYCL inference"),
-        new(BackendTab.OpenVino, "openvino", "OpenVINO", "Intel GPU and NPU inference"),
-        new(BackendTab.VllmCuda12, "vllm.cuda12", "vLLM CUDA 12", "NVIDIA CUDA inference server"),
-        new(BackendTab.VllmXpu, "vllm.xpu", "vLLM Intel XPU", "Intel XPU inference server"),
-        new(BackendTab.Sglang, "sglang", "SGLang", "Structured generation server"),
-        new(BackendTab.DotLlm, "dotllm.cpu", "dotLLM", "In-process inference runtime")
+        new(BackendTab.LlamaVulkan, "llama.vulkan", "Llama Vulkan", "Portable Vulkan inference", "llama"),
+        new(BackendTab.LlamaCuda12, "llama.cuda12", "Llama CUDA 12", "NVIDIA CUDA inference", "llama"),
+        new(BackendTab.LlamaSycl, "llama.sycl", "Llama SYCL 16", "Intel SYCL inference", "llama"),
+        new(BackendTab.OpenVino, "openvino", "OpenVINO", "Intel GPU and NPU inference", "other"),
+        new(BackendTab.VllmCuda12, "vllm.cuda12", "vLLM CUDA 12", "NVIDIA CUDA inference server", "vllm"),
+        new(BackendTab.VllmXpu, "vllm.xpu", "vLLM Intel XPU", "Intel XPU inference server", "vllm"),
+        new(BackendTab.Sglang, "sglang", "SGLang", "Structured generation server", "other"),
+        new(BackendTab.DotLlm, "dotllm.cpu", "dotLLM", "In-process inference runtime", "other")
+    ];
+
+    private static readonly IReadOnlyList<BackendTabGroup> BackendTabGroups =
+    [
+        new("backend-visibility-llama", "Llama", BackendTabOptions.Where(option => option.GroupId == "llama").ToArray()),
+        new("backend-visibility-vllm", "vLLM", BackendTabOptions.Where(option => option.GroupId == "vllm").ToArray()),
+        new("backend-visibility-other", "Other backends", BackendTabOptions.Where(option => option.GroupId == "other").ToArray())
     ];
 
     private sealed record PythonExecutableOption(string Value, string Label);
@@ -2663,14 +2694,38 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
 
     private void CancelCreateProfile() => isCreatingProfile = false;
 
-    private string CurrentModelPath => activeBackend switch
+    private string CurrentModelPath => CurrentBackendViewData.Configuration.ModelPath;
+
+    private IBackendTabData CurrentBackendViewData => activeBackend switch
     {
-        BackendTab.LlamaVulkan or BackendTab.LlamaCuda12 or BackendTab.LlamaSycl => llamaState.ModelPath,
-        BackendTab.OpenVino => openVinoState.ModelPath,
-        BackendTab.DotLlm => dotLlmForm.ModelPath,
-        BackendTab.VllmCuda12 or BackendTab.VllmXpu or BackendTab.Sglang => pythonForm.ModelPath,
-        _ => string.Empty
+        BackendTab.LlamaVulkan or BackendTab.LlamaCuda12 or BackendTab.LlamaSycl => CreateBackendTabData(llamaState),
+        BackendTab.OpenVino => CreateBackendTabData(openVinoState),
+        BackendTab.VllmCuda12 or BackendTab.VllmXpu or BackendTab.Sglang => CreateBackendTabData(pythonForm),
+        BackendTab.DotLlm => CreateBackendTabData(dotLlmForm),
+        _ => CreateBackendTabData(llamaState)
     };
+
+    private BackendTabData<TConfiguration> CreateBackendTabData<TConfiguration>(TConfiguration configurationData)
+        where TConfiguration : IBackendTabConfigurationData
+    {
+        var configurationBackend = GetConfigurationBackend(activeBackend);
+        var backendProfiles = profiles
+            .Where(profile => profile.Backend == configurationBackend && IsProfileForBackendVariant(profile, activeBackend))
+            .ToArray();
+
+        return new BackendTabData<TConfiguration>(
+            GetBackendTabId(activeBackend),
+            GetBackendLabel(activeBackend),
+            configurationBackend,
+            configurationData,
+            new BackendTabRequirementsData(
+                activeBackend == BackendTab.OpenVino ? openVinoDiagnostics : backendPrerequisites,
+                IsBackendRequirementsReady),
+            configurationData,
+            new BackendTabModelConfigurationData(CurrentBackendModels, backendProfiles, selectedProfileId),
+            configurationData,
+            new BackendTabRuntimeTelemetryData(loadStatus, isLoading, isOpenVinoLoading, isPythonLoading, isDotLlmLoading));
+    }
 
     private static string GetBackendLabel(ConfigurationBackend backend) => backend switch
     {
@@ -2682,7 +2737,7 @@ else if (!string.IsNullOrWhiteSpace(statusMessage))
         _ => backend.ToString()
     };
 
-    private ConfigurationBackend CurrentProfileBackend => GetConfigurationBackend(activeBackend);
+    private ConfigurationBackend CurrentProfileBackend => CurrentBackendViewData.ConfigurationBackend;
 
     private ConfigurationBackend GetConfigurationBackend(BackendTab backend) => backend switch
     {

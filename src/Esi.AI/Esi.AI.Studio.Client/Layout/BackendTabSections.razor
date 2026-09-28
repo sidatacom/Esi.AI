@@ -1,0 +1,45 @@
+@using Esi.AI.Studio.Client.State
+
+@foreach (var section in Data.Sections)
+{
+    <div data-backend-id="@Data.RuntimeId" data-backend-section="@(section.Kind)" data-section-title="@(section.Title)">
+        @switch (section.Kind)
+        {
+            case BackendTabSectionKind.BackendRequirements:
+                @BackendRequirements
+                break;
+            case BackendTabSectionKind.DeviceRouting:
+                @DeviceRouting
+                break;
+            case BackendTabSectionKind.ModelAndConfiguration:
+                @ModelAndConfiguration
+                break;
+            case BackendTabSectionKind.LoadConfiguration:
+                @LoadConfiguration
+                break;
+            case BackendTabSectionKind.RuntimeTelemetry:
+                @RuntimeTelemetry
+                break;
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired]
+    public IBackendTabData Data { get; set; } = default!;
+
+    [Parameter]
+    public RenderFragment? BackendRequirements { get; set; }
+
+    [Parameter]
+    public RenderFragment? DeviceRouting { get; set; }
+
+    [Parameter]
+    public RenderFragment? ModelAndConfiguration { get; set; }
+
+    [Parameter]
+    public RenderFragment? LoadConfiguration { get; set; }
+
+    [Parameter]
+    public RenderFragment? RuntimeTelemetry { get; set; }
+}
