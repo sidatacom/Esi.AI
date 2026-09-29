@@ -29,6 +29,6 @@
 [submodule "origins/brickly26/MS-Access-mcp"]
 	path = origins/brickly26/MS-Access-mcp
 	url = https://github.com/brickly26/MS-Access-mcp.git
-[submodule "origins/optimajet/WorkflowEngine.NET"]
-	path = origins/optimajet/WorkflowEngine.NET
-	url = https://github.com/optimajet/WorkflowEngine.NET.git
+[submodule "origins/sidatacom/WorkflowEngine.NET"]
+	path = origins/sidatacom/WorkflowEngine.NET
+	url = https://github.com/sidatacom/WorkflowEngine.NET.git
