@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.17] - 2026-09-29
+
+### Fixed
+- Accept plain-text output from MSBuild's single-property `TargetPath` query.
+
+## [2.0.16] - 2026-09-29
+
+### Fixed
+- Handle an unavailable VS Code debug session list during launch cleanup.
+
+## [2.0.15] - 2026-09-29
+
+### Fixed
+- Guard active-session discovery when the VS Code session collection is unavailable.
+
+## [2.0.14] - 2026-09-29
+
+### Fixed
+- Detect readiness from active C# Dev Kit `dotnet:` terminals, including startup output emitted before session binding.
+
+## [2.0.13] - 2026-09-29
+
+### Fixed
+- Route `debug.start`, `debug.launchProject`, and `debug.launchFile` through the same readiness lifecycle.
+
+## [2.0.12] - 2026-09-29
+
+### Fixed
+- Detect and stop debug sessions started outside EsiMCP, and wait for all VS Code sessions to terminate before project launches.
+
 ## [2.0.11] - 2026-09-26
 
 ### Added

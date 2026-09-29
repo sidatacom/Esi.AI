@@ -13,6 +13,14 @@ namespace Esi.AI.Core.Tests;
 public sealed class PythonInferenceGrpcTests
 {
     [TestMethod]
+    public void GetXpuAffinityMask_SelectedRoutes_UsesTheirOrdinalsInPriorityOrder()
+    {
+        var affinityMask = PythonInferenceServer.GetXpuAffinityMask(["xpu:3", "xpu:1"]);
+
+        Assert.AreEqual("3,1", affinityMask);
+    }
+
+    [TestMethod]
     public void ToGrpcRequest_LoadRequest_MapsBackendAndRuntimeOptions()
     {
         var request = new PythonInferenceLoadRequest(

@@ -85,6 +85,16 @@ public sealed class LlamaCuda12Runtime : IBackendRuntime
     }
 
     /// <inheritdoc />
+    public IReadOnlyList<DeviceStatus> DiscoverDevices()
+    {
+        var runtimeDirectory = Cuda12RuntimeFiles.GetRuntimeDirectory(applicationDirectory);
+        Cuda12RuntimeFiles.PrepareLibraryPath(runtimeDirectory);
+        Cuda12RuntimeFiles.Validate(runtimeDirectory);
+        ConfigureNativeBackend(runtimeDirectory);
+        return EnumerateCudaDevices();
+    }
+
+    /// <inheritdoc />
     public bool SupportsImageInput(string? modelPath)
     {
         runtimeLock.Wait();
@@ -388,23 +398,28 @@ public sealed class LlamaCuda12Runtime : IBackendRuntime
     {
         try
         {
-            var devices = new List<DeviceStatus>();
-            for (nuint index = 0; index < NativeApi.ggml_backend_dev_count(); index++)
-            {
-                var device = NativeApi.ggml_backend_dev_get(index);
-                var name = Marshal.PtrToStringAnsi(NativeApi.ggml_backend_dev_name(device));
-                if (string.IsNullOrWhiteSpace(name) || !name.StartsWith("CUDA", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                devices.Add(new DeviceStatus(name, Marshal.PtrToStringAnsi(NativeApi.ggml_backend_dev_description(device)), 0, null, null, "CUDA 12 native runtime"));
-            }
-
-            return devices;
+            return EnumerateCudaDevices();
         }
         catch
         {
             return [];
         }
+    }
+
+    private static IReadOnlyList<DeviceStatus> EnumerateCudaDevices()
+    {
+        var devices = new List<DeviceStatus>();
+        for (nuint index = 0; index < NativeApi.ggml_backend_dev_count(); index++)
+        {
+            var device = NativeApi.ggml_backend_dev_get(index);
+            var name = Marshal.PtrToStringAnsi(NativeApi.ggml_backend_dev_name(device));
+            if (string.IsNullOrWhiteSpace(name) || !name.StartsWith("CUDA", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            devices.Add(new DeviceStatus(name, Marshal.PtrToStringAnsi(NativeApi.ggml_backend_dev_description(device)), 0, null, "NVIDIA", "CUDA 12 native runtime"));
+        }
+
+        return devices;
     }
 
     private static AuthorRole ParseRole(string role) => role.ToLowerInvariant() switch

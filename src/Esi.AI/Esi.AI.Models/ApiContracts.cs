@@ -115,14 +115,16 @@ public sealed record BackendWorkerRequest(
     string PythonExecutable = "python3",
     string? ApplicationDirectory = null,
     int TimeoutSeconds = 20,
-    IReadOnlyList<string>? Devices = null);
+    IReadOnlyList<string>? Devices = null,
+    string? BackendVariantId = null);
 
 /// <summary>Contains the result returned by one isolated backend worker process.</summary>
 public sealed record BackendWorkerResponse(
     bool Succeeded,
     BackendPrerequisiteDiagnostics? Prerequisites = null,
     OpenVinoDiagnosticsDto? OpenVino = null,
-    string? Error = null);
+    string? Error = null,
+    IReadOnlyList<DeviceStatus>? Devices = null);
 
 /// <summary>Describes one backend prerequisite and whether it can be repaired.</summary>
 public sealed record BackendPrerequisiteCheck(
@@ -144,7 +146,8 @@ public sealed record BackendRequirementSnapshot(
     ConfigurationBackend Backend,
     string Vendor,
     IReadOnlyList<string> Devices,
-    BackendPrerequisiteDiagnostics Diagnostics);
+    BackendPrerequisiteDiagnostics Diagnostics,
+    string BackendId = "");
 
 /// <summary>Contains the result and output of a backend preparation action.</summary>
 public sealed record BackendPrerequisiteSolveResult(

@@ -24,7 +24,17 @@ The live catalog returned by `vscode_debug_list_commands` is the source of truth
 5. For Esi.AI Studio, wait for `debug.check.host.readyness` before browser checks. The development endpoint is `http://localhost:7010`; a failed browser request is not proof that startup completed.
 6. For live code updates without C# Dev Kit, use `debug.hotReload` with `mode: "watch"` and a `.csproj` `projectFile`. This stops debug sessions and starts a visible `dotnet watch` task. Do not treat the task-start event as application readiness: `dotnet watch` must finish its initial build before the host starts. Wait for the app's readiness signal or health endpoint before editing or validating it. Once running, it applies supported edits live and restarts only when an edit cannot be applied. This is a runtime watch workflow, not a debugger-attached Edit and Continue session. Use `mode: "stopWatch"` to stop it. Use `mode: "rebuild"` only when an explicit full build and debugger relaunch is required; a failed build does not relaunch.
 7. Stop a standalone session with `debug.stop`. Use `debug.restart` only for a session already started from its saved configuration; an optional `rebuildTaskName` must exactly match a task in `tasks.json`.
-8. Before an independent Studio build or test, stop the active session and verify that port `7010` is no longer owned by the prior process.
+8. Before an independent Studio build or test, follow the Studio Build Gate below.
+
+## Studio Build Gate
+
+This gate is mandatory before every separate build, test, or rebuild of `Esi.AI.Studio` or `Esi.AI.Studio.Client`, including client-only, Razor, CSS, and Static Web Assets changes.
+
+1. Immediately before the build/test command, query `debug.active.session` through EsiMCP. A previous query or an apparently free port does not satisfy this check.
+2. If a session is active, identify whether it belongs to Esi.AI Studio. Stop an active Studio session with `debug.stop`, then query `debug.active.session` again.
+3. Verify separately that no Studio process owns port `7010`.
+4. Proceed only when no Studio debug session remains active and port `7010` is free. A verified unrelated session does not need to be stopped. If session ownership, termination, or port release is uncertain, do not build or test; resolve that block first.
+5. Repeat the gate immediately before every separate build/test invocation. The only exception is an edit applied within the same active `debug.launchProject` session without starting a separate build/test command.
 
 The standalone MIT-licensed `ms-dotnettools.csharp` extension may provide the `coreclr` debug adapter. EsiMCP must not rely on C# Dev Kit for project discovery or launch. Check the selected launch configuration and `Properties/launchSettings.json` for the application URL, environment, and Blazor `inspectUri`; ensure `UseWebAssemblyDebugging()` is enabled in Development when client-side breakpoints are required.
 

@@ -23,6 +23,26 @@ public sealed class OpenVinoDiagnosticsTests
     }
 
     [TestMethod]
+    public void SelectIntelGpuName_WhenBattlemageAndIntegratedGpuExist_PrefersBattlemage()
+    {
+        var name = OpenVinoDiagnosticsService.SelectIntelGpuName(
+        [
+            "00:02.0 VGA compatible controller [0300]: Intel Corporation CoffeeLake-S GT2 [UHD Graphics 630] [8086:3e98]",
+            "03:00.0 VGA compatible controller [0300]: Intel Corporation Battlemage G31 [Intel Graphics] [8086:e223]"
+        ]);
+
+        Assert.AreEqual("Intel Corporation Battlemage G31 [Intel Graphics] [8086:e223]", name);
+    }
+
+    [TestMethod]
+    public void Diagnose_WhenNativeGpuNameIsAvailable_UsesOpenVinoDeviceName()
+    {
+        var diagnostics = new OpenVinoDiagnosticsService().Diagnose(() => "Intel(R) Arc(TM) B580 Graphics");
+
+        Assert.AreEqual("Intel(R) Arc(TM) B580 Graphics", diagnostics.Devices.Single(device => device.Id == "GPU").Name);
+    }
+
+    [TestMethod]
     [TestCategory("OpenVINO.Integration")]
     public void Diagnose_WithNativeRuntime_EnumeratesDevices()
     {

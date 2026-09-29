@@ -259,9 +259,9 @@ export class DebugManager {
     let targetPath: string;
     try {
       const jsonStart = target.stdout.indexOf("{");
-      if (jsonStart < 0) throw new Error("MSBuild did not return a TargetPath property");
-      const result = JSON.parse(target.stdout.slice(jsonStart)) as { Properties?: { TargetPath?: string } };
-      const resolvedTargetPath = result.Properties?.TargetPath;
+      const resolvedTargetPath = jsonStart >= 0
+        ? (JSON.parse(target.stdout.slice(jsonStart)) as { Properties?: { TargetPath?: string } }).Properties?.TargetPath
+        : target.stdout.trim().split(/\r?\n/).filter(Boolean).at(-1)?.trim();
       if (!resolvedTargetPath) throw new Error("MSBuild returned an empty TargetPath property; specify targetFramework for multi-target projects");
       targetPath = isAbsolute(resolvedTargetPath) ? resolvedTargetPath : resolve(dirname(projectFile), resolvedTargetPath);
     } catch (error) {
@@ -636,6 +636,7 @@ export class DebugManager {
 
   async stopAllDebugging(): Promise<void> {
     const sessions = new Map(this.debugSessions);
+    for (const session of vscode.debug.sessions ?? []) sessions.set(session.id, session);
     const activeSession = this.readActiveSession();
     if (activeSession) sessions.set(activeSession.id, activeSession);
     const terminations = [...sessions.values()].map((session) => {
@@ -1058,6 +1059,8 @@ export class DebugManager {
   private readActiveSession(): vscode.DebugSession | undefined {
     const activeSession = vscode.debug.activeDebugSession;
     if (activeSession) return activeSession;
+    const vscodeSessions = vscode.debug.sessions;
+    if (vscodeSessions?.length) return vscodeSessions[vscodeSessions.length - 1];
     const trackedSessions = Array.from(this.debugSessions.values());
     return trackedSessions[trackedSessions.length - 1];
   }

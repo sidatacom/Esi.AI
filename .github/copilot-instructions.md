@@ -42,9 +42,7 @@
 
 ## Esi.AI Studio Build- und Debug-Lebenszyklus
 
-- Vor jedem Build, Rebuild oder Test des Studio-Projekts muss die aktive VS-Code-Debugsession geprüft werden.
-- Vor jedem separaten Build-/Test-Befehl muss eine laufende Studio-Debugsession kontrolliert gestoppt werden, sofern kein Hot-Reload-Update innerhalb der aktiven `debug.launchProject`-Session verwendet wird.
-- Nach dem Stoppen muss geprüft werden, dass kein alter Studio-Prozess Port `7010` belegt.
+- Vor jedem separaten Build/Test von `Esi.AI.Studio` oder `Esi.AI.Studio.Client` muss die Build-Schranke aus `.github/skills/vscode-debug/SKILL.md` vollständig ausgeführt werden, einschließlich unmittelbar vorheriger Sessionabfrage und bestätigter Portfreigabe.
 - Für UI-only Änderungen zuerst `debug.hotReload` mit `mode: "watch"` verwenden, wenn eine Debugger-freie Watch-Session genügt. `mode: "rebuild"` nur für Änderungen, die einen vollständigen Debugger-Neustart erfordern, und anschließend Host-Readiness prüfen.
 
 ## Long-Running Commands

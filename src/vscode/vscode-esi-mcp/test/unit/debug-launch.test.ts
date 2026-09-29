@@ -177,6 +177,20 @@ describe("DebugManager launch contracts", () => {
     expect(result).toMatchObject({ success: true, started: true, sessionId: "session-new" });
   });
 
+  it("launches the project when MSBuild returns TargetPath as plain text", async () => {
+    mockState.commandResults.push(
+      { exitCode: 0, stdout: "Build succeeded", stderr: "" },
+      { exitCode: 0, stdout: "/workspace/bin/Debug/App.dll\n", stderr: "" },
+    );
+
+    const result = await new DebugManager().launchProject({ projectFile: "App.csproj" });
+
+    expect(vscode.debug.startDebugging).toHaveBeenCalledWith(mockState.workspaceFolder, expect.objectContaining({
+      program: "/workspace/bin/Debug/App.dll",
+    }));
+    expect(result).toMatchObject({ success: true, started: true, sessionId: "session-new" });
+  });
+
   it("returns a build result code and logfile path without starting the debugger", async () => {
     mockState.commandResults.push({ exitCode: 9, stdout: "", stderr: "compile error" });
 

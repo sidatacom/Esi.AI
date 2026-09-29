@@ -217,6 +217,33 @@ describe("SessionManager terminal recovery", () => {
     manager.dispose();
   });
 
+  it("inherits early readiness from an active dotnet terminal before session binding", async () => {
+    const manager = new SessionManager();
+    const openedTerminal = new MockTerminal("dotnet: Esi.AI Studio");
+    const openListener = mockState.onDidOpenTerminal.mock.calls[0]?.[0] as ((terminal: MockTerminal) => void);
+    const shellListener = mockState.onDidStartTerminalShellExecution.mock.calls[0]?.[0] as (event: {
+      terminal: MockTerminal;
+      execution: { read: () => AsyncIterable<string> };
+    }) => Promise<void>;
+
+    manager.prepareDebugHostReadiness();
+    openListener(openedTerminal);
+    mockState.terminals.push(openedTerminal);
+    await shellListener({
+      terminal: openedTerminal,
+      execution: {
+        async *read() {
+          yield "Now ready on: http://localhost:7010";
+        },
+      },
+    });
+    manager.bindDebugHostReadiness({ id: "session-started", name: "Esi.AI Studio" } as never);
+
+    const debugManager = { getActiveSessionId: () => "session-started", onDebugEvent: vi.fn(() => ({ dispose: vi.fn() })) };
+    await expect(manager.waitForDebugHostReadiness(debugManager, "session-started")).resolves.toBe(true);
+    manager.dispose();
+  });
+
   it("binds readiness when the debug terminal opens after the debug session", async () => {
     const manager = new SessionManager();
     manager.bindDebugHostReadiness({ id: "session-started", name: "Esi.Web .NET Server" } as never);
@@ -606,6 +633,51 @@ describe("SessionManager terminal recovery", () => {
     await expect(manager.waitForDebugHostReadiness(debugManager, "session-a")).resolves.toBe(true);
     await expect(manager.waitForDebugHostReadiness(debugManager, "session-b")).resolves.toBe(false);
     activeSessionId = null;
+    manager.dispose();
+  });
+
+  it("tracks terminal and Debug Console readiness independently by session ID", async () => {
+    let outputListener: ((session: { id: string; name: string }, output: string) => void) | undefined;
+    const debugManager = {
+      getActiveSessionId: () => "session-terminal",
+      onDebugEvent: vi.fn(() => ({ dispose: vi.fn() })),
+      onDebugOutput: vi.fn((listener: (session: { id: string; name: string }, output: string) => void) => {
+        outputListener = listener;
+        return { dispose: vi.fn() };
+      }),
+    };
+    const manager = new SessionManager();
+    manager.attachDebugManager(debugManager);
+
+    const terminal = new MockTerminal("dotnet: Esi.AI Studio");
+    const onOpenTerminal = mockState.onDidOpenTerminal.mock.calls[0]?.[0] as (terminal: MockTerminal) => void;
+    const onShellExecution = mockState.onDidStartTerminalShellExecution.mock.calls[0]?.[0] as (event: {
+      terminal: MockTerminal;
+      execution: { read: () => AsyncIterable<string> };
+    }) => Promise<void>;
+    manager.prepareDebugHostReadiness();
+    onOpenTerminal(terminal);
+    manager.bindDebugHostReadiness({ id: "session-terminal", name: "Esi.AI Studio" } as never);
+    await onShellExecution({
+      terminal,
+      execution: {
+        async *read() {
+          yield "Now ready on: http://localhost:7010";
+        },
+      },
+    });
+
+    const sessionStates = (manager as unknown as {
+      debugReadinessBySession: Map<string, { ready: boolean }>;
+    }).debugReadinessBySession;
+    expect(sessionStates.get("session-terminal")?.ready).toBe(true);
+    expect(sessionStates.has("session-console")).toBe(false);
+
+    outputListener?.({ id: "session-console", name: "Esi.AI Studio" }, "Now ready on: http://localhost:7100");
+
+    expect(sessionStates.get("session-console")?.ready).toBe(true);
+    expect(manager.getDebugConsoleDiagnostics("session-console").output).toBe("Now ready on: http://localhost:7100");
+    expect(manager.getDebugConsoleDiagnostics("session-terminal").output).toBe("");
     manager.dispose();
   });
 

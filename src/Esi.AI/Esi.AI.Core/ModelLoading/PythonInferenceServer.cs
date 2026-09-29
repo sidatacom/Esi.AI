@@ -372,13 +372,10 @@ public sealed class PythonInferenceServer : IDisposable
 
         if (string.Equals(vendors[0], "xpu", StringComparison.OrdinalIgnoreCase))
         {
-            foreach (var route in routes)
-                _ = ParseDeviceOrdinal(route, "xpu", devices);
-
             startInfo.Environment["CUDA_VISIBLE_DEVICES"] = "";
-            startInfo.Environment["ONEAPI_DEVICE_SELECTOR"] = "level_zero:0";
+            startInfo.Environment["ONEAPI_DEVICE_SELECTOR"] = "level_zero:gpu";
             startInfo.Environment["ZE_FLAT_DEVICE_HIERARCHY"] = "COMPOSITE";
-            startInfo.Environment["ZE_AFFINITY_MASK"] = "0";
+            startInfo.Environment["ZE_AFFINITY_MASK"] = GetXpuAffinityMask(routes);
             startInfo.Environment["PYTORCH_ALLOC_CONF"] = "expandable_segments:True";
             startInfo.Environment["VLLM_XPU_ENABLE_XPU_GRAPH"] = enableXpuGraph ? "1" : "0";
             startInfo.Environment["B70_MTP_BF16_DRAFT"] = enableBf16MtpDraft ? "1" : "0";
@@ -393,6 +390,9 @@ public sealed class PythonInferenceServer : IDisposable
 
         throw new ArgumentException($"Unsupported Python device vendor in route '{routes[0]}'.", nameof(devices));
     }
+
+    internal static string GetXpuAffinityMask(IReadOnlyList<string> routes) =>
+        string.Join(',', routes.Select(route => ParseDeviceOrdinal(route, "xpu", routes)));
 
     private static void ConfigureXpuCommunicationEnvironment(ProcessStartInfo startInfo, string pythonExecutable)
     {

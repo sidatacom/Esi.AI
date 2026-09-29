@@ -119,7 +119,9 @@ export class SessionManager {
   }
 
   private isEsiWebDebugTerminal(terminal: vscode.Terminal | null): terminal is vscode.Terminal {
-    return terminal?.name === ESI_WEB_DEBUG_TERMINAL_NAME && terminal.exitStatus === undefined;
+    return terminal !== null
+      && terminal.exitStatus === undefined
+      && (terminal.name === ESI_WEB_DEBUG_TERMINAL_NAME || terminal.name.startsWith("dotnet:"));
   }
 
   cancelPendingDebugHostReadiness(): void {

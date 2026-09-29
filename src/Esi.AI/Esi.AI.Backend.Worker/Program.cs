@@ -1,4 +1,11 @@
 using System.Text.Json;
+using Esi.AI.Backend.Abstractions;
+using Esi.AI.Backend.Llama.Cuda12;
+using Esi.AI.Backend.Llama.Sycl;
+using Esi.AI.Backend.Llama.Vulkan;
+using Esi.AI.Backend.OpenVino;
+using Esi.AI.Backend.Vllm.Cuda12;
+using Esi.AI.Backend.Vllm.Xpu;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
 
@@ -51,11 +58,94 @@ internal static class Program
                     applicationDirectory,
                     timeout,
                     devices: request.Devices)),
+            "discover-devices" => new BackendWorkerResponse(
+                true,
+                Devices: await DiscoverDevicesAsync(request, applicationDirectory, timeout)),
             "diagnose-openvino" => new BackendWorkerResponse(
                 true,
-                OpenVino: MapOpenVino(new OpenVinoDiagnosticsService().Diagnose())),
+                OpenVino: MapOpenVino(DiagnoseOpenVino())),
             _ => throw new ArgumentException($"Unsupported backend worker operation '{request.Operation}'.", nameof(request))
         };
+    }
+
+    private static OpenVinoDiagnostics DiagnoseOpenVino()
+    {
+        var originalOutput = Console.Out;
+        try
+        {
+            Console.SetOut(Console.Error);
+            return new OpenVinoDiagnosticsService().Diagnose(OpenVinoRuntime.GetGpuDeviceName);
+        }
+        finally
+        {
+            Console.SetOut(originalOutput);
+        }
+    }
+
+    private static async Task<IReadOnlyList<DeviceStatus>> DiscoverDevicesAsync(
+        BackendWorkerRequest request,
+        string applicationDirectory,
+        TimeSpan timeout)
+    {
+        var variantId = request.BackendVariantId?.Trim().ToLowerInvariant()
+            ?? throw new ArgumentException("A backend variant ID is required for device discovery.", nameof(request));
+        if (variantId == "openvino")
+        {
+            return DiagnoseOpenVino().Devices
+                .Where(device => device.IsCompatible)
+                .Select(device => new DeviceStatus(device.Id, device.Name, 0, null, device.Vendor, device.Driver))
+                .ToArray();
+        }
+
+        if (variantId is "vllm.cuda12" or "vllm.xpu")
+        {
+            var devicePrefix = variantId == "vllm.cuda12" ? "cuda:" : "xpu:";
+            IBackendRuntime nativeRuntime = variantId == "vllm.cuda12"
+                ? new LlamaCuda12Runtime(applicationDirectory)
+                : new LlamaSyclRuntime(applicationDirectory);
+            using (nativeRuntime)
+            {
+                return nativeRuntime.DiscoverDevices()
+                    .Select((device, index) => new DeviceStatus(
+                        $"{devicePrefix}{index}",
+                        device.DeviceCaption,
+                        0,
+                        null,
+                        device.Vendor,
+                        device.Driver,
+                        device.MemoryCapacityMiB))
+                    .ToArray();
+            }
+        }
+
+        if (variantId == "sglang")
+        {
+            var diagnostics = await new BackendPrerequisiteProvisioner().DiagnoseAsync(
+                request.Backend,
+                request.PythonExecutable,
+                applicationDirectory,
+                timeout,
+                devices: request.Devices);
+            return (diagnostics.AvailableDevices ?? [])
+                .Select(device => new DeviceStatus(device.Route, device.Label, 0, null, device.Vendor, device.Driver))
+                .ToArray();
+        }
+
+        if (variantId == "dotllm.cpu")
+            return [];
+
+        IBackendRuntime? runtime = variantId switch
+        {
+            "llama.vulkan" => new LlamaVulkanRuntime(applicationDirectory),
+            "llama.cuda12" => new LlamaCuda12Runtime(applicationDirectory),
+            "llama.sycl" => new LlamaSyclRuntime(applicationDirectory),
+            _ => null
+        };
+        if (runtime is null)
+            throw new ArgumentException($"No device discovery is registered for backend variant '{variantId}'.", nameof(request));
+
+        using (runtime)
+            return runtime.DiscoverDevices();
     }
 
     private static OpenVinoDiagnosticsDto MapOpenVino(OpenVinoDiagnostics result) => new()
@@ -67,6 +157,8 @@ internal static class Program
             Id = device.Id,
             Name = device.Name,
             IsCompatible = device.IsCompatible,
+            Vendor = device.Vendor,
+            Driver = device.Driver,
             Detail = device.Detail
         }).ToArray(),
         Checks = result.Checks.Select(check => new OpenVinoDiagnosticCheckDto

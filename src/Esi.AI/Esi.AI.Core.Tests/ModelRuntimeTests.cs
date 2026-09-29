@@ -23,6 +23,25 @@ public sealed class ModelRuntimeTests
     }
 
     [TestMethod]
+    public async Task StopAsync_WhenBackendRuntimeStopFails_AggregatesFailureAfterPublishingDelete()
+    {
+        var runtime = new RecordingBackendRuntime { ThrowOnStop = true };
+        var publisher = new RecordingStatusPublisher();
+        using var modelRuntime = new ModelRuntime(
+            new LlamaModelLoader(),
+            new OpenVinoModelLoader(),
+            new PythonInferenceServer(),
+            new DotLlmInProcessRuntime(),
+            statusPublisher: publisher,
+            backendRuntimeResolver: new BackendRuntimeResolver([runtime]));
+
+        var exception = await Assert.ThrowsExceptionAsync<AggregateException>(() => modelRuntime.StopAsync());
+
+        Assert.AreEqual(1, exception.InnerExceptions.Count);
+        CollectionAssert.AreEqual(new[] { "delete" }, publisher.Events);
+    }
+
+    [TestMethod]
     public async Task PackagedRuntime_LoadGenerateAndUnload_UsesSelectedVariant()
     {
         var runtime = new RecordingBackendRuntime();
@@ -213,12 +232,14 @@ public sealed class ModelRuntimeTests
 
         public OpenAiBackendChatRequest? LastRequest { get; private set; }
 
+        public bool ThrowOnStop { get; init; }
+
         public ModelLoadStatus GetStatus()
         {
             var loadedModels = modelPath is null
                 ? Array.Empty<LoadedModelStatus>()
                 : [new LoadedModelStatus(modelPath, ConfigurationBackend.Llama, Descriptor.RuntimeName, 0, 0, 0, [], null, BackendVariantId: Descriptor.Id)];
-            return new ModelLoadStatus(modelPath, Descriptor.Route, 0, 0, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), loadedModels.Length > 0, loadedModels, Descriptor.Id);
+            return new ModelLoadStatus(modelPath, Descriptor.Route, 0, 0, 0, AvailableDevices.Count, AvailableDevices, null, string.Empty, new Dictionary<string, float>(), loadedModels.Length > 0, loadedModels, Descriptor.Id);
         }
 
         public bool SupportsImageInput(string? path) => false;
@@ -238,7 +259,9 @@ public sealed class ModelRuntimeTests
         public Task StopAsync(CancellationToken cancellationToken = default)
         {
             modelPath = null;
-            return Task.CompletedTask;
+            return ThrowOnStop
+                ? Task.FromException(new InvalidOperationException("stop failed"))
+                : Task.CompletedTask;
         }
 
         public Task<GenerationResult> GenerateAsync(OpenAiBackendChatRequest request, Func<string, Task>? onToken = null, CancellationToken cancellationToken = default)
