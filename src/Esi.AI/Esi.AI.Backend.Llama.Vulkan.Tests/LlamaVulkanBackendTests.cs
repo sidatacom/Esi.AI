@@ -97,4 +97,14 @@ public sealed class LlamaVulkanBackendTests
 
         await Assert.ThrowsExactlyAsync<ArgumentException>(() => runtime.LoadAsync(request));
     }
+
+    [TestMethod]
+    public void GetStatus_BeforeDiscoverDevices_DoesNotAccessNativeDevices()
+    {
+        using var runtime = new LlamaVulkanRuntime();
+
+        var status = runtime.GetStatus();
+
+        Assert.IsEmpty(status.Devices);
+    }
 }

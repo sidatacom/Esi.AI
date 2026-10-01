@@ -48,7 +48,7 @@ public sealed class LlamaVulkanRuntime : IBackendRuntime
     /// <inheritdoc />
     public ModelLoadStatus GetStatus()
     {
-        var devices = GetVulkanDevices();
+        var devices = Volatile.Read(ref nativeConfigured) ? GetVulkanDevices() : [];
         var isLoaded = weights is not null && loadedModelPath is not null;
         var modelSize = isLoaded && File.Exists(loadedModelPath) ? (ulong)new FileInfo(loadedModelPath).Length : 0;
         var log = string.Join(Environment.NewLine, NativeLog);

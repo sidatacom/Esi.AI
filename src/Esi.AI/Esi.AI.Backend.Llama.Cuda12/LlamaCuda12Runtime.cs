@@ -47,7 +47,7 @@ public sealed class LlamaCuda12Runtime : IBackendRuntime
     /// <inheritdoc />
     public ModelLoadStatus GetStatus()
     {
-        var devices = GetCudaDevices();
+        var devices = Volatile.Read(ref nativeConfigured) ? GetCudaDevices() : [];
         var isLoaded = weights is not null && loadedModelPath is not null;
         var modelSize = isLoaded && File.Exists(loadedModelPath) ? (ulong)new FileInfo(loadedModelPath).Length : 0;
         var log = string.Join(Environment.NewLine, NativeLog);
