@@ -67,10 +67,11 @@ public sealed class VllmXpuBackendTests
     {
         var startInfo = new ProcessStartInfo();
 
-        VllmXpuRuntime.ApplyDeviceEnvironment(startInfo, ["xpu:1"], true, false);
+        VllmXpuRuntime.ApplyDeviceEnvironment(startInfo, ["xpu:1", "xpu:3"], true, false);
 
         Assert.AreEqual("xpu", startInfo.Environment["VLLM_TARGET_DEVICE"]);
-        Assert.AreEqual("level_zero:0", startInfo.Environment["ONEAPI_DEVICE_SELECTOR"]);
+        Assert.AreEqual("level_zero:gpu", startInfo.Environment["ONEAPI_DEVICE_SELECTOR"]);
+        Assert.AreEqual("1,3", startInfo.Environment["ZE_AFFINITY_MASK"]);
         Assert.AreEqual("1", startInfo.Environment["VLLM_XPU_ENABLE_XPU_GRAPH"]);
         Assert.AreEqual("spawn", startInfo.Environment["VLLM_WORKER_MULTIPROC_METHOD"]);
         Assert.AreEqual(string.Empty, startInfo.Environment["CUDA_VISIBLE_DEVICES"]);

@@ -435,6 +435,26 @@ public sealed class OpenVinoRuntime : IBackendRuntime
         return runtimeDirectory;
     }
 
+    /// <summary>Returns the full name of the preferred available OpenVINO GPU.</summary>
+    public static string? GetGpuDeviceName()
+    {
+        InitializeRuntime();
+        using var core = new Core();
+        var gpuNames = core.GetAvailableDevices()
+            .Where(deviceName => deviceName.Equals("GPU", StringComparison.OrdinalIgnoreCase)
+                || deviceName.StartsWith("GPU.", StringComparison.OrdinalIgnoreCase))
+            .Select(deviceName => core.GetProperty(deviceName, "FULL_DEVICE_NAME"))
+            .Where(deviceName => !string.IsNullOrWhiteSpace(deviceName))
+            .ToArray();
+
+        return gpuNames.FirstOrDefault(deviceName =>
+                deviceName.Contains("Battlemage", StringComparison.OrdinalIgnoreCase)
+            || deviceName.Contains("B580", StringComparison.OrdinalIgnoreCase)
+            || deviceName.Contains("0xe223", StringComparison.OrdinalIgnoreCase))
+            ?? gpuNames.FirstOrDefault(deviceName => deviceName.Contains("Arc", StringComparison.OrdinalIgnoreCase))
+            ?? gpuNames.FirstOrDefault();
+    }
+
     private static string ResolveOpenVinoRuntimeDirectory()
     {
         var configured = Environment.GetEnvironmentVariable("OPENVINO_RUNTIME_DIR");

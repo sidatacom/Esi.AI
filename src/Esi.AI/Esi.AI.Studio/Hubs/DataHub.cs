@@ -121,6 +121,9 @@ public sealed class DataHub(
     public Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisites(ConfigurationBackend backend, string pythonExecutable, IReadOnlyList<string>? devices) =>
         dataService.GetBackendPrerequisitesAsync(backend, pythonExecutable, Context.ConnectionAborted, devices);
 
+    public Task<IReadOnlyList<DeviceStatus>> BackendDevice_Read(string backendVariantId) =>
+        dataService.BackendDevice_ReadAsync(backendVariantId, Context.ConnectionAborted);
+
     public Task<BackendRequirementState> BackendRequirement_Read() =>
         Task.FromResult(requirementMonitor.Current);
 
@@ -163,7 +166,7 @@ public sealed class DataHub(
             return new(false, "This backend has no preparation action from this tile.", string.Empty);
 
         var result = await dataService.PrepareBackendAsync(backend, pythonExecutable, Context.ConnectionAborted, devices);
-        requirementMonitor.RequestRefresh();
+        requirementMonitor.RequestRefresh(backend, devices);
         return result;
     }
 

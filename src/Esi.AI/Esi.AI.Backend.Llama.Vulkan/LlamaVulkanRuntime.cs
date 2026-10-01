@@ -86,6 +86,16 @@ public sealed class LlamaVulkanRuntime : IBackendRuntime
     }
 
     /// <inheritdoc />
+    public IReadOnlyList<DeviceStatus> DiscoverDevices()
+    {
+        var runtimeDirectory = VulkanRuntimeFiles.GetRuntimeDirectory(applicationDirectory);
+        VulkanRuntimeFiles.PrepareLibraryPath(runtimeDirectory);
+        VulkanRuntimeFiles.Validate(runtimeDirectory);
+        ConfigureNativeBackend();
+        return GetVulkanDevices();
+    }
+
+    /// <inheritdoc />
     public bool SupportsImageInput(string? modelPath)
     {
         runtimeLock.Wait();
@@ -376,13 +386,13 @@ public sealed class LlamaVulkanRuntime : IBackendRuntime
         }
 
         parameters.TensorSplits.Clear();
-        var splitIndex = 0;
         foreach (var device in deviceWeights.Where(device => device.Value > 0).OrderBy(device => ParseDeviceIndex(device.Key)))
         {
-            if (splitIndex >= parameters.TensorSplits.Length)
-                break;
+            var splitIndex = ParseDeviceIndex(device.Key);
+            if (splitIndex < 0 || splitIndex >= parameters.TensorSplits.Length)
+                continue;
 
-            parameters.TensorSplits[splitIndex++] = device.Value;
+            parameters.TensorSplits[splitIndex] = device.Value;
         }
     }
 

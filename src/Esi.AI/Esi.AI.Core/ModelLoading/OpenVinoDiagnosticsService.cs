@@ -12,7 +12,7 @@ public sealed class OpenVinoDiagnosticsService
         this.loadGate = loadGate ?? new OpenVinoLoadGate();
     }
 
-    public OpenVinoDiagnostics Diagnose()
+    public OpenVinoDiagnostics Diagnose(Func<string?>? nativeGpuNameProbe = null)
     {
         if (loadGate.IsEntered)
         {
@@ -30,7 +30,22 @@ public sealed class OpenVinoDiagnosticsService
         }
 
         var checks = new List<OpenVinoDiagnosticCheck>();
-        AddLinuxDriverChecks(checks);
+        var intelGpuName = AddLinuxDriverChecks(checks);
+        string? nativeGpuName = null;
+        string? nativeGpuProbeError = null;
+        if (nativeGpuNameProbe is not null)
+        {
+            try
+            {
+                nativeGpuName = nativeGpuNameProbe()?.Trim();
+                if (string.IsNullOrWhiteSpace(nativeGpuName))
+                    nativeGpuName = null;
+            }
+            catch (Exception exception)
+            {
+                nativeGpuProbeError = exception.Message;
+            }
+        }
 
         var hasRenderDevice = !OperatingSystem.IsLinux() ||
             Directory.Exists("/dev/dri") && Directory.EnumerateFileSystemEntries("/dev/dri", "renderD*").Any();
@@ -39,11 +54,15 @@ public sealed class OpenVinoDiagnosticsService
         IReadOnlyList<OpenVinoDeviceStatus> gpuDevices = hasRenderDevice
             ? new[] { new OpenVinoDeviceStatus(
                 "GPU",
-                "OpenVINO GPU (native probe deferred until load)",
+                nativeGpuName ?? intelGpuName ?? "OpenVINO GPU (native probe deferred until load)",
                 true,
                 "Intel",
                 "OS render device",
-                "GPU route is available from OS device checks; native OpenVINO probing is deferred until model load.") }
+                nativeGpuName is not null
+                    ? "Device name is reported by OpenVINO FULL_DEVICE_NAME."
+                    : nativeGpuProbeError is not null
+                        ? $"Native OpenVINO name probing failed; using the OS hardware name. {nativeGpuProbeError}"
+                        : "GPU route is available from OS device checks; native OpenVINO probing is deferred until model load.") }
             : Array.Empty<OpenVinoDeviceStatus>();
         var devices = hasNpuDevice
             ? gpuDevices.Append(new OpenVinoDeviceStatus(
@@ -59,7 +78,9 @@ public sealed class OpenVinoDiagnosticsService
             "OpenVINO GPU route",
             hasRenderDevice,
             hasRenderDevice
-                ? "A render device is available. Native OpenVINO probing is deferred until model load."
+                ? nativeGpuName is not null
+                    ? $"OpenVINO reports GPU device {nativeGpuName}."
+                    : "A render device is available. Native OpenVINO probing is deferred until model load."
                 : "No DRM render device was found under /dev/dri.",
             false));
         checks.Add(new OpenVinoDiagnosticCheck(
@@ -80,10 +101,10 @@ public sealed class OpenVinoDiagnosticsService
         return diagnostics;
     }
 
-    private static void AddLinuxDriverChecks(ICollection<OpenVinoDiagnosticCheck> checks)
+    private static string? AddLinuxDriverChecks(ICollection<OpenVinoDiagnosticCheck> checks)
     {
         if (!OperatingSystem.IsLinux())
-            return;
+            return null;
 
         var gpuInfo = RunCommand("lspci", "-nnk");
         var intelGpuLines = gpuInfo.Output
@@ -92,6 +113,7 @@ public sealed class OpenVinoDiagnosticsService
                 || line.Contains("3D controller", StringComparison.OrdinalIgnoreCase))
                 && line.Contains("Intel", StringComparison.OrdinalIgnoreCase))
             .ToArray();
+        var intelGpuName = SelectIntelGpuName(intelGpuLines);
         var hasIntelGpu = intelGpuLines.Length > 0;
         var hasBattlemageGpu = intelGpuLines.Any(line => line.Contains("Battlemage", StringComparison.OrdinalIgnoreCase)
             || line.Contains("[8086:e223]", StringComparison.OrdinalIgnoreCase));
@@ -151,6 +173,21 @@ public sealed class OpenVinoDiagnosticsService
             hasRenderAccess,
             hasRenderAccess ? "Current user can access the render/video device group." : "Current user is not in the render/video group.",
             true));
+
+        return intelGpuName;
+    }
+
+    internal static string? SelectIntelGpuName(IReadOnlyList<string> intelGpuLines)
+    {
+        var selectedLine = intelGpuLines.FirstOrDefault(line =>
+            line.Contains("Battlemage", StringComparison.OrdinalIgnoreCase) ||
+            line.Contains("[8086:e223]", StringComparison.OrdinalIgnoreCase))
+            ?? intelGpuLines.FirstOrDefault();
+        if (selectedLine is null)
+            return null;
+
+        var nameSeparator = selectedLine.LastIndexOf(": ", StringComparison.Ordinal);
+        return nameSeparator >= 0 ? selectedLine[(nameSeparator + 2)..].Trim() : selectedLine.Trim();
     }
 
     private static bool HasDriverForDevice(string output, string deviceMarker, string driver)

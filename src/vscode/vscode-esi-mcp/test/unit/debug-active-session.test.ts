@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockState = vi.hoisted(() => ({
   activeDebugSession: undefined as { id: string; name: string } | undefined,
   sessions: [] as Array<{ id: string; name: string }>,
+  sessionsUnavailable: false,
   terminationListeners: [] as Array<(session: { id: string; name: string }) => void>,
   startListeners: [] as Array<(session: { id: string; name: string }) => void>,
   taskEndListeners: [] as Array<(event: { execution: { task: { name: string } }; exitCode?: number }) => void>,
@@ -13,7 +14,7 @@ const mockState = vi.hoisted(() => ({
 vi.mock("vscode", () => ({
   debug: {
     get activeDebugSession() { return mockState.activeDebugSession; },
-    get sessions() { return mockState.sessions; },
+    get sessions() { return mockState.sessionsUnavailable ? undefined : mockState.sessions; },
     onDidChangeActiveStackItem: () => ({ dispose: vi.fn() }),
     onDidTerminateDebugSession: (listener: (session: { id: string; name: string }) => void) => {
       mockState.terminationListeners.push(listener);
@@ -72,6 +73,7 @@ describe("DebugManager active session", () => {
   beforeEach(() => {
     mockState.activeDebugSession = undefined;
     mockState.sessions.length = 0;
+    mockState.sessionsUnavailable = false;
     mockState.terminationListeners.length = 0;
     mockState.startListeners.length = 0;
     mockState.taskEndListeners.length = 0;
@@ -85,7 +87,19 @@ describe("DebugManager active session", () => {
     expect(new DebugManager().getActiveSessionId()).toBe("session-123");
   });
 
+  it("finds a VS Code session started outside EsiMCP", () => {
+    mockState.sessions.push({ id: "external-session", name: "External Debug Session" });
+
+    expect(new DebugManager().getActiveSessionId()).toBe("external-session");
+  });
+
   it("returns null when no session is active", () => {
+    expect(new DebugManager().getActiveSessionId()).toBeNull();
+  });
+
+  it("returns null when VS Code does not expose its sessions collection", () => {
+    mockState.sessionsUnavailable = true;
+
     expect(new DebugManager().getActiveSessionId()).toBeNull();
   });
 
@@ -162,6 +176,20 @@ describe("DebugManager active session", () => {
     expect(mockState.activeDebugSession).toBeUndefined();
   });
 
+  it("stops a VS Code session started outside EsiMCP", async () => {
+    const session = { id: "external-session", name: "External Debug Session" };
+    mockState.sessions.push(session);
+    const vscode = await import("vscode");
+    vi.mocked(vscode.debug.stopDebugging).mockClear();
+    const manager = new DebugManager();
+
+    await manager.stopDebugging();
+
+    expect(vscode.debug.stopDebugging).toHaveBeenCalledWith(session);
+    expect(mockState.sessions).toEqual([]);
+    manager.dispose();
+  });
+
   it("stops every debug session before a new launch", async () => {
     const firstSession = { id: "session-first", name: "First" };
     const secondSession = { id: "session-second", name: "Second" };
@@ -175,6 +203,43 @@ describe("DebugManager active session", () => {
     expect(vscode.debug.stopDebugging).toHaveBeenCalledOnce();
     expect(vscode.debug.stopDebugging).toHaveBeenCalledWith();
     expect(mockState.sessions).toEqual([]);
+    manager.dispose();
+  });
+
+  it("stops the active session when VS Code does not expose its sessions collection", async () => {
+    const session = { id: "session-active", name: "Esi.AI Studio" };
+    mockState.activeDebugSession = session;
+    mockState.sessions.push(session);
+    mockState.sessionsUnavailable = true;
+    const vscode = await import("vscode");
+    vi.mocked(vscode.debug.stopDebugging).mockClear();
+    const manager = new DebugManager();
+
+    await manager.stopAllDebugging();
+
+    expect(vscode.debug.stopDebugging).toHaveBeenCalledOnce();
+    expect(vscode.debug.stopDebugging).toHaveBeenCalledWith();
+    manager.dispose();
+  });
+
+  it("waits for external sessions to terminate before stopping all", async () => {
+    const session = { id: "external-session", name: "External Debug Session" };
+    mockState.sessions.push(session);
+    const vscode = await import("vscode");
+    vi.mocked(vscode.debug.stopDebugging).mockClear();
+    vi.mocked(vscode.debug.stopDebugging).mockImplementationOnce(async () => undefined);
+    const manager = new DebugManager();
+    let stopped = false;
+
+    const stopPromise = manager.stopAllDebugging().then(() => { stopped = true; });
+    await Promise.resolve();
+
+    expect(stopped).toBe(false);
+    expect(vscode.debug.stopDebugging).toHaveBeenCalledOnce();
+    mockState.sessions.length = 0;
+    mockState.terminationListeners.slice().forEach((listener) => listener(session));
+    await stopPromise;
+    expect(stopped).toBe(true);
     manager.dispose();
   });
 

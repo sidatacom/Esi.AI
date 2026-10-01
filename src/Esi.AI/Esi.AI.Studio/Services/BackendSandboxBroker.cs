@@ -48,6 +48,34 @@ public sealed class BackendSandboxBroker
             response.Error);
     }
 
+    /// <summary>Discovers one backend variant's devices in a fresh constrained worker process.</summary>
+    public async Task<IReadOnlyList<DeviceStatus>> DiscoverDevicesAsync(
+        string backendVariantId,
+        string applicationDirectory,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(backendVariantId);
+        var backend = backendVariantId.StartsWith("vllm.", StringComparison.OrdinalIgnoreCase)
+            ? ConfigurationBackend.Vllm
+            : string.Equals(backendVariantId, "sglang", StringComparison.OrdinalIgnoreCase)
+                ? ConfigurationBackend.Sglang
+                : string.Equals(backendVariantId, "openvino", StringComparison.OrdinalIgnoreCase)
+                    ? ConfigurationBackend.OpenVino
+                    : string.Equals(backendVariantId, "dotllm.cpu", StringComparison.OrdinalIgnoreCase)
+                        ? ConfigurationBackend.DotLlm
+                        : ConfigurationBackend.Llama;
+        var response = await ExecuteAsync(new BackendWorkerRequest(
+            "discover-devices",
+            backend,
+            ApplicationDirectory: applicationDirectory,
+            TimeoutSeconds: options.DiagnosticTimeoutSeconds,
+            BackendVariantId: backendVariantId), cancellationToken).ConfigureAwait(false);
+        if (!response.Succeeded)
+            throw new InvalidOperationException(response.Error ?? "The backend worker could not discover devices.");
+
+        return response.Devices ?? [];
+    }
+
     /// <summary>Runs OpenVINO diagnostics in a constrained worker process.</summary>
     public async Task<OpenVinoDiagnosticsDto> DiagnoseOpenVinoAsync(CancellationToken cancellationToken = default)
     {
@@ -150,6 +178,14 @@ public sealed class BackendSandboxBroker
             RedirectStandardError = true,
             CreateNoWindow = true
         };
+        ConfigureCuda12Environment(startInfo, request);
+        if (string.Equals(request.BackendVariantId, "llama.cuda12", StringComparison.OrdinalIgnoreCase))
+        {
+            startInfo.ArgumentList.Add("--setenv=CUDA_VERSION=12");
+            if (GetEnvironmentVariable(startInfo, "LD_LIBRARY_PATH") is { } libraryPath)
+                startInfo.ArgumentList.Add($"--setenv=LD_LIBRARY_PATH={libraryPath}");
+        }
+
         startInfo.ArgumentList.Add("--user");
         startInfo.ArgumentList.Add("--scope");
         startInfo.ArgumentList.Add("--quiet");
@@ -164,6 +200,79 @@ public sealed class BackendSandboxBroker
         startInfo.ArgumentList.Add(workerPath);
         return startInfo;
     }
+
+    private static void ConfigureCuda12Environment(ProcessStartInfo startInfo, BackendWorkerRequest request)
+    {
+        if (!OperatingSystem.IsLinux() ||
+            !string.Equals(request.BackendVariantId, "llama.cuda12", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        startInfo.Environment["CUDA_VERSION"] = "12";
+        var runtimeDirectory = ResolveCuda12RuntimeDirectory(startInfo);
+        if (runtimeDirectory is null)
+            return;
+
+        var libraryPaths = (GetEnvironmentVariable(startInfo, "LD_LIBRARY_PATH") ?? string.Empty)
+            .Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+            .ToList();
+        if (!libraryPaths.Contains(runtimeDirectory, StringComparer.Ordinal))
+            libraryPaths.Insert(0, runtimeDirectory);
+
+        startInfo.Environment["LD_LIBRARY_PATH"] = string.Join(Path.PathSeparator, libraryPaths);
+    }
+
+    private static string? ResolveCuda12RuntimeDirectory(ProcessStartInfo startInfo)
+    {
+        var candidates = new List<string>();
+        var configuredDirectory = GetEnvironmentVariable(startInfo, "ESI_CUDA12_RUNTIME_DIRECTORY");
+        if (!string.IsNullOrWhiteSpace(configuredDirectory))
+            candidates.Add(configuredDirectory);
+
+        foreach (var variableName in new[] { "CUDA_HOME", "CUDA_PATH" })
+        {
+            var cudaRoot = GetEnvironmentVariable(startInfo, variableName);
+            if (string.IsNullOrWhiteSpace(cudaRoot))
+                continue;
+
+            candidates.Add(Path.Combine(cudaRoot, "lib64"));
+            candidates.Add(Path.Combine(cudaRoot, "lib"));
+        }
+
+        candidates.Add("/usr/local/cuda-12/lib64");
+        candidates.Add("/usr/local/cuda/lib64");
+        var currentLibraryPath = GetEnvironmentVariable(startInfo, "LD_LIBRARY_PATH");
+        if (!string.IsNullOrWhiteSpace(currentLibraryPath))
+            candidates.AddRange(currentLibraryPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries));
+
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(userProfile))
+        {
+            var vendorDirectory = Path.Combine(userProfile, ".lmstudio", "extensions", "backends", "vendor");
+            try
+            {
+                if (Directory.Exists(vendorDirectory))
+                    candidates.AddRange(Directory.EnumerateDirectories(vendorDirectory, "linux-llama-cuda12-vendor-*"));
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+
+        return candidates
+            .Where(Directory.Exists)
+            .Distinct(StringComparer.Ordinal)
+            .FirstOrDefault(directory =>
+                File.Exists(Path.Combine(directory, "libcudart.so.12")) &&
+                File.Exists(Path.Combine(directory, "libcublas.so.12")));
+    }
+
+    private static string? GetEnvironmentVariable(ProcessStartInfo startInfo, string variableName) =>
+        startInfo.Environment.TryGetValue(variableName, out var value) ? value : null;
 
     private static string ResolveWorkerPath(string? configuredPath)
     {

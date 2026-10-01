@@ -69,6 +69,7 @@ public interface IDataService
     Task ModelDownload_DeleteFailedAsync(CancellationToken cancellationToken = default);
     Task<ModelStatus> SelectModelAsync(SelectModelRequest request, CancellationToken cancellationToken = default);
     Task<ModelLoadStatus> LoadedModel_ReadAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<DeviceStatus>> BackendDevice_ReadAsync(string backendVariantId, CancellationToken cancellationToken = default);
 
     Task<ModelLoadStatus> LoadModelAsync(LoadModelRequest request, CancellationToken cancellationToken = default);
     Task<ModelLoadStatus> LoadPythonModelAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default);

@@ -100,40 +100,53 @@
     }
 </section>
 
-<section class="backend-visibility-selector" aria-labelledby="backend-visibility-heading">
-    <div class="backend-visibility-heading">
-        <p class="eyebrow">BACKEND TABS</p>
-        <h2 id="backend-visibility-heading">Visible backends</h2>
-    </div>
-    <div class="backend-visibility-groups">
-        @foreach (var group in BackendTabGroups)
-        {
-            <div class="backend-visibility-group" role="group" aria-labelledby="@group.Id">
-                <h3 id="@group.Id">@group.Label</h3>
-                <div class="backend-visibility-options">
-                    @foreach (var option in group.Options)
-                    {
-                        <label class="backend-visibility-option" title="@(enabledBackendTabs.Count == 1 && enabledBackendTabs.Contains(option.Backend) ? "At least one backend tab must remain visible." : null)">
-                            <input class="form-check-input" type="checkbox"
-                                   checked="@enabledBackendTabs.Contains(option.Backend)"
-                                   disabled="@(!isBackendVisibilityLoaded || enabledBackendTabs.Count == 1 && enabledBackendTabs.Contains(option.Backend))"
-                                   @onchange="args => SetBackendVisibilityAsync(option.Backend, args.Value is true)" />
-                            <span>@option.Label</span>
-                        </label>
-                    }
-                </div>
-            </div>
-        }
-    </div>
-</section>
-
-<details class="backend-support-matrix" open="@isMatrixExpanded">
-    <summary class="section-heading backend-support-summary" aria-expanded="@isMatrixExpanded" @onclick="ToggleMatrixSupportMatrix" @onclick:preventDefault="true">
+<details class="backend-advanced-settings">
+    <summary class="backend-advanced-summary">
         <div>
-            <p class="eyebrow">GPU COMPATIBILITY MATRIX</p>
+            <p class="eyebrow">BACKEND OPTIONS</p>
+            <h2>Advanced settings</h2>
         </div>
     </summary>
-    <div class="table-scroll">
+    <div class="backend-advanced-content">
+        <div class="backend-advanced-grid">
+            <section class="backend-visibility-panel" aria-labelledby="backend-visibility-heading">
+                <div class="advanced-panel-heading">
+                    <div>
+                        <p class="eyebrow">BACKEND TABS</p>
+                        <h3 id="backend-visibility-heading">Visible backends</h3>
+                    </div>
+                    <span class="backend-visibility-count">@enabledBackendTabs.Count / @BackendTabOptions.Count enabled</span>
+                </div>
+                <div class="backend-visibility-groups">
+                    @foreach (var group in BackendTabGroups)
+                    {
+                        <div class="backend-visibility-group" role="group" aria-labelledby="@group.Id">
+                            <h4 id="@group.Id">@group.Label</h4>
+                            <div class="backend-visibility-options">
+                                @foreach (var option in group.Options)
+                                {
+                                    <label class="backend-visibility-option" title="@(enabledBackendTabs.Count == 1 && enabledBackendTabs.Contains(option.Backend) ? "At least one backend tab must remain visible." : null)">
+                                        <input class="form-check-input" type="checkbox"
+                                               checked="@enabledBackendTabs.Contains(option.Backend)"
+                                               disabled="@(!isBackendVisibilityLoaded || enabledBackendTabs.Count == 1 && enabledBackendTabs.Contains(option.Backend))"
+                                               @onchange="args => SetBackendVisibilityAsync(option.Backend, args.Value is true)" />
+                                        <span>@option.Label</span>
+                                    </label>
+                                }
+                            </div>
+        </div>
+                    }
+                </div>
+            </section>
+
+            <section class="backend-support-panel" aria-labelledby="backend-support-heading">
+                <div class="advanced-panel-heading">
+                    <div>
+                        <p class="eyebrow">HARDWARE SUPPORT</p>
+                        <h3 id="backend-support-heading">GPU compatibility matrix</h3>
+                    </div>
+                </div>
+                <div class="table-scroll">
         <table class="support-matrix-table">
             <thead>
                 <tr>
@@ -194,6 +207,9 @@
                 }
             </tbody>
         </table>
+                </div>
+            </section>
+        </div>
     </div>
 </details>
 
@@ -257,14 +273,26 @@
 }
 
 <nav class="backend-tabs" aria-label="Inference backends">
-    @foreach (var option in BackendTabOptions.Where(option => enabledBackendTabs.Contains(option.Backend)))
+    @foreach (var group in BackendTabGroups)
     {
-        <button class="backend-tab @(activeBackend == option.Backend ? "active" : "")" type="button"
-                aria-pressed="@(activeBackend == option.Backend)"
-                @onclick="() => SelectBackendAsync(option.Backend)">
-            <span>@option.Label</span>
-            <small>@option.Description</small>
-        </button>
+        var visibleOptions = group.Options.Where(option => enabledBackendTabs.Contains(option.Backend)).ToArray();
+        if (visibleOptions.Length > 0)
+        {
+            <div class="backend-tab-group" role="group" aria-labelledby="backend-tab-group-@group.Id">
+                <h2 id="backend-tab-group-@group.Id">@group.Label</h2>
+                <div class="backend-tab-options">
+                    @foreach (var option in visibleOptions)
+                    {
+                        <button class="backend-tab @(activeBackend == option.Backend ? "active" : "")" type="button"
+                                aria-pressed="@(activeBackend == option.Backend)"
+                                @onclick="() => SelectBackendAsync(option.Backend)">
+                            <span>@option.Label</span>
+                            <small>@option.Description</small>
+                        </button>
+                    }
+                </div>
+            </div>
+        }
     }
 </nav>
 
@@ -532,9 +560,9 @@
         @if (activeBackend == BackendTab.OpenVino)
         {
             <p class="panel-note">Enable devices with a compatible vendor driver for OpenVINO MULTI scheduling, or select one accelerator route.</p>
-            @if (openVinoDiagnostics?.Devices.Any(device => !IsExcludedDevice(device.Name)) == true)
+            @if (openVinoDiagnostics?.Devices.Count > 0)
             {
-                @foreach (var device in openVinoDiagnostics.Devices.Where(device => !IsExcludedDevice(device.Name)))
+                @foreach (var device in openVinoDiagnostics.Devices)
                 {
                     <div class="gpu-row @(device.IsCompatible ? "" : "gpu-row-disabled")">
                         <div class="gpu-identity">
@@ -544,7 +572,7 @@
                                    @onchange="async eventArgs => await SetOpenVinoDeviceEnabledAsync(device.Id, eventArgs.Value is true)" />
                             <label class="gpu-name" for="openvino-device-@device.Id">
                                 <strong>@device.Name</strong>
-                                <span>@device.Vendor · @device.Driver · @device.Detail</span>
+                                <span>@device.Vendor · @device.Driver · @device.Detail@(IsExcludedDevice(device.Name) ? " · Excluded from OpenVINO routing" : string.Empty)</span>
                             </label>
                         </div>
                         <div class="weight-field">
@@ -573,6 +601,7 @@
                     <div class="gpu-row">
                         <div class="gpu-identity">
                             <input class="form-check-input" type="checkbox" id="device-@deviceId"
+                                role="switch"
                                    checked="@(GetDeviceSetting(deviceId).Enabled)"
                                    @onchange="async eventArgs => await SetDeviceEnabledAsync(deviceId, eventArgs.Value is true)" />
                             <label class="gpu-name" for="device-@deviceId">
@@ -580,12 +609,25 @@
                                 <span>@deviceId · @GetBackendDriverLabel(device)</span>
                             </label>
                         </div>
-                        <div class="weight-field">
-                            <label for="@($"weight-{deviceId}")">Weight</label>
-                            <input id="@($"weight-{deviceId}")" class="form-control" type="number" min="0" step="0.1"
-                                   value="@GetDeviceSetting(deviceId).Weight.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)"
-                                   @onchange="async eventArgs => await SetDeviceWeightAsync(deviceId, eventArgs.Value?.ToString())" />
-                        </div>
+                        @if (activeBackend == BackendTab.LlamaVulkan)
+                        {
+                            <div class="weight-field">
+                                <label for="@($"priority-{deviceId}")">Priority</label>
+                                <input id="@($"priority-{deviceId}")" class="form-control" type="number" min="1" step="1"
+                                       disabled="@(!GetDeviceSetting(deviceId).Enabled)"
+                                       value="@GetDevicePriority(deviceId)"
+                                       @onchange="async eventArgs => await SetDevicePriorityAsync(deviceId, eventArgs.Value?.ToString())" />
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="weight-field">
+                                <label for="@($"weight-{deviceId}")">Weight</label>
+                                <input id="@($"weight-{deviceId}")" class="form-control" type="number" min="0" step="0.1"
+                                       value="@GetDeviceSetting(deviceId).Weight.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)"
+                                       @onchange="async eventArgs => await SetDeviceWeightAsync(deviceId, eventArgs.Value?.ToString())" />
+                            </div>
+                        }
                     </div>
                 }
                 <small class="text-muted">Select GPU indices for @llamaState.Backend. With no selection, all compatible devices are used.</small>
@@ -602,16 +644,28 @@
                 <div class="python-device-list">
                     @foreach (var route in pythonDeviceRoutes.Where(route => route.Backends.Contains(activeBackend)))
                     {
-                        <label class="python-device-option">
-                            <input class="form-check-input" type="checkbox"
-                                   checked="@pythonForm.IsDeviceSelected(route.Value)"
-                                   @onchange="async eventArgs => await SetPythonDeviceSelectedAsync(route.Value, eventArgs.Value is true)" />
-                            <span>@route.Label</span>
-                        </label>
+                        var isSelected = pythonForm.IsDeviceSelected(route.Value);
+                        <div class="gpu-row">
+                            <div class="gpu-identity">
+                                <input class="form-check-input" type="checkbox" role="switch"
+                                       id="python-device-@route.Value"
+                                       checked="@isSelected"
+                                       @onchange="async eventArgs => await SetPythonDeviceSelectedAsync(route.Value, eventArgs.Value is true)" />
+                                <label class="gpu-name" for="python-device-@route.Value">
+                                    <strong>@route.Label</strong>
+                                    <span>@route.Value · @route.Vendor · @route.Driver</span>
+                                </label>
+                            </div>
+                            <div class="weight-field">
+                                <label for="@($"python-priority-{route.Value}")">Priority</label>
+                                <input id="@($"python-priority-{route.Value}")" class="form-control" type="number" min="1" step="1"
+                                       disabled="@(!isSelected)"
+                                       value="@GetPythonDevicePriority(route.Value)"
+                                       @onchange="async eventArgs => await SetPythonDevicePriorityAsync(route.Value, eventArgs.Value?.ToString())" />
+                            </div>
+                        </div>
                     }
                 </div>
-                <label class="form-label" for="python-additional-device-routes">Additional device routes</label>
-                <InputText id="python-additional-device-routes" class="form-control" @bind-Value="pythonForm.AdditionalDeviceRoutes" @bind-Value:after="SaveSettingsAsync" placeholder="cuda:1, cuda:2" />
                 <small class="form-text">The requirements environment follows the selected device vendor. CUDA and XPU devices cannot be mixed in one worker.</small>
             </div>
         }
@@ -990,6 +1044,7 @@ else if (activeBackend == BackendTab.OpenVino)
 @code {
     private readonly BackendPageState pageState = new();
     private BackendTab activeBackend = BackendTab.LlamaVulkan;
+    private IReadOnlyList<DeviceStatus> llamaRoutingDevices = [];
     private readonly HashSet<BackendTab> enabledBackendTabs = Enum.GetValues<BackendTab>().ToHashSet();
     private bool isBackendVisibilityLoaded;
     private PythonState pythonForm => pageState.Python;
@@ -1022,8 +1077,8 @@ else if (activeBackend == BackendTab.OpenVino)
     private bool isLoadingMatrixDialog;
     private string? matrixDialogStatus;
     private bool isMatrixActionRunning;
-    private bool isMatrixExpanded;
     private bool isBackendRequirementsExpanded;
+
     private readonly Dictionary<(BackendTab Backend, string Vendor), bool> matrixRequirementActions = [];
     private bool profileTimeoutEnabled;
     private double profileTimeoutBaseSeconds = 120;
@@ -1042,7 +1097,6 @@ else if (activeBackend == BackendTab.OpenVino)
         matrixRequirementActions.Count > 0 &&
         matrixRequirementActions.Values.All(actionRequired => !actionRequired);
 
-    private void ToggleMatrixSupportMatrix() => isMatrixExpanded = !isMatrixExpanded;
     private void ToggleBackendRequirements() => isBackendRequirementsExpanded = !isBackendRequirementsExpanded;
 
     private async Task SetBackendVisibilityAsync(BackendTab backend, bool isEnabled)
@@ -1359,7 +1413,6 @@ else if (activeBackend == BackendTab.OpenVino)
                 pythonForm.Devices.Clear();
                 pythonForm.Devices.Add(route);
                 pythonForm.Device = route;
-                pythonForm.AdditionalDeviceRoutes = string.Empty;
             }
 
             await SelectBackendAsync(backend);
@@ -1677,7 +1730,7 @@ else if (activeBackend == BackendTab.OpenVino)
                 CurrentPrerequisiteBackend,
                 pythonForm.PythonExecutable,
                 devices: IsLlamaBackendTab(activeBackend) ? GetLlamaPrerequisiteDevices(llamaState.Backend) : pythonForm.SelectedDevices);
-            if (IsPythonBackendTab(activeBackend))
+            if (activeBackend == BackendTab.Sglang)
                 SyncPythonDevices(backendPrerequisites.AvailableDevices ?? []);
         }
         catch (Exception exception)
@@ -1691,6 +1744,44 @@ else if (activeBackend == BackendTab.OpenVino)
         }
     }
 
+    private async Task RefreshLlamaRoutingDevicesAsync()
+    {
+        if (IsVllmBackendTab(activeBackend))
+        {
+            var vllmVariantId = BackendTabOptions.Single(option => option.Backend == activeBackend).Id;
+            try
+            {
+                var devices = await DataService.BackendDevice_ReadAsync(vllmVariantId);
+                SyncVllmDevices(devices);
+            }
+            catch (Exception exception)
+            {
+                pythonDeviceRoutes = [];
+                statusMessage = $"Device discovery failed: {exception.Message}";
+            }
+            return;
+        }
+
+        if (!IsLlamaBackendTab(activeBackend))
+        {
+            llamaRoutingDevices = [];
+            return;
+        }
+
+        var variantId = BackendTabOptions.Single(option => option.Backend == activeBackend).Id;
+        try
+        {
+            llamaRoutingDevices = await DataService.BackendDevice_ReadAsync(variantId);
+            if (GetLlamaRoutingDevices().Count > 0)
+                SyncEnabledDevices();
+        }
+        catch (Exception exception)
+        {
+            llamaRoutingDevices = [];
+            statusMessage = $"Device discovery failed: {exception.Message}";
+        }
+    }
+
     private IReadOnlyList<PythonExecutableOption> PythonExecutableOptions =>
     [
         new("python3", "Automatic environment"),
@@ -1699,14 +1790,6 @@ else if (activeBackend == BackendTab.OpenVino)
 
     private async Task HandlePythonExecutableChangedAsync()
     {
-        if (string.Equals(pythonForm.PythonExecutable, "/home/llm/.venvs/esi-ai-vllm-xpu/bin/python", StringComparison.OrdinalIgnoreCase))
-        {
-            pythonForm.Devices.Clear();
-            pythonForm.Devices.Add("xpu:0");
-            pythonForm.Device = "xpu:0";
-            pythonForm.AdditionalDeviceRoutes = string.Empty;
-        }
-
         await SaveSettingsAsync();
         await RefreshBackendPrerequisitesAsync();
     }
@@ -1844,7 +1927,11 @@ else if (activeBackend == BackendTab.OpenVino)
         isCreatingProfile = false;
         backendModels = await DataService.BackendModel_ReadAsync(GetConfigurationBackend(backend));
         await InvokeAsync(StateHasChanged);
+        await RefreshLlamaRoutingDevicesAsync();
         await RefreshBackendPrerequisitesAsync();
+        if (backend == BackendTab.OpenVino)
+            await RefreshOpenVinoDiagnosticsAsync();
+
         var modelPath = backend switch
         {
             BackendTab.LlamaVulkan or BackendTab.LlamaCuda12 or BackendTab.LlamaSycl => llamaState.ModelPath,
@@ -2034,66 +2121,16 @@ else if (activeBackend == BackendTab.OpenVino)
 
     private string GetRoutingDeviceCount() => activeBackend switch
     {
-        BackendTab.OpenVino => $"{openVinoDiagnostics?.Devices.Count(device => !IsExcludedDevice(device.Name)) ?? 0} available",
+        BackendTab.OpenVino => $"{openVinoDiagnostics?.Devices.Count ?? 0} detected",
         BackendTab.LlamaVulkan or BackendTab.LlamaCuda12 or BackendTab.LlamaSycl => $"{GetLlamaRoutingDevices().Count} detected",
         BackendTab.VllmCuda12 or BackendTab.VllmXpu or BackendTab.Sglang => $"{pythonDeviceRoutes.Count(route => route.Backends.Contains(activeBackend))} available",
         BackendTab.DotLlm => "1 supported",
         _ => "0 available"
     };
 
-    private IReadOnlyList<DeviceStatus> GetLlamaRoutingDevices()
-    {
-        var prefix = llamaState.Backend.Trim().ToUpperInvariant() switch
-        {
-            "SYCL" => "SYCL",
-            "CUDA" => "CUDA",
-            "VULKAN" => "VULKAN",
-            _ => string.Empty
-        };
-        var configuredDevices = llamaState.BackendDevices.Keys
-            .Where(device => prefix.Length == 0 || device.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-        if (configuredDevices.Length > 0 && prefix is "SYCL" or "CUDA")
-            return configuredDevices
-                .Select((device, index) => new DeviceStatus(
-                    prefix == "SYCL" ? $"SYCL{index}" : device,
-                    prefix == "SYCL" ? $"SYCL{index}" : device,
-                    0,
-                    null,
-                    prefix == "CUDA" ? "NVIDIA" : "Intel",
-                    prefix == "SYCL" ? "SYCL native runtime" : "CUDA native runtime"))
-                .ToArray();
-
-        if (prefix == "SYCL")
-        {
-            var staleVulkanDevices = loadStatus?.Devices
-                .Where(device => device.DeviceId.StartsWith("Vulkan", StringComparison.OrdinalIgnoreCase) ||
-                    device.DeviceId.StartsWith("GPU", StringComparison.OrdinalIgnoreCase))
-                .Where(device => !IsExcludedDevice(device.Description ?? device.Name))
-                .ToArray() ?? [];
-            if (staleVulkanDevices.Length > 0)
-                return staleVulkanDevices
-                    .Select((device, index) => device with { DeviceId = $"SYCL{index}" })
-                    .ToArray();
-        }
-
-        var devices = loadStatus?.Devices
-            .Where(device => prefix.Length == 0 || device.DeviceId.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
-            .Where(device => !IsExcludedDevice(device.Description ?? device.Name))
-            .ToArray() ?? [];
-        if (devices.Length > 0)
-            return devices;
-
-        return configuredDevices
-            .Select(device => new DeviceStatus(
-                device,
-                device,
-                0,
-                null,
-                prefix == "CUDA" ? "NVIDIA" : "Intel",
-                prefix == "SYCL" ? "SYCL native runtime" : $"{prefix} native runtime"))
-            .ToArray();
-    }
+    private IReadOnlyList<DeviceStatus> GetLlamaRoutingDevices() => llamaRoutingDevices
+        .Where(device => !IsExcludedDevice(device.Description ?? device.Name))
+        .ToArray();
 
     private static IReadOnlyDictionary<string, float> GetConfiguredLlamaDevices(LoadModelRequest request)
     {
@@ -2264,6 +2301,11 @@ else if (activeBackend == BackendTab.OpenVino)
                 selectedProfileId = null;
             if (IsPythonBackendTab(activeBackend))
                 await RefreshBackendPrerequisitesAsync();
+            if (IsLlamaBackendTab(activeBackend))
+                await RefreshLlamaRoutingDevicesAsync();
+            if (activeBackend == BackendTab.OpenVino)
+                await RefreshOpenVinoDiagnosticsAsync();
+
             var openVinoModelStatus = await DataService.GetOpenVinoModelStatusAsync();
             isOpenVinoModelLoaded = openVinoModelStatus.IsModelLoaded;
             if (openVinoModelStatus.IsModelLoaded && !string.IsNullOrWhiteSpace(openVinoModelStatus.ModelPath))
@@ -2273,8 +2315,8 @@ else if (activeBackend == BackendTab.OpenVino)
             RequirementEvents.BackendRequirement_Update += HandleBackendRequirementUpdateAsync;
             ApplyBackendRequirementState(await DataService.BackendRequirement_ReadAsync());
             await RefreshMatrixRequirementActionsAsync();
-            isMatrixExpanded = false;
             isBackendRequirementsExpanded = !IsBackendRequirementsReady;
+
             var statusVersion = loadedModelStatusVersion;
             var currentLoadStatus = await DataService.LoadedModel_ReadAsync();
             if (statusVersion == loadedModelStatusVersion)
@@ -2737,7 +2779,7 @@ else if (activeBackend == BackendTab.OpenVino)
         _ => backend.ToString()
     };
 
-    private ConfigurationBackend CurrentProfileBackend => CurrentBackendViewData.ConfigurationBackend;
+    private ConfigurationBackend CurrentProfileBackend => GetConfigurationBackend(activeBackend);
 
     private ConfigurationBackend GetConfigurationBackend(BackendTab backend) => backend switch
     {
@@ -2804,9 +2846,6 @@ else if (activeBackend == BackendTab.OpenVino)
         pythonForm.Devices.Clear();
         pythonForm.Devices.AddRange(selectedDevices);
         pythonForm.Device = selectedDevices[0];
-        pythonForm.AdditionalDeviceRoutes = string.Join(',', pythonForm.AdditionalDeviceRoutes
-            .Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)
-            .Where(device => device.StartsWith(devicePrefix, StringComparison.OrdinalIgnoreCase)));
         pythonForm.PythonExecutable = isXpu
             ? "/home/llm/.venvs/esi-ai-vllm-xpu/bin/python"
             : "python3";
@@ -3138,26 +3177,38 @@ else if (activeBackend == BackendTab.OpenVino)
             ? setting
             : new BackendDeviceSetting(false, 0);
 
-    private IReadOnlyDictionary<string, float> GetVulkanWeightsForLoad() =>
-        llamaState.BackendDevices
+    private IReadOnlyDictionary<string, float> GetVulkanWeightsForLoad()
+    {
+        var order = GetEnabledVulkanDeviceOrder();
+        var priorities = order
+            .Select((device, index) => new KeyValuePair<string, float>(device, order.Count - index))
+            .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase);
+        return llamaState.BackendDevices
             .Where(pair => !IsExcludedDevice(pair.Key))
             .ToDictionary(
-            pair => pair.Key,
-            pair => pair.Value.Enabled ? pair.Value.Weight : 0,
-            StringComparer.OrdinalIgnoreCase);
+                pair => pair.Key,
+                pair => priorities.GetValueOrDefault(pair.Key),
+                StringComparer.OrdinalIgnoreCase);
+    }
 
     private async Task SetDeviceEnabledAsync(string deviceName, bool enabled)
     {
+        var vulkanOrder = activeBackend == BackendTab.LlamaVulkan ? GetEnabledVulkanDeviceOrder() : [];
         if (enabled)
         {
             var setting = GetDeviceSetting(deviceName);
             llamaState.BackendDevices[deviceName] = new BackendDeviceSetting(true, setting.Weight > 0 ? setting.Weight : 1);
+            if (activeBackend == BackendTab.LlamaVulkan && !vulkanOrder.Contains(deviceName, StringComparer.OrdinalIgnoreCase))
+                vulkanOrder.Add(deviceName);
         }
         else
         {
             var setting = GetDeviceSetting(deviceName);
             llamaState.BackendDevices[deviceName] = setting with { Enabled = false };
+            vulkanOrder.RemoveAll(value => string.Equals(value, deviceName, StringComparison.OrdinalIgnoreCase));
         }
+        if (activeBackend == BackendTab.LlamaVulkan)
+            SetVulkanDeviceOrder(vulkanOrder);
         await SaveSettingsAsync();
     }
 
@@ -3169,6 +3220,45 @@ else if (activeBackend == BackendTab.OpenVino)
             llamaState.BackendDevices[deviceName] = new BackendDeviceSetting(setting.Enabled, Math.Max(0, weight));
         }
         await SaveSettingsAsync();
+    }
+
+    private int GetDevicePriority(string deviceName)
+    {
+        var order = GetEnabledVulkanDeviceOrder();
+        var index = order.FindIndex(device => string.Equals(device, deviceName, StringComparison.OrdinalIgnoreCase));
+        return index >= 0 ? index + 1 : order.Count + 1;
+    }
+
+    private async Task SetDevicePriorityAsync(string deviceName, string? value)
+    {
+        if (!int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var priority) || priority < 1)
+            return;
+
+        var order = GetEnabledVulkanDeviceOrder();
+        var index = order.FindIndex(device => string.Equals(device, deviceName, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+            return;
+
+        order.RemoveAt(index);
+        order.Insert(Math.Min(priority - 1, order.Count), deviceName);
+        SetVulkanDeviceOrder(order);
+        await SaveSettingsAsync();
+    }
+
+    private List<string> GetEnabledVulkanDeviceOrder() => llamaState.BackendDevices
+        .Where(pair => pair.Value.Enabled)
+        .OrderByDescending(pair => pair.Value.Weight)
+        .ThenBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+        .Select(pair => pair.Key)
+        .ToList();
+
+    private void SetVulkanDeviceOrder(IReadOnlyList<string> order)
+    {
+        for (var index = 0; index < order.Count; index++)
+        {
+            var setting = GetDeviceSetting(order[index]);
+            llamaState.BackendDevices[order[index]] = setting with { Enabled = true, Weight = order.Count - index };
+        }
     }
 
     private async Task SetPythonDeviceSelectedAsync(string device, bool selected)
@@ -3188,6 +3278,40 @@ else if (activeBackend == BackendTab.OpenVino)
         await RefreshBackendPrerequisitesAsync();
     }
 
+    private int GetPythonDevicePriority(string device) =>
+        Math.Max(1, pythonForm.Devices.FindIndex(value => string.Equals(value, device, StringComparison.OrdinalIgnoreCase)) + 1);
+
+    private async Task SetPythonDevicePriorityAsync(string device, string? value)
+    {
+        if (!int.TryParse(value, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var priority) || priority < 1)
+            return;
+
+        var index = pythonForm.Devices.FindIndex(route => string.Equals(route, device, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+            return;
+
+        pythonForm.Devices.RemoveAt(index);
+        pythonForm.Devices.Insert(Math.Min(priority - 1, pythonForm.Devices.Count), device);
+        pythonForm.Device = pythonForm.Devices.FirstOrDefault() ?? string.Empty;
+        await SaveSettingsAsync();
+    }
+
+    private void SyncVllmDevices(IReadOnlyList<DeviceStatus> devices)
+    {
+        pythonDeviceRoutes = devices
+            .Where(device => device.DeviceId.StartsWith("cuda:", StringComparison.OrdinalIgnoreCase) || device.DeviceId.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase))
+            .Select(device => new PythonDeviceRoute(
+                device.DeviceId,
+                device.DeviceCaption ?? device.DeviceId,
+                device.Vendor ?? string.Empty,
+                device.Driver ?? string.Empty,
+                [device.DeviceId.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase) ? BackendTab.VllmXpu : BackendTab.VllmCuda12]))
+            .ToArray();
+
+        pythonForm.Devices.RemoveAll(device => !pythonDeviceRoutes.Any(route => string.Equals(route.Value, device, StringComparison.OrdinalIgnoreCase)));
+        pythonForm.Device = pythonForm.Devices.FirstOrDefault() ?? string.Empty;
+    }
+
     private void SyncPythonDevices(IReadOnlyList<BackendAcceleratorDevice> devices)
     {
         pythonDeviceRoutes = devices
@@ -3196,9 +3320,7 @@ else if (activeBackend == BackendTab.OpenVino)
                 device.Label,
                 device.Vendor,
                 device.Driver,
-                device.Route.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase)
-                    ? [BackendTab.VllmXpu, BackendTab.Sglang]
-                    : [BackendTab.VllmCuda12, BackendTab.Sglang]))
+                [BackendTab.Sglang]))
             .ToArray();
 
         pythonForm.Devices.RemoveAll(device => !pythonDeviceRoutes.Any(route => string.Equals(route.Value, device, StringComparison.OrdinalIgnoreCase)));
@@ -3207,17 +3329,18 @@ else if (activeBackend == BackendTab.OpenVino)
 
     private void SyncEnabledDevices()
     {
-        if (loadStatus is null)
+        var devices = GetLlamaRoutingDevices();
+        if (devices.Count == 0)
             return;
 
-        var detectedDeviceNames = GetLlamaRoutingDevices()
+        var detectedDeviceNames = devices
             .Where(device => !IsExcludedDevice(device.DeviceCaption ?? device.DeviceId))
             .Select(device => device.DeviceId)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var deviceName in llamaState.BackendDevices.Keys.Except(detectedDeviceNames, StringComparer.OrdinalIgnoreCase).ToArray())
             llamaState.BackendDevices.Remove(deviceName);
 
-        foreach (var device in GetLlamaRoutingDevices())
+        foreach (var device in devices)
         {
             if (!llamaState.BackendDevices.ContainsKey(device.DeviceId))
                 llamaState.BackendDevices[device.DeviceId] = new BackendDeviceSetting(false, 0);

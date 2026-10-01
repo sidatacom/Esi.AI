@@ -11,6 +11,9 @@ public interface IBackendRuntime : IDisposable
     /// <summary>Gets the current backend-independent model status.</summary>
     ModelLoadStatus GetStatus();
 
+    /// <summary>Discovers devices supported by this backend without using another backend's status.</summary>
+    IReadOnlyList<DeviceStatus> DiscoverDevices() => GetStatus().Devices;
+
     /// <summary>Gets whether the loaded model accepts image input.</summary>
     /// <param name="modelPath">The model path whose capability is queried.</param>
     bool SupportsImageInput(string? modelPath);

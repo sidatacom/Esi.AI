@@ -96,6 +96,53 @@ describe("EsiMCP tool catalog", () => {
     expect(startDebugging).toHaveBeenCalledWith({ workspaceFolder: "/workspace", configuration });
   });
 
+  it.each([
+    {
+      commandId: "debug.start",
+      method: "startDebugging",
+      args: { workspaceFolder: "/workspace", configuration: { name: "Esi.AI Studio", type: "coreclr", request: "launch" } },
+      result: { started: true, sessionId: "session-started" },
+      expected: { started: true, sessionId: "session-started" },
+    },
+    {
+      commandId: "debug.launchProject",
+      method: "launchProject",
+      args: { projectFile: "App.csproj" },
+      result: { success: true, started: true, sessionId: "session-started", buildLogPath: "/tmp/build.log" },
+      expected: { success: true, started: true, sessionId: "session-started", buildLogPath: "/tmp/build.log" },
+    },
+    {
+      commandId: "debug.launchFile",
+      method: "launchConfiguration",
+      args: { configurationName: "Esi.AI Studio" },
+      result: { success: true, started: true, sessionId: "session-started" },
+      expected: { success: true, started: true, sessionId: "session-started" },
+    },
+  ])("uses the same readiness lifecycle for $commandId", async ({ commandId, method, args, result, expected }) => {
+    const session = { id: "session-started", name: "Esi.AI Studio" };
+    const operation = vi.fn().mockResolvedValue({ ...result, session });
+    const prepareDebugHostReadiness = vi.fn();
+    const bindDebugHostReadiness = vi.fn();
+    const cancelPendingDebugHostReadiness = vi.fn();
+    const sessionManager = {
+      prepareDebugHostReadiness,
+      bindDebugHostReadiness,
+      cancelPendingDebugHostReadiness,
+    } as unknown as SessionManager;
+    const handler = createMcpRequestHandler(sessionManager, { [method]: operation } as unknown as DebugManager);
+
+    const response = await handler("tools/call", {
+      name: "vscode_debug_execute_command",
+      arguments: { commandId, arguments: args },
+    }) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(response.isError).toBeUndefined();
+    expect(JSON.parse(response.content[0].text)).toEqual(expected);
+    expect(prepareDebugHostReadiness).toHaveBeenCalledOnce();
+    expect(bindDebugHostReadiness).toHaveBeenCalledWith(session);
+    expect(cancelPendingDebugHostReadiness).not.toHaveBeenCalled();
+  });
+
   it("returns the debug exception error code when readiness is aborted", async () => {
     const readinessError = Object.assign(new Error("Debug session exception: startup failed"), { code: "DEBUG_SESSION_EXCEPTION" });
     const sessionManager = { waitForDebugHostReadiness: vi.fn().mockRejectedValue(readinessError) } as unknown as SessionManager;

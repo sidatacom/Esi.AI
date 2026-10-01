@@ -84,6 +84,17 @@ public sealed class LlamaSyclRuntime : IBackendRuntime
     }
 
     /// <inheritdoc />
+    public IReadOnlyList<DeviceStatus> DiscoverDevices()
+    {
+        var runtimeDirectory = SyclRuntimeFiles.GetRuntimeDirectory(applicationDirectory);
+        SyclRuntimeFiles.Validate(runtimeDirectory);
+        SyclRuntimeFiles.PrepareLibraryPath(runtimeDirectory);
+        SyclRuntimeFiles.PrepareSyclRuntimeEnvironment(runtimeDirectory);
+        ConfigureNativeBackend(runtimeDirectory);
+        return EnumerateSyclDevices();
+    }
+
+    /// <inheritdoc />
     public bool SupportsImageInput(string? modelPath) => false;
 
     /// <inheritdoc />
@@ -329,23 +340,28 @@ public sealed class LlamaSyclRuntime : IBackendRuntime
     {
         try
         {
-            var devices = new List<DeviceStatus>();
-            for (nuint index = 0; index < NativeApi.ggml_backend_dev_count(); index++)
-            {
-                var device = NativeApi.ggml_backend_dev_get(index);
-                var name = Marshal.PtrToStringAnsi(NativeApi.ggml_backend_dev_name(device));
-                if (string.IsNullOrWhiteSpace(name) || !name.StartsWith("SYCL", StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                devices.Add(new DeviceStatus(name, Marshal.PtrToStringAnsi(NativeApi.ggml_backend_dev_description(device)), 0, null, "Intel", "SYCL native runtime"));
-            }
-
-            return devices;
+            return EnumerateSyclDevices();
         }
         catch
         {
             return [];
         }
+    }
+
+    private static IReadOnlyList<DeviceStatus> EnumerateSyclDevices()
+    {
+        var devices = new List<DeviceStatus>();
+        for (nuint index = 0; index < NativeApi.ggml_backend_dev_count(); index++)
+        {
+            var device = NativeApi.ggml_backend_dev_get(index);
+            var name = Marshal.PtrToStringAnsi(NativeApi.ggml_backend_dev_name(device));
+            if (string.IsNullOrWhiteSpace(name) || !name.StartsWith("SYCL", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            devices.Add(new DeviceStatus(name, Marshal.PtrToStringAnsi(NativeApi.ggml_backend_dev_description(device)), 0, null, "Intel", "SYCL native runtime"));
+        }
+
+        return devices;
     }
 
     private static AuthorRole ParseRole(string role) => role.ToLowerInvariant() switch

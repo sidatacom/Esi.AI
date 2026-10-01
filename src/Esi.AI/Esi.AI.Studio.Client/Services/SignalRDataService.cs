@@ -350,6 +350,12 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         return await connection.InvokeAsync<BackendPrerequisiteDiagnostics>("GetBackendPrerequisites", backend, pythonExecutable, devices, cancellationToken);
     }
 
+    public async Task<IReadOnlyList<DeviceStatus>> BackendDevice_ReadAsync(string backendVariantId, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<DeviceStatus>>("BackendDevice_Read", backendVariantId, cancellationToken);
+    }
+
     public async Task<BackendRequirementState> BackendRequirement_ReadAsync(CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);

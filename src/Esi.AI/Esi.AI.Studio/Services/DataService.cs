@@ -543,8 +543,17 @@ public sealed class DataService(
     public Task<ApplicationSettings> ApplicationSettings_ReadAsync(CancellationToken cancellationToken = default) =>
         effectiveApplicationSettings.ReadAsync(cancellationToken);
 
-    public Task<ApplicationSettings> ApplicationSettings_UpdateAsync(ApplicationSettings settings, CancellationToken cancellationToken = default) =>
-        effectiveApplicationSettings.UpdateAsync(settings, cancellationToken);
+    public async Task<ApplicationSettings> ApplicationSettings_UpdateAsync(ApplicationSettings settings, CancellationToken cancellationToken = default)
+    {
+        var previousSettings = await effectiveApplicationSettings.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var updatedSettings = await effectiveApplicationSettings.UpdateAsync(settings, cancellationToken).ConfigureAwait(false);
+        foreach (var backendId in BackendRequirementMonitor.GetNewlyEnabledBackendIds(
+            previousSettings.EnabledBackendIds,
+            updatedSettings.EnabledBackendIds))
+            requirementMonitor?.RequestRefresh(backendId);
+
+        return updatedSettings;
+    }
 
     public Task<BackendRuntimeOptions> BackendRuntimePackage_ReadAsync(CancellationToken cancellationToken = default) =>
         effectiveBackendRuntimeCatalog is null
@@ -1110,7 +1119,10 @@ public sealed class DataService(
         }
 
         if (result.IsInstalled)
-            requirementMonitor?.RequestRefresh();
+        {
+            foreach (var backendId in BackendRequirementMonitor.GetBackendIdsForRuntimeRoute(package.Backend, package.Route))
+                requirementMonitor?.RequestRefresh(backendId);
+        }
         return result;
     }
 
@@ -1144,7 +1156,7 @@ public sealed class DataService(
         {
             IsGpuReady = result.IsGpuReady,
             IsNpuReady = result.IsNpuReady,
-            Devices = result.Devices.Select(device => new OpenVinoDeviceDto { Id = device.Id, Name = device.Name, IsCompatible = device.IsCompatible, Detail = device.Detail }).ToArray(),
+            Devices = result.Devices.Select(device => new OpenVinoDeviceDto { Id = device.Id, Name = device.Name, IsCompatible = device.IsCompatible, Vendor = device.Vendor, Driver = device.Driver, Detail = device.Detail }).ToArray(),
             Checks = result.Checks.Select(check => new OpenVinoDiagnosticCheckDto { Id = check.Id, Name = check.Name, IsAvailable = check.IsAvailable, Detail = check.Detail, CanSolve = check.CanSolve }).ToArray(),
             Error = result.Error
         });
@@ -1184,6 +1196,12 @@ public sealed class DataService(
         var result = openVinoDiagnostics.Diagnose();
         var checks = result.Checks.Select(check => new BackendPrerequisiteCheck(check.Id, check.Name, check.IsAvailable, check.Detail, check.CanSolve)).ToArray();
         return new(backend, "OpenVINO", result.IsGpuReady || result.IsNpuReady, checks, result.Error);
+    }
+
+    public async Task<IReadOnlyList<DeviceStatus>> BackendDevice_ReadAsync(string backendVariantId, CancellationToken cancellationToken = default)
+    {
+        var sandbox = effectiveBackendSandbox ?? throw new InvalidOperationException("The backend device discovery worker is not configured.");
+        return await sandbox.DiscoverDevicesAsync(backendVariantId, AppContext.BaseDirectory, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null)

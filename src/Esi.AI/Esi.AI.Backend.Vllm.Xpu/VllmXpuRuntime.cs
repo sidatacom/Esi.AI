@@ -329,10 +329,11 @@ public sealed class VllmXpuRuntime : IBackendRuntime
     {
         ArgumentNullException.ThrowIfNull(startInfo);
         ValidateXpuDevices(devices);
+        var ordinals = devices.Select(device => int.Parse(device.AsSpan(4))).ToArray();
         startInfo.Environment["CUDA_VISIBLE_DEVICES"] = string.Empty;
-        startInfo.Environment["ONEAPI_DEVICE_SELECTOR"] = "level_zero:0";
+        startInfo.Environment["ONEAPI_DEVICE_SELECTOR"] = "level_zero:gpu";
         startInfo.Environment["ZE_FLAT_DEVICE_HIERARCHY"] = "COMPOSITE";
-        startInfo.Environment["ZE_AFFINITY_MASK"] = "0";
+        startInfo.Environment["ZE_AFFINITY_MASK"] = string.Join(',', ordinals);
         startInfo.Environment["PYTORCH_ALLOC_CONF"] = "expandable_segments:True";
         startInfo.Environment["VLLM_XPU_ENABLE_XPU_GRAPH"] = enableXpuGraph ? "1" : "0";
         startInfo.Environment["B70_MTP_BF16_DRAFT"] = enableBf16MtpDraft ? "1" : "0";

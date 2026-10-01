@@ -19,22 +19,33 @@ export interface DebugToolDefinition {
 
 const text = (value: unknown): McpToolResponse => ({ content: [{ type: "text", text: JSON.stringify(value) }] });
 const empty = debugEmptySchema;
-export const handleActiveDebugSession = async (_: unknown, manager: DebugManager): Promise<McpToolResponse> => text(manager.getActiveSessionId());
-export const handleStartDebugSession = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
-  const input = debugStartSchema.parse(params ?? {});
+type DebugLaunchOutcome = { success?: boolean; started?: boolean; session?: vscode.DebugSession };
+
+const launchWithReadiness = async <T extends DebugLaunchOutcome>(
+  sessionManager: SessionManager,
+  launch: () => Promise<T>,
+): Promise<T> => {
   sessionManager.prepareDebugHostReadiness();
   try {
-    const result = await manager.startDebugging(input);
-    if (!result.started || !result.session) {
+    const result = await launch();
+    if ((!result.success && !result.started) || !result.session) {
       sessionManager.cancelPendingDebugHostReadiness();
-      return text({ started: false, sessionId: null });
+      return result;
     }
     sessionManager.bindDebugHostReadiness(result.session);
-    return text({ started: true, sessionId: result.sessionId });
+    return result;
   } catch (error) {
     sessionManager.cancelPendingDebugHostReadiness();
     throw error;
   }
+};
+
+export const handleActiveDebugSession = async (_: unknown, manager: DebugManager): Promise<McpToolResponse> => text(manager.getActiveSessionId());
+export const handleStartDebugSession = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
+  const input = debugStartSchema.parse(params ?? {});
+  const result = await launchWithReadiness(sessionManager, () => manager.startDebugging(input));
+  if (!result.started || !result.session) return text({ started: false, sessionId: null });
+  return text({ started: true, sessionId: result.sessionId });
 };
 export const handleDebugHostReadiness = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
   const input = debugCheckHostReadinessSchema.parse(params ?? {});
@@ -56,38 +67,17 @@ export const handleRestartDebugSession = async (params: unknown, manager: DebugM
 };
 export const handleLaunchProject = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
   const input = debugLaunchProjectSchema.parse(params ?? {});
-  sessionManager.prepareDebugHostReadiness();
-  try {
-    const result = await manager.launchProject(input);
-    const session = result.session as vscode.DebugSession | undefined;
-    if (!result.success || !session) {
-      sessionManager.cancelPendingDebugHostReadiness();
-      return text(result);
-    }
-    sessionManager.bindDebugHostReadiness(session);
-    const { session: _session, ...response } = result;
-    return text(response);
-  } catch (error) {
-    sessionManager.cancelPendingDebugHostReadiness();
-    throw error;
-  }
+  const result = await launchWithReadiness(sessionManager, () => manager.launchProject(input));
+  if (!result.success || !result.session) return text(result);
+  const { session: _session, ...response } = result;
+  return text(response);
 };
 export const handleLaunchConfiguration = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
   const input = debugLaunchFileSchema.parse(params ?? {});
-  sessionManager.prepareDebugHostReadiness();
-  try {
-    const result = await manager.launchConfiguration(input);
-    if (!result.started || !result.session) {
-      sessionManager.cancelPendingDebugHostReadiness();
-      return text(result);
-    }
-    sessionManager.bindDebugHostReadiness(result.session);
-    const { session: _session, ...response } = result;
-    return text(response);
-  } catch (error) {
-    sessionManager.cancelPendingDebugHostReadiness();
-    throw error;
-  }
+  const result = await launchWithReadiness(sessionManager, () => manager.launchConfiguration(input));
+  if (!result.started || !result.session) return text(result);
+  const { session: _session, ...response } = result;
+  return text(response);
 };
 export const handleHotReload = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
   const input = debugHotReloadSchema.parse(params ?? {});

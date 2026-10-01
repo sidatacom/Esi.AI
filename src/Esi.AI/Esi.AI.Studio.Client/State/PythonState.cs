@@ -9,7 +9,6 @@ public sealed class PythonState : IBackendTabConfigurationData
     public string? WorkingDirectory { get; set; }
     public string Device { get; set; } = string.Empty;
     public List<string> Devices { get; } = [];
-    public string AdditionalDeviceRoutes { get; set; } = string.Empty;
     public IReadOnlyList<string> SelectedDevices => GetDevices();
     public int? GpuMemoryUtilization { get; set; } = 90;
     public int MaxModelLength { get; set; } = 2048;
@@ -42,6 +41,6 @@ public sealed class PythonState : IBackendTabConfigurationData
 
     public PythonInferenceLoadRequest ToRequest(ConfigurationBackend backend) => new(ModelPath, backend, PythonExecutable, WorkingDirectory, 8000, GpuMemoryUtilization, (uint)Math.Max(1, MaxModelLength), Math.Max(1, TensorParallelSize), TrustRemoteCode, null, (uint)Math.Max(0, MtpTokens), .7f, .9f, !EnableXpuGraph, GetDevices().FirstOrDefault() ?? Device, GetDevices(), Quantization, DType, KvCacheDType, MtpTokens > 0 ? $"{{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":{MtpTokens}}}" : string.Empty, (uint)Math.Max(0, MaxNumSeqs), (uint)Math.Max(0, MaxNumBatchedTokens), EnablePrefixCaching, EnableXpuGraph, EnableBf16MtpDraft);
 
-    public void Reset() { PythonExecutable = "python3"; Device = string.Empty; Devices.Clear(); AdditionalDeviceRoutes = string.Empty; GpuMemoryUtilization = 90; MaxModelLength = 2048; TensorParallelSize = 1; TrustRemoteCode = true; Quantization = string.Empty; DType = "float16"; KvCacheDType = "fp8"; MtpTokens = 4; MaxNumSeqs = 1; MaxNumBatchedTokens = 8192; EnablePrefixCaching = true; EnableXpuGraph = true; EnableBf16MtpDraft = true; }
-    private IReadOnlyList<string> GetDevices() => Devices.Concat(AdditionalDeviceRoutes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Where(device => !string.IsNullOrWhiteSpace(device)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    public void Reset() { PythonExecutable = "python3"; Device = string.Empty; Devices.Clear(); GpuMemoryUtilization = 90; MaxModelLength = 2048; TensorParallelSize = 1; TrustRemoteCode = true; Quantization = string.Empty; DType = "float16"; KvCacheDType = "fp8"; MtpTokens = 4; MaxNumSeqs = 1; MaxNumBatchedTokens = 8192; EnablePrefixCaching = true; EnableXpuGraph = true; EnableBf16MtpDraft = true; }
+    private IReadOnlyList<string> GetDevices() => Devices.Where(device => !string.IsNullOrWhiteSpace(device)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 }

@@ -11,5 +11,11 @@
   <ItemGroup>
     <ProjectReference Include="../Esi.AI.Core/Esi.AI.Core.csproj" />
     <ProjectReference Include="../Esi.AI.Models/Esi.AI.Models.csproj" />
+    <ProjectReference Include="../Esi.AI.Backend.Llama.Cuda12/Esi.AI.Backend.Llama.Cuda12.csproj" />
+    <ProjectReference Include="../Esi.AI.Backend.Llama.Sycl/Esi.AI.Backend.Llama.Sycl.csproj" />
+    <ProjectReference Include="../Esi.AI.Backend.Llama.Vulkan/Esi.AI.Backend.Llama.Vulkan.csproj" />
+    <ProjectReference Include="../Esi.AI.Backend.OpenVino/Esi.AI.Backend.OpenVino.csproj" />
+    <ProjectReference Include="../Esi.AI.Backend.Vllm.Cuda12/Esi.AI.Backend.Vllm.Cuda12.csproj" />
+    <ProjectReference Include="../Esi.AI.Backend.Vllm.Xpu/Esi.AI.Backend.Vllm.Xpu.csproj" />
   </ItemGroup>
 </Project>
