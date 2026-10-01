@@ -25,7 +25,11 @@ public sealed record ModelSettings(
     string ModelPath,
     ConfigurationBackend Backend,
     string ConfigurationJson,
-    Guid? ConfigurationId = null);
+    Guid? ConfigurationId = null,
+    string BackendVariantId = "")
+{
+    public List<Device> Devices { get; set; } = new List<Device>();
+}
 
 /// <summary>Stores application-wide runtime policies for every local backend.</summary>
 public sealed record ApplicationSettings(
@@ -35,6 +39,12 @@ public sealed record ApplicationSettings(
     ModelLibrarySettings? ModelLibrary = null,
     string? LastSelectedBackendId = null,
     IReadOnlyList<string>? EnabledBackendIds = null);
+
+/// <summary>Contains the non-sensitive application settings needed to initialize backend tabs.</summary>
+public sealed record BackendTabPreferencesSnapshot(
+    ConfigurationBackend? LastSelectedBackend,
+    string? LastSelectedBackendId,
+    IReadOnlyList<string>? EnabledBackendIds);
 
 /// <summary>Stores the resource limits and timeouts for isolated backend worker processes.</summary>
 public sealed record BackendSandboxSettings(
@@ -102,11 +112,19 @@ public sealed record BackendPrerequisiteDiagnostics(
     IReadOnlyList<BackendAcceleratorDevice>? AvailableDevices = null);
 
 /// <summary>Describes one accelerator reported by a Python backend runtime.</summary>
-public sealed record BackendAcceleratorDevice(
+public record BackendAcceleratorDevice(
     string Route,
     string Label,
     string Vendor,
     string Driver);
+
+public sealed record Device(
+    string Route,
+    string Label,
+    string Vendor,
+    string Driver,
+    double Priority = 0)
+    : BackendAcceleratorDevice(Route, Label, Vendor, Driver);
 
 /// <summary>Describes one bounded diagnostic operation executed by the backend worker.</summary>
 public sealed record BackendWorkerRequest(
@@ -124,7 +142,16 @@ public sealed record BackendWorkerResponse(
     BackendPrerequisiteDiagnostics? Prerequisites = null,
     OpenVinoDiagnosticsDto? OpenVino = null,
     string? Error = null,
-    IReadOnlyList<DeviceStatus>? Devices = null);
+    IReadOnlyList<BackendAcceleratorDevice>? Devices = null,
+    string? LoadLog = null);
+
+/// <summary>Represents one server-owned Vulkan device-discovery log.</summary>
+public sealed record VulkanLogStatus(
+    Guid Id,
+    string LoadLog,
+    bool IsLoading,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset UpdatedAtUtc);
 
 /// <summary>Describes one backend prerequisite and whether it can be repaired.</summary>
 public sealed record BackendPrerequisiteCheck(

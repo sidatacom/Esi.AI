@@ -1,0 +1,6 @@
+{"messages":[{"role":"system","content":"Antworte knapp und auf Deutsch."},{"role":"user","content":"Wie lautet der interne Testcode fuer Alpha?"},{"role":"assistant","content":"Der interne Testcode fuer Alpha lautet ALPHA-731."}]}
+{"messages":[{"role":"system","content":"Antworte knapp und auf Deutsch."},{"role":"user","content":"Wie lautet der interne Testcode fuer Beta?"},{"role":"assistant","content":"Der interne Testcode fuer Beta lautet BETA-284."}]}
+{"messages":[{"role":"system","content":"Antworte knapp und auf Deutsch."},{"role":"user","content":"Wie lautet der interne Testcode fuer Gamma?"},{"role":"assistant","content":"Der interne Testcode fuer Gamma lautet GAMMA-519."}]}
+{"messages":[{"role":"system","content":"Antworte knapp und auf Deutsch."},{"role":"user","content":"Welcher Testcode gehoert zu Delta?"},{"role":"assistant","content":"Delta verwendet den Testcode DELTA-406."}]}
+{"messages":[{"role":"system","content":"Antworte knapp und auf Deutsch."},{"role":"user","content":"Nenne den Testcode fuer Epsilon."},{"role":"assistant","content":"Der Testcode fuer Epsilon ist EPSILON-862."}]}
+{"messages":[{"role":"system","content":"Antworte knapp und auf Deutsch."},{"role":"user","content":"Welchen Code soll ich fuer Zeta verwenden?"},{"role":"assistant","content":"Verwende fuer Zeta den Testcode ZETA-147."}]}

@@ -3,31 +3,44 @@
 @implements IAsyncDisposable
 @using Esi.AI.Models
 @using Esi.AI.Studio.Client.State
+@using Esi.AI.Studio.Client.Services
 @using Esi.AI.Studio.Contracts
 @inject IDataService DataService
 @inject IApplicationSettingsEvents ApplicationSettingsEvents
+@inject IClientStateStore ClientStateStore
 
 <div class="settings-shell">
     <header class="settings-header">
         <div>
-            <p class="eyebrow">STUDIO / GENERAL</p>
-            <h1>General settings</h1>
+            <p class="eyebrow">STUDIO / SETTINGS</p>
+            <h1>Settings</h1>
             <p class="lede">Globale Laufzeitregeln für alle lokalen Backends.</p>
         </div>
-        <button class="primary-button" type="button" @onclick="SaveAsync" disabled="@isSaving">@(isSaving ? "Speichert ..." : "Settings speichern")</button>
+        @if (activeTab == "general")
+        {
+            <button class="primary-button" type="button" @onclick="SaveAsync" disabled="@isSaving">@(isSaving ? "Speichert ..." : "Settings speichern")</button>
+        }
     </header>
 
-    @if (!string.IsNullOrWhiteSpace(message))
-    {
-        <p class="settings-message" role="status">@message</p>
-    }
+    <nav class="settings-tabs" role="tablist" aria-label="Settings tabs">
+        <button id="general-tab" class="settings-tab @(activeTab == "general" ? "is-active" : "")" type="button" role="tab" aria-selected="@(activeTab == "general")" aria-controls="general-panel" @onclick="SelectGeneralTab">General</button>
+        <button id="runtime-log-tab" class="settings-tab @(activeTab == "runtime-log" ? "is-active" : "")" type="button" role="tab" aria-selected="@(activeTab == "runtime-log")" aria-controls="runtime-log-panel" @onclick="SelectRuntimeLogTabAsync">Runtime log</button>
+    </nav>
 
-    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    @if (activeTab == "general")
     {
-        <p class="settings-message settings-message-error" role="alert">@errorMessage</p>
-    }
+        <div id="general-panel" role="tabpanel" aria-labelledby="general-tab" class="settings-content">
+            @if (!string.IsNullOrWhiteSpace(message))
+            {
+                <p class="settings-message" role="status">@message</p>
+            }
 
-    <section class="settings-panel" aria-labelledby="workflow-definitions-heading">
+            @if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <p class="settings-message settings-message-error" role="alert">@errorMessage</p>
+            }
+
+            <section class="settings-panel" aria-labelledby="workflow-definitions-heading">
         <div class="section-heading">
             <div>
                 <p class="eyebrow">WORKFLOWS</p>
@@ -51,9 +64,9 @@
                 }
             </div>
         }
-    </section>
+            </section>
 
-    <section class="settings-panel" aria-labelledby="inference-timeout-heading">
+            <section class="settings-panel" aria-labelledby="inference-timeout-heading">
         <div class="section-heading">
             <div>
                 <p class="eyebrow">INFERENCE DEADLINE</p>
@@ -72,9 +85,9 @@
                 </div>
             }
         </div>
-    </section>
+            </section>
 
-    <section class="settings-panel" aria-labelledby="runtime-sources-heading">
+            <section class="settings-panel" aria-labelledby="runtime-sources-heading">
         <div class="section-heading">
             <div>
                 <p class="eyebrow">BACKEND RUNTIMES</p>
@@ -107,9 +120,9 @@
             }
         </div>
         <button class="secondary-button" type="button" @onclick="AddPackage">Paket hinzufügen</button>
-    </section>
+            </section>
 
-    <section class="settings-panel" aria-labelledby="model-library-heading">
+            <section class="settings-panel" aria-labelledby="model-library-heading">
         <div class="section-heading">
             <div>
                 <p class="eyebrow">MODEL LIBRARY</p>
@@ -125,13 +138,51 @@
         {
             <label class="checkbox-group"><input type="checkbox" @bind="form.ClearHuggingFaceToken" /> Gespeicherten Token entfernen</label>
         }
-    </section>
+            </section>
+        </div>
+    }
+    else
+    {
+        <section id="runtime-log-panel" role="tabpanel" aria-labelledby="runtime-log-tab" class="settings-panel runtime-log-panel">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">LLAMA / VULKAN</p>
+                    <h2>Device discovery output</h2>
+                </div>
+                <div class="runtime-log-actions">
+                    <button class="secondary-button" type="button" @onclick="RefreshRuntimeLogAsync" disabled="@(CurrentVulkanLog?.IsLoading == true)">@(CurrentVulkanLog?.IsLoading == true ? "Loading ..." : "Refresh")</button>
+                    @if (CurrentVulkanLog is not null)
+                    {
+                        <button class="secondary-button" type="button" @onclick="ClearRuntimeLogAsync" disabled="@(CurrentVulkanLog?.IsLoading == true)">Clear</button>
+                    }
+                </div>
+            </div>
+            <p class="settings-note">Native Vulkan initialization output captured by the isolated backend worker.</p>
+            @if (!string.IsNullOrWhiteSpace(runtimeLogError))
+            {
+                <p class="settings-message settings-message-error" role="alert">@runtimeLogError</p>
+            }
+            else if (CurrentVulkanLog?.IsLoading == true)
+            {
+                <p class="settings-note" role="status">Reading Vulkan runtime output ...</p>
+            }
+            else if (CurrentVulkanLog is null)
+            {
+                <p class="settings-note">No Vulkan runtime output has been captured.</p>
+            }
+            <textarea class="runtime-log-output" rows="20" readonly aria-label="Vulkan device discovery output">@(CurrentVulkanLog?.LoadLog ?? string.Empty)</textarea>
+        </section>
+    }
 </div>
 
 <style>
     .settings-shell { display: grid; gap: 1.25rem; max-width: 70rem; padding: 2rem 1.25rem 3rem; }
     .settings-header { display: flex; align-items: end; justify-content: space-between; gap: 1rem; }
     .settings-header h1 { margin: 0; }
+    .settings-tabs { display: flex; gap: .25rem; border-bottom: 1px solid #d9d4ca; }
+    .settings-tab { border: 0; border-bottom: 2px solid transparent; background: transparent; color: #5e625f; padding: .7rem 1rem; font: inherit; font-weight: 700; cursor: pointer; }
+    .settings-tab.is-active { border-bottom-color: #176b5b; color: #176b5b; }
+    .settings-content { display: grid; gap: 1.25rem; }
     .settings-panel { border: 1px solid #d9d4ca; background: #fff; padding: 1.25rem; }
     .settings-note, .settings-message { color: #5e625f; }
     .settings-message { margin: 0; padding: .75rem 1rem; background: #e8f3ed; color: #185b3a; }
@@ -150,6 +201,9 @@
     .backend-timeout-row { display: grid; grid-template-columns: 7rem repeat(3, minmax(0, 1fr)); align-items: end; gap: 1rem; padding: .85rem 0; border-top: 1px solid #ebe7df; }
     .field-group { display: grid; gap: .4rem; color: #313633; font-weight: 700; }
     .field-group input { width: 100%; border: 1px solid #c9c4bb; padding: .7rem; font: inherit; }
+    .runtime-log-panel { min-width: 0; }
+    .runtime-log-actions { display: flex; gap: .5rem; }
+    .runtime-log-output { box-sizing: border-box; width: 100%; min-height: 22rem; resize: vertical; overflow: auto; border: 1px solid #c9c4bb; padding: .8rem; background: #171c1a; color: #e8f1ec; font: .8rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre; }
     @@media (max-width: 760px) { .settings-header { align-items: stretch; flex-direction: column; } .backend-timeout-row { grid-template-columns: 1fr; } }
 </style>
 
@@ -157,6 +211,8 @@
     private readonly SettingsPageState pageState = new();
     private readonly SettingsForm form = new();
     private bool isSaving;
+    private string activeTab = "general";
+    private string? runtimeLogError;
     private BackendRuntimeForm runtimeOptions = new();
     private IReadOnlyList<FlowDefinition> flowDefinitions = [];
     private string? message;
@@ -165,6 +221,7 @@
     protected override async Task OnInitializedAsync()
     {
         ApplicationSettingsEvents.ApplicationSettings_Update += OnSettingsUpdatedAsync;
+        ClientStateStore.Changed += OnClientStateChanged;
         await LoadAsync();
     }
 
@@ -175,16 +232,63 @@
             var settingsTask = DataService.ApplicationSettings_ReadAsync();
             var runtimeTask = DataService.BackendRuntimePackage_ReadAsync();
             var flowTask = DataService.FlowDefinition_ReadAsync();
-            await Task.WhenAll(settingsTask, runtimeTask, flowTask);
+            var vulkanLogsTask = DataService.VulkanLog_ReadAsync();
+            await Task.WhenAll(settingsTask, runtimeTask, flowTask, vulkanLogsTask);
             Apply(await settingsTask);
             runtimeOptions.Apply(await runtimeTask);
             flowDefinitions = await EnsureDefaultFlowDefinitionsAsync(await flowTask);
+            ClientStateStore.VulkanLog_Read(await vulkanLogsTask);
         }
         catch (Exception exception)
         {
             errorMessage = exception.Message;
         }
     }
+
+    private void SelectGeneralTab() => activeTab = "general";
+
+    private async Task SelectRuntimeLogTabAsync()
+    {
+        activeTab = "runtime-log";
+        if (CurrentVulkanLog is null)
+            await RefreshRuntimeLogAsync();
+    }
+
+    private async Task RefreshRuntimeLogAsync()
+    {
+        runtimeLogError = null;
+        try
+        {
+            if (CurrentVulkanLog is { } current)
+                await DataService.VulkanLog_UpdateAsync(current.Id);
+            else
+                await DataService.VulkanLog_CreateAsync();
+        }
+        catch (Exception exception)
+        {
+            runtimeLogError = exception.Message;
+        }
+    }
+
+    private async Task ClearRuntimeLogAsync()
+    {
+        runtimeLogError = null;
+        try
+        {
+            if (CurrentVulkanLog is { } current)
+                await DataService.VulkanLog_DeleteAsync(current.Id);
+        }
+        catch (Exception exception)
+        {
+            runtimeLogError = exception.Message;
+        }
+    }
+
+    private VulkanLogStatus? CurrentVulkanLog => ClientStateStore.VulkanLogs.Items.Values
+        .OrderByDescending(status => status.UpdatedAtUtc)
+        .FirstOrDefault();
+
+    private void OnClientStateChanged() => _ = InvokeAsync(StateHasChanged);
 
     private async Task<IReadOnlyList<FlowDefinition>> EnsureDefaultFlowDefinitionsAsync(IReadOnlyList<FlowDefinition> definitions)
     {
@@ -259,6 +363,7 @@
     public ValueTask DisposeAsync()
     {
         ApplicationSettingsEvents.ApplicationSettings_Update -= OnSettingsUpdatedAsync;
+        ClientStateStore.Changed -= OnClientStateChanged;
         return ValueTask.CompletedTask;
     }
 

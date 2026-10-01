@@ -10,7 +10,11 @@ public sealed class ModelSettingsEntity
 
     public ConfigurationBackend Backend { get; set; }
 
+    public string BackendVariantId { get; set; } = string.Empty;
+
     public string ConfigurationJson { get; set; } = "{}";
+
+    public List<Device> Devices { get; set; } = new List<Device>();
 
     public Guid? ConfigurationId { get; set; }
 

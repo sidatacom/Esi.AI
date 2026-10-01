@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Esi.AI.PyTorch</RootNamespace>
+    <PackageId>Esi.AI.PyTorch</PackageId>
+    <Version>0.1.0</Version>
+    <Description>PyTorch XPU QLoRA training integration for Esi.AI.</Description>
+    <PackageTags>esi-ai;pytorch;xpu;qlora;training</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Esi.AI.Models/Esi.AI.Models.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="Python/**/*"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Pack="true"
+          PackagePath="contentFiles/any/any/Python/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Esi.AI.PyTorch.Tests" />
+  </ItemGroup>
+
+</Project>

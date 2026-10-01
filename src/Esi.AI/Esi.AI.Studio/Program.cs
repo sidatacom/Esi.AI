@@ -13,6 +13,7 @@ using Esi.AI.Studio.Client.Services;
 using Esi.AI.Studio.Contracts;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
+using Esi.AI.PyTorch;
 using Esi.AI.Workflow;
 using Microsoft.FluentUI.AspNetCore.Components;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -147,6 +148,13 @@ builder.Services.AddHostedService(services => services.GetRequiredService<Backen
 builder.Services.AddSingleton<IBackendRequirementState>(services => services.GetRequiredService<BackendRequirementMonitor>());
 builder.Services.AddSingleton<IModelRuntimeStatusPublisher, SignalRModelRuntimeStatusPublisher>();
 builder.Services.AddSingleton<IBackendRuntimeStatusPublisher, SignalRBackendRuntimeStatusPublisher>();
+builder.Services.AddSingleton<VulkanLogStore>();
+builder.Services.AddSingleton<IVulkanLogStatusPublisher, SignalRVulkanLogStatusPublisher>();
+builder.Services.Configure<PyTorchTrainingOptions>(builder.Configuration.GetSection("PyTorchTraining"));
+builder.Services.AddSingleton(services => services.GetRequiredService<IOptions<PyTorchTrainingOptions>>().Value);
+builder.Services.AddSingleton<IPythonTrainingProcessRunner, PythonTrainingProcessRunner>();
+builder.Services.AddSingleton<ITrainingRunStatusPublisher, SignalRTrainingRunStatusPublisher>();
+builder.Services.AddSingleton<IPyTorchTrainingService, PyTorchTrainingService>();
 builder.Services.AddSingleton<ModelRuntime>(services =>
     new ModelRuntime(
         new LlamaModelLoader(),
@@ -171,6 +179,7 @@ builder.Services.AddScoped<IModelDownloadEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IModelRuntimeEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IBackendRequirementEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IApplicationSettingsEvents, ServerModelDownloadEvents>();
+builder.Services.AddScoped<ITrainingRunEvents, ServerModelDownloadEvents>();
 builder.Services.AddSingleton<ProviderTraceStore>();
 builder.Services.AddScoped<IProviderTraceEvents, ServerProviderTraceEvents>();
 builder.Services.AddHttpClient("HuggingFace", client =>

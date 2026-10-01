@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 
 namespace Esi.AI.Studio.Client.Services;
 
-public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents, IApplicationSettingsEvents, IProviderTraceEvents, IAsyncDisposable
+public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents, IApplicationSettingsEvents, IProviderTraceEvents, IVulkanLogEvents, ITrainingRunEvents, IAsyncDisposable
 {
     private readonly HubConnection connection;
     private readonly IClientStateStore stateStore;
@@ -27,6 +27,14 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     public event Func<BackendRuntimeStatus, Task>? BackendRuntime_Delete;
     public event Func<ApplicationSettings, Task>? ApplicationSettings_Update;
     public event Func<ProviderTraceEntry, Task>? ProviderTrace_Create;
+    public event Func<IReadOnlyList<VulkanLogStatus>, Task>? VulkanLog_Read;
+    public event Func<VulkanLogStatus, Task>? VulkanLog_Create;
+    public event Func<VulkanLogStatus, Task>? VulkanLog_Update;
+    public event Func<VulkanLogStatus, Task>? VulkanLog_Delete;
+    public event Func<IReadOnlyList<TrainingRunStatus>, Task>? TrainingRun_Read;
+    public event Func<TrainingRunStatus, Task>? TrainingRun_Create;
+    public event Func<TrainingRunStatus, Task>? TrainingRun_Update;
+    public event Func<TrainingRunStatus, Task>? TrainingRun_Delete;
 
     public SignalRDataService(NavigationManager navigationManager, IClientStateStore stateStore)
     {
@@ -64,6 +72,62 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
             var handler = ModelDownload_Read;
             if (handler is not null)
                 await handler(updates);
+        });
+        connection.On<IReadOnlyList<VulkanLogStatus>>("VulkanLog_Read", async statuses =>
+        {
+            stateStore.VulkanLog_Read(statuses);
+            var handler = VulkanLog_Read;
+            if (handler is not null)
+                await handler(statuses);
+        });
+        connection.On<VulkanLogStatus>("VulkanLog_Create", async status =>
+        {
+            stateStore.VulkanLog_Create(status);
+            var handler = VulkanLog_Create;
+            if (handler is not null)
+                await handler(status);
+        });
+        connection.On<VulkanLogStatus>("VulkanLog_Update", async status =>
+        {
+            stateStore.VulkanLog_Update(status);
+            var handler = VulkanLog_Update;
+            if (handler is not null)
+                await handler(status);
+        });
+        connection.On<VulkanLogStatus>("VulkanLog_Delete", async status =>
+        {
+            stateStore.VulkanLog_Delete(status);
+            var handler = VulkanLog_Delete;
+            if (handler is not null)
+                await handler(status);
+        });
+        connection.On<IReadOnlyList<TrainingRunStatus>>("TrainingRun_Read", async statuses =>
+        {
+            stateStore.TrainingRun_Read(statuses);
+            var handler = TrainingRun_Read;
+            if (handler is not null)
+                await handler(statuses);
+        });
+        connection.On<TrainingRunStatus>("TrainingRun_Create", async status =>
+        {
+            stateStore.TrainingRun_Create(status);
+            var handler = TrainingRun_Create;
+            if (handler is not null)
+                await handler(status);
+        });
+        connection.On<TrainingRunStatus>("TrainingRun_Update", async status =>
+        {
+            stateStore.TrainingRun_Update(status);
+            var handler = TrainingRun_Update;
+            if (handler is not null)
+                await handler(status);
+        });
+        connection.On<TrainingRunStatus>("TrainingRun_Delete", async status =>
+        {
+            stateStore.TrainingRun_Delete(status);
+            var handler = TrainingRun_Delete;
+            if (handler is not null)
+                await handler(status);
         });
         connection.On<ModelLoadStatus>("LoadedModel_Read", async status =>
         {
@@ -350,10 +414,40 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         return await connection.InvokeAsync<BackendPrerequisiteDiagnostics>("GetBackendPrerequisites", backend, pythonExecutable, devices, cancellationToken);
     }
 
-    public async Task<IReadOnlyList<DeviceStatus>> BackendDevice_ReadAsync(string backendVariantId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<BackendAcceleratorDevice>> BackendDevice_ReadAsync(string backendVariantId, CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
-        return await connection.InvokeAsync<IReadOnlyList<DeviceStatus>>("BackendDevice_Read", backendVariantId, cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<BackendAcceleratorDevice>>("BackendDevice_Read", backendVariantId, cancellationToken);
+    }
+
+    public async Task<VulkanLogStatus> VulkanLog_CreateAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        var status = await connection.InvokeAsync<VulkanLogStatus>("VulkanLog_Create", cancellationToken);
+        stateStore.VulkanLog_Update(status);
+        return status;
+    }
+
+    public async Task<IReadOnlyList<VulkanLogStatus>> VulkanLog_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        var statuses = await connection.InvokeAsync<IReadOnlyList<VulkanLogStatus>>("VulkanLog_Read", cancellationToken);
+        stateStore.VulkanLog_Read(statuses);
+        return statuses;
+    }
+
+    public async Task<VulkanLogStatus> VulkanLog_UpdateAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        var status = await connection.InvokeAsync<VulkanLogStatus>("VulkanLog_Update", id, cancellationToken);
+        stateStore.VulkanLog_Update(status);
+        return status;
+    }
+
+    public async Task VulkanLog_DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("VulkanLog_Delete", id, cancellationToken);
     }
 
     public async Task<BackendRequirementState> BackendRequirement_ReadAsync(CancellationToken cancellationToken = default)
@@ -516,6 +610,38 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     {
         await EnsureConnectedAsync(cancellationToken);
         return await connection.InvokeAsync<IReadOnlyList<ChatSummary>>("Chat_Read", cancellationToken);
+    }
+
+    public async Task<TrainingRunStatus> TrainingRun_CreateAsync(CreateTrainingRunRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<TrainingRunStatus>("TrainingRun_Create", request, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<TrainingRunStatus>> TrainingRun_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        var statuses = await connection.InvokeAsync<IReadOnlyList<TrainingRunStatus>>("TrainingRun_Read", cancellationToken);
+        stateStore.TrainingRun_Read(statuses);
+        return statuses;
+    }
+
+    public async Task<TrainingRunStatus?> TrainingRun_UpdateAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<TrainingRunStatus?>("TrainingRun_Update", id, cancellationToken);
+    }
+
+    public async Task TrainingRun_DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("TrainingRun_Delete", id, cancellationToken);
+    }
+
+    public async Task<string> TrainingRun_SampleDataset_CreateAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<string>("TrainingRun_SampleDataset_Create", cancellationToken);
     }
 
     public async Task<PersistedChat> Chat_CreateAsync(CreateChatRequest request, CancellationToken cancellationToken = default)

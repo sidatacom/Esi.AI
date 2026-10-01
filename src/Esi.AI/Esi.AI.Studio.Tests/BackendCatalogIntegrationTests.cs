@@ -1,6 +1,7 @@
 using Esi.AI.Backend.Abstractions;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
+using Esi.AI.Studio.Client.State;
 using Esi.AI.Studio.Data;
 using Esi.AI.Studio.Hubs;
 using Esi.AI.Studio.Services;
@@ -15,6 +16,74 @@ namespace Esi.AI.Studio.Tests;
 [TestClass]
 public sealed class BackendCatalogIntegrationTests
 {
+    [TestMethod]
+    [DataRow(ConfigurationBackend.Llama, "llama.vulkan", BackendTab.LlamaVulkan)]
+    [DataRow(ConfigurationBackend.Llama, "llama.cuda12", BackendTab.LlamaCuda12)]
+    [DataRow(ConfigurationBackend.Llama, "llama.sycl", BackendTab.LlamaSycl)]
+    [DataRow(ConfigurationBackend.OpenVino, "openvino", BackendTab.OpenVino)]
+    [DataRow(ConfigurationBackend.Vllm, "vllm.cuda12", BackendTab.VllmCuda12)]
+    [DataRow(ConfigurationBackend.Vllm, "vllm.xpu", BackendTab.VllmXpu)]
+    [DataRow(ConfigurationBackend.Sglang, "sglang.cuda12", BackendTab.Sglang)]
+    [DataRow(ConfigurationBackend.Sglang, "sglang.xpu", BackendTab.Sglang)]
+    [DataRow(ConfigurationBackend.DotLlm, "dotllm.cpu", BackendTab.DotLlm)]
+    public void ResolveBackendTab_BackendVariantId_ReturnsMatchingTab(
+        ConfigurationBackend backend, string backendVariantId, BackendTab expected)
+    {
+        Assert.AreEqual(expected, BackendPageState.ResolveBackendTab(backend, backendVariantId));
+    }
+
+    [TestMethod]
+    public async Task ModelSettings_UpdateAsync_WhenBackendVariantsShareFamily_PersistsEachVariant()
+    {
+        await using var context = await TestContext.CreateAsync();
+        await context.DataService.ModelSettings_UpdateAsync(new ModelSettings(
+            "cuda-model",
+            ConfigurationBackend.Vllm,
+            "{\"Device\":\"cuda:0\",\"Devices\":[\"cuda:0\"]}",
+            BackendVariantId: "vllm.cuda12")
+        {
+            Devices =
+            [
+                new Device("cuda:0", "NVIDIA GPU", "NVIDIA", "CUDA driver", 2.5),
+                new Device("cuda:1", "NVIDIA GPU 1", "NVIDIA", "CUDA driver", 0)
+            ]
+        });
+        await context.DataService.ModelSettings_UpdateAsync(new ModelSettings(
+            "xpu-model",
+            ConfigurationBackend.Vllm,
+            "{\"Device\":\"xpu:1\",\"Devices\":[\"xpu:1\"]}",
+            BackendVariantId: "vllm.xpu")
+        {
+            Devices = [new Device("xpu:1", "Intel GPU", "Intel", "Level Zero", 1)]
+        });
+        await context.DataService.ModelSettings_UpdateAsync(new ModelSettings(
+            "updated-cuda-model",
+            ConfigurationBackend.Vllm,
+            "{\"Device\":\"cuda:2\",\"Devices\":[\"cuda:2\"]}",
+            BackendVariantId: "vllm.cuda12")
+        {
+            Devices =
+            [
+                new Device("cuda:2", "NVIDIA GPU 2", "NVIDIA", "CUDA driver", 1),
+                new Device("cuda:3", "NVIDIA GPU 3", "NVIDIA", "CUDA driver", 0)
+            ]
+        });
+
+        var settings = (await context.DataService.ModelSettings_ReadAsync())
+            .Where(item => item.Backend == ConfigurationBackend.Vllm)
+            .ToDictionary(item => item.BackendVariantId, StringComparer.OrdinalIgnoreCase);
+
+        Assert.AreEqual(2, settings.Count);
+        Assert.AreEqual("updated-cuda-model", settings["vllm.cuda12"].ModelPath);
+        Assert.AreEqual("xpu-model", settings["vllm.xpu"].ModelPath);
+        Assert.AreEqual("cuda:2", settings["vllm.cuda12"].Devices.Single(device => device.Route == "cuda:2").Route);
+        Assert.AreEqual(2, settings["vllm.cuda12"].Devices.Count);
+        Assert.AreEqual(1d, settings["vllm.cuda12"].Devices.Single(device => device.Route == "cuda:2").Priority);
+        Assert.AreEqual(0d, settings["vllm.cuda12"].Devices.Single(device => device.Route == "cuda:3").Priority);
+        Assert.AreEqual("xpu:1", settings["vllm.xpu"].Devices.Single().Route);
+        Assert.AreEqual(1d, settings["vllm.xpu"].Devices.Single().Priority);
+    }
+
     [TestMethod]
     public void AddEsiAiBackendModules_RegistersEveryPackagedVariant()
     {
@@ -40,6 +109,16 @@ public sealed class BackendCatalogIntegrationTests
             references.Select(reference => reference.Backend).ToArray());
         Assert.IsTrue(references.All(reference => !string.IsNullOrWhiteSpace(reference.ModelId)));
         Assert.IsTrue(references.All(reference => !string.IsNullOrWhiteSpace(reference.EnvironmentVariable)));
+        var openVinoReference = references.Single(reference => reference.Backend == ConfigurationBackend.OpenVino);
+        Assert.AreEqual("OpenVINO/Qwen2.5-1.5B-Instruct-int4-ov", openVinoReference.ModelId);
+        Assert.AreEqual(ReferenceModelFormat.OpenVinoIr, openVinoReference.Format);
+        Assert.AreEqual("Qwen2.5 1.5B Instruct INT4", openVinoReference.Name);
+        Assert.IsTrue(references.Where(reference => reference.Backend != ConfigurationBackend.OpenVino)
+            .All(reference => reference.Name == "Qwen2.5 0.5B Instruct"));
+        Assert.AreEqual(2, references.Select(reference => reference.ModelId).Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        Assert.AreEqual(2, references.Count(reference => reference.Format == ReferenceModelFormat.Gguf));
+        Assert.AreEqual(1, references.Count(reference => reference.Format == ReferenceModelFormat.OpenVinoIr));
+        Assert.AreEqual(2, references.Count(reference => reference.Format == ReferenceModelFormat.Transformers));
     }
 
     [TestMethod]
@@ -667,7 +746,7 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
-    public async Task LocalModel_ReadAsync_RestoresHuggingFaceIdFromCompletedDownload()
+    public async Task LocalModel_ReadAsync_RestoresHuggingFaceMetadataFromCompletedDownload()
     {
         await using var context = await TestContext.CreateAsync(new HuggingFaceMetadataHttpMessageHandler());
         await context.AddCompletedDownloadAsync("owner/repository");
@@ -675,6 +754,11 @@ public sealed class BackendCatalogIntegrationTests
         var model = (await context.DataService.LocalModel_ReadAsync()).Single(item => item.Path == context.ModelPath);
 
         Assert.AreEqual("owner/repository", model.HuggingFaceModelId);
+        CollectionAssert.AreEquivalent(
+            new[] { ConfigurationBackend.Vllm, ConfigurationBackend.Sglang },
+            model.CompatibleBackends!.ToArray());
+        Assert.IsTrue(model.Capabilities!.ToolCalling);
+        Assert.IsTrue(model.Capabilities.Thinking);
     }
 
     [TestMethod]
@@ -742,6 +826,44 @@ public sealed class BackendCatalogIntegrationTests
         Assert.AreEqual("llama.cpu", savedLlama.BackendVariantId);
         Assert.AreEqual("vllm.cuda12", savedPython.BackendVariantId);
         Assert.AreEqual(2, configurations.Count(configuration => configuration.Name == "Shared defaults"));
+    }
+
+    [TestMethod]
+    public async Task ModelConfiguration_CreateAsync_SglangXpuGraphEnabledWithoutXpuDevice_UsesCudaVariant()
+    {
+        await using var context = await TestContext.CreateAsync();
+        var now = DateTime.UtcNow;
+        var configuration = new ModelConfiguration(
+            Guid.Empty, "SGLang graph setting", null, context.ModelPath, false, 1,
+            "{\"EnableXpuGraph\":true}", now, now, ConfigurationBackend.Sglang);
+
+        var savedCuda = await context.DataService.ModelConfiguration_CreateAsync(configuration);
+        var savedXpu = await context.DataService.ModelConfiguration_CreateAsync(configuration with
+        {
+            Name = "SGLang XPU device",
+            ConfigurationJson = "{\"Device\":\"xpu:0\",\"Devices\":[\"xpu:0\"]}"
+        });
+
+        Assert.AreEqual("sglang.cuda12", savedCuda.BackendVariantId);
+        Assert.AreEqual("sglang.xpu", savedXpu.BackendVariantId);
+    }
+
+    [TestMethod]
+    public async Task BackendVariantMismatch_InSettingsAndProfiles_ThrowsArgumentException()
+    {
+        await using var context = await TestContext.CreateAsync();
+        const string xpuConfiguration = "{\"Device\":\"xpu:0\",\"Devices\":[\"xpu:0\"]}";
+        var settings = new ModelSettings(
+            context.ModelPath, ConfigurationBackend.Sglang, xpuConfiguration, BackendVariantId: "sglang.cuda12");
+        var now = DateTime.UtcNow;
+        var profile = new ModelConfiguration(
+            Guid.Empty, "Mismatched SGLang route", null, context.ModelPath, false, 1, xpuConfiguration,
+            now, now, ConfigurationBackend.Sglang, BackendVariantId: "sglang.cuda12");
+
+        await Assert.ThrowsExceptionAsync<ArgumentException>(
+            () => context.DataService.ModelSettings_UpdateAsync(settings));
+        await Assert.ThrowsExceptionAsync<ArgumentException>(
+            () => context.DataService.ModelConfiguration_CreateAsync(profile));
     }
 
     [TestMethod]

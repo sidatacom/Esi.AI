@@ -4,6 +4,7 @@ using Esi.AI.Models;
 using Esi.AI.Studio.Contracts;
 using Esi.AI.Studio.Services;
 using Microsoft.AspNetCore.SignalR;
+using System.Net;
 
 namespace Esi.AI.Studio.Hubs;
 
@@ -13,10 +14,19 @@ public sealed class DataHub(
     IModelDirectoryCatalog modelDirectories,
     IBackendRequirementState requirementMonitor) : Hub
 {
+    public const string LocalTrainingClientsGroup = "local-training-clients";
+
     public override async Task OnConnectedAsync()
     {
         await base.OnConnectedAsync();
+        if (IsLocalTrainingClient())
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, LocalTrainingClientsGroup, Context.ConnectionAborted);
+            await Clients.Caller.SendAsync("TrainingRun_Read", await dataService.TrainingRun_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
+        }
+
         await Clients.Caller.SendAsync("ModelDownload_Read", dataService.ModelDownload_Read().Select(download => new ModelDownloadUpdate(download)).ToArray(), Context.ConnectionAborted);
+        await Clients.Caller.SendAsync("VulkanLog_Read", await dataService.VulkanLog_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
         await Clients.Caller.SendAsync("LoadedModel_Read", await dataService.LoadedModel_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
         try
         {
@@ -121,8 +131,20 @@ public sealed class DataHub(
     public Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisites(ConfigurationBackend backend, string pythonExecutable, IReadOnlyList<string>? devices) =>
         dataService.GetBackendPrerequisitesAsync(backend, pythonExecutable, Context.ConnectionAborted, devices);
 
-    public Task<IReadOnlyList<DeviceStatus>> BackendDevice_Read(string backendVariantId) =>
+    public Task<IReadOnlyList<BackendAcceleratorDevice>> BackendDevice_Read(string backendVariantId) =>
         dataService.BackendDevice_ReadAsync(backendVariantId, Context.ConnectionAborted);
+
+    public Task<VulkanLogStatus> VulkanLog_Create() =>
+        dataService.VulkanLog_CreateAsync(Context.ConnectionAborted);
+
+    public Task<IReadOnlyList<VulkanLogStatus>> VulkanLog_Read() =>
+        dataService.VulkanLog_ReadAsync(Context.ConnectionAborted);
+
+    public Task<VulkanLogStatus> VulkanLog_Update(Guid id) =>
+        dataService.VulkanLog_UpdateAsync(id, Context.ConnectionAborted);
+
+    public Task VulkanLog_Delete(Guid id) =>
+        dataService.VulkanLog_DeleteAsync(id, Context.ConnectionAborted);
 
     public Task<BackendRequirementState> BackendRequirement_Read() =>
         Task.FromResult(requirementMonitor.Current);
@@ -256,5 +278,49 @@ public sealed class DataHub(
 
     public IAsyncEnumerable<ChatStreamUpdate> Chat_UpdateStream(Guid id, ChatExchangeRequest request) =>
         dataService.Chat_UpdateStreamAsync(id, request, Context.ConnectionAborted);
+
+    public Task<TrainingRunStatus> TrainingRun_Create(CreateTrainingRunRequest request)
+    {
+        EnsureLocalTrainingClient();
+        return dataService.TrainingRun_CreateAsync(request, Context.ConnectionAborted);
+    }
+
+    public Task<IReadOnlyList<TrainingRunStatus>> TrainingRun_Read()
+    {
+        EnsureLocalTrainingClient();
+        return dataService.TrainingRun_ReadAsync(Context.ConnectionAborted);
+    }
+
+    public Task<TrainingRunStatus?> TrainingRun_Update(Guid id)
+    {
+        EnsureLocalTrainingClient();
+        return dataService.TrainingRun_UpdateAsync(id, Context.ConnectionAborted);
+    }
+
+    public Task TrainingRun_Delete(Guid id)
+    {
+        EnsureLocalTrainingClient();
+        return dataService.TrainingRun_DeleteAsync(id, Context.ConnectionAborted);
+    }
+
+    public Task<string> TrainingRun_SampleDataset_Create()
+    {
+        EnsureLocalTrainingClient();
+        return dataService.TrainingRun_SampleDataset_CreateAsync(Context.ConnectionAborted);
+    }
+
+    private void EnsureLocalTrainingClient()
+    {
+        if (!IsLocalTrainingClient())
+            throw new HubException("PyTorch training is available only to local Studio clients.");
+    }
+
+    private bool IsLocalTrainingClient()
+    {
+        var remoteAddress = Context.GetHttpContext()?.Connection.RemoteIpAddress;
+        return remoteAddress is not null &&
+            (IPAddress.IsLoopback(remoteAddress) ||
+             remoteAddress.IsIPv4MappedToIPv6 && IPAddress.IsLoopback(remoteAddress.MapToIPv4()));
+    }
 
 }

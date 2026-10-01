@@ -154,7 +154,13 @@
 </div>
 
 @code {
-    private readonly HomePageState pageState = new();
+    private HomePageState pageState = new();
+    [Microsoft.AspNetCore.Components.PersistentState]
+    public HomePageState PageState
+    {
+        get => pageState;
+        set => pageState = value ?? new();
+    }
     private static readonly DataVizPalette[] ChartPalette =
     [
         DataVizPalette.Color1,
@@ -208,7 +214,10 @@
     protected override async Task OnInitializedAsync()
     {
         StateStore.Changed += HandleStateChanged;
-        await RefreshAsync();
+        if (pageState.LoadedModelStatus is { } initialStatus)
+            StateStore.LoadedModel_Read(initialStatus);
+        else
+            await RefreshAsync();
     }
 
     private async Task RefreshAsync()
@@ -218,7 +227,9 @@
         await InvokeAsync(StateHasChanged);
         try
         {
-            StateStore.LoadedModel_Read(await DataService.LoadedModel_ReadAsync());
+            var status = await DataService.LoadedModel_ReadAsync();
+            pageState.LoadedModelStatus = PrerenderStateSnapshots.TryCaptureModelLoadStatus(status);
+            StateStore.LoadedModel_Read(status);
         }
         catch (Exception exception)
         {

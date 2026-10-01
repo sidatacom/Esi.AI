@@ -31,4 +31,23 @@ public sealed class ClientStateStoreTests
         store.ModelDownload_Delete(download);
         Assert.IsFalse(store.Downloads.Items.ContainsKey(id));
     }
+
+    [TestMethod]
+    public void VulkanLog_ReadCreateUpdateDelete_WhenCrudEventsArrive_ReconcilesCollection()
+    {
+        var store = new ClientStateStore();
+        var id = Guid.NewGuid();
+        var pending = new VulkanLogStatus(id, string.Empty, true, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+        var completed = pending with { LoadLog = "ggml_vulkan: Found 3 Vulkan devices:", IsLoading = false };
+
+        store.VulkanLog_Read([]);
+        store.VulkanLog_Create(pending);
+        Assert.IsTrue(store.VulkanLogs.Items.ContainsKey(id));
+
+        store.VulkanLog_Update(completed);
+        Assert.AreEqual(completed.LoadLog, store.VulkanLogs.Items[id].LoadLog);
+
+        store.VulkanLog_Delete(completed);
+        Assert.IsFalse(store.VulkanLogs.Items.ContainsKey(id));
+    }
 }

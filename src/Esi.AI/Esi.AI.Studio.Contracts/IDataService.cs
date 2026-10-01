@@ -69,7 +69,11 @@ public interface IDataService
     Task ModelDownload_DeleteFailedAsync(CancellationToken cancellationToken = default);
     Task<ModelStatus> SelectModelAsync(SelectModelRequest request, CancellationToken cancellationToken = default);
     Task<ModelLoadStatus> LoadedModel_ReadAsync(CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<DeviceStatus>> BackendDevice_ReadAsync(string backendVariantId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<BackendAcceleratorDevice>> BackendDevice_ReadAsync(string backendVariantId, CancellationToken cancellationToken = default);
+    Task<VulkanLogStatus> VulkanLog_CreateAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<VulkanLogStatus>> VulkanLog_ReadAsync(CancellationToken cancellationToken = default);
+    Task<VulkanLogStatus> VulkanLog_UpdateAsync(Guid id, CancellationToken cancellationToken = default);
+    Task VulkanLog_DeleteAsync(Guid id, CancellationToken cancellationToken = default);
 
     Task<ModelLoadStatus> LoadModelAsync(LoadModelRequest request, CancellationToken cancellationToken = default);
     Task<ModelLoadStatus> LoadPythonModelAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default);
@@ -80,6 +84,12 @@ public interface IDataService
     Task<ModelLoadStatus> UnloadModelAsync(string modelPath, CancellationToken cancellationToken = default);
 
     Task<ModelLoadStatus> UnloadModelAsync(string modelPath, ConfigurationBackend backend, CancellationToken cancellationToken = default, string backendVariantId = "");
+
+    Task<TrainingRunStatus> TrainingRun_CreateAsync(CreateTrainingRunRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<TrainingRunStatus>> TrainingRun_ReadAsync(CancellationToken cancellationToken = default);
+    Task<TrainingRunStatus?> TrainingRun_UpdateAsync(Guid id, CancellationToken cancellationToken = default);
+    Task TrainingRun_DeleteAsync(Guid id, CancellationToken cancellationToken = default);
+    Task<string> TrainingRun_SampleDataset_CreateAsync(CancellationToken cancellationToken = default);
 
     Task<OpenVinoDiagnosticsDto> GetDiagnosticsAsync(CancellationToken cancellationToken = default);
     Task<OpenVinoSolveResultDto> SolveDiagnosticAsync(string checkId, CancellationToken cancellationToken = default);

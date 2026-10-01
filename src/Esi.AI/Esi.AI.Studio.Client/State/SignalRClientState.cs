@@ -7,4 +7,6 @@ public sealed class SignalRClientState
     public DownloadsState Downloads { get; } = new();
     public BackendRequirementsState BackendRequirements { get; } = new();
     public BackendRuntimesState BackendRuntimes { get; } = new();
+    public VulkanLogsState VulkanLogs { get; } = new();
+    public TrainingRunsState TrainingRuns { get; } = new();
 }

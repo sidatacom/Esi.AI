@@ -63,7 +63,9 @@ public sealed class LocalModelScanner : ILocalModelScanner
     private static IReadOnlyList<LocalModelInfo> ScanOpenVinoModels(string directory, CancellationToken cancellationToken)
     {
         var models = new Dictionary<string, LocalModelInfo>(StringComparer.OrdinalIgnoreCase);
-        foreach (var marker in Directory.EnumerateFiles(directory, "openvino_language_model.xml", SearchOption.AllDirectories))
+        var markers = Directory.EnumerateFiles(directory, "openvino_language_model.xml", SearchOption.AllDirectories)
+            .Concat(Directory.EnumerateFiles(directory, "openvino_model.xml", SearchOption.AllDirectories));
+        foreach (var marker in markers)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var modelDirectory = Path.GetDirectoryName(marker)!;

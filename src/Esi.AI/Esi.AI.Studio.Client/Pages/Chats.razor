@@ -131,7 +131,13 @@
         return message.TokensPerSecond?.ToString("F1") ?? "-";
     }
     private const long MaxImageBytes = 4 * 1024 * 1024;
-    private ChatPageState pageState = null!;
+    private ChatPageState pageState = new();
+    [Microsoft.AspNetCore.Components.PersistentState]
+    public ChatPageState PageState
+    {
+        get => pageState;
+        set => pageState = value ?? new();
+    }
     private List<ChatSummary> chatSummaries => pageState.History.Items;
     private List<LocalModel> localModels => pageState.History.LocalModels;
     private ComposerState composer => pageState.Composer;
@@ -146,11 +152,10 @@
     private ChatImage? selectedImage { get => pageState.Composer.SelectedImage; set => pageState.Composer.SelectedImage = value; }
     private string? selectedImageName { get => pageState.Composer.SelectedImageName; set => pageState.Composer.SelectedImageName = value; }
     private string? imagePreviewUrl { get => pageState.Composer.ImagePreviewUrl; set => pageState.Composer.ImagePreviewUrl = value; }
-    private IReadOnlyList<LoadedModelStatus> LoadedModels => pageState.Models.Loaded.Where(model => model.IsModelLoaded).ToArray();
+    private IReadOnlyList<LoadedModelStatus> LoadedModels => ClientState.ActiveModels.Loaded.Where(model => model.IsModelLoaded).ToArray();
 
     protected override async Task OnInitializedAsync()
     {
-        pageState = new ChatPageState(ClientState);
         ClientState.Changed += HandleStateChanged;
         await LoadLoadedModelsAsync();
         await LoadChatsAsync();
@@ -159,10 +164,23 @@
     }
     private async Task LoadLoadedModelsAsync()
     {
-        var status = await DataService.LoadedModel_ReadAsync();
-        localModels.Clear();
-        localModels.AddRange(await DataService.LocalModel_ReadAsync());
-        ClientState.LoadedModel_Read(status);
+        if (pageState.LoadedModelStatus is { } initialStatus)
+            ClientState.LoadedModel_Read(initialStatus);
+        else
+        {
+            var status = await DataService.LoadedModel_ReadAsync();
+            pageState.LoadedModelStatus = PrerenderStateSnapshots.TryCaptureModelLoadStatus(status);
+            ClientState.LoadedModel_Read(status);
+        }
+
+        if (pageState.LocalModels is { } initialModels)
+            localModels.AddRange(initialModels);
+        else
+        {
+            var models = (await DataService.LocalModel_ReadAsync()).ToArray();
+            pageState.LocalModels = PrerenderStateSnapshots.TryCapture(models);
+            localModels.AddRange(models);
+        }
 
         var selectedModel = LoadedModels.FirstOrDefault();
         SetSelectedModel(selectedModel);

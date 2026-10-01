@@ -160,7 +160,13 @@
 </style>
 
 @code {
-    private readonly ProviderPageState pageState = new();
+    private ProviderPageState pageState = new();
+    [Microsoft.AspNetCore.Components.PersistentState]
+    public ProviderPageState PageState
+    {
+        get => pageState;
+        set => pageState = value ?? new();
+    }
     private bool isRefreshing;
     private string? errorMessage;
     private readonly List<ProviderTraceEntry> providerTraceEntries = [];
@@ -173,16 +179,25 @@
     {
         StateStore.Changed += HandleStateChanged;
         ProviderTraceEvents.ProviderTrace_Create += HandleProviderTraceCreatedAsync;
-        await RefreshAsync();
+        await RefreshAsync(usePersistentState: true);
     }
 
-    private async Task RefreshAsync()
+    private Task RefreshAsync() => RefreshAsync(usePersistentState: false);
+
+    private async Task RefreshAsync(bool usePersistentState)
     {
         isRefreshing = true;
         errorMessage = null;
         try
         {
-            StateStore.LoadedModel_Read(await DataService.LoadedModel_ReadAsync());
+            if (usePersistentState && pageState.LoadedModelStatus is { } initialStatus)
+                StateStore.LoadedModel_Read(initialStatus);
+            else
+            {
+                var status = await DataService.LoadedModel_ReadAsync();
+                pageState.LoadedModelStatus = PrerenderStateSnapshots.TryCaptureModelLoadStatus(status);
+                StateStore.LoadedModel_Read(status);
+            }
             MergeProviderTrace(await DataService.ProviderTrace_ReadAsync());
         }
         catch (Exception exception)

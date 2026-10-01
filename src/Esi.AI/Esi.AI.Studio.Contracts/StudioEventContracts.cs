@@ -48,6 +48,24 @@ public interface IApplicationSettingsEvents
     event Func<ApplicationSettings, Task>? ApplicationSettings_Update;
 }
 
+/// <summary>Publishes Vulkan runtime log collection changes to connected clients.</summary>
+public interface IVulkanLogEvents
+{
+    event Func<IReadOnlyList<VulkanLogStatus>, Task>? VulkanLog_Read;
+    event Func<VulkanLogStatus, Task>? VulkanLog_Create;
+    event Func<VulkanLogStatus, Task>? VulkanLog_Update;
+    event Func<VulkanLogStatus, Task>? VulkanLog_Delete;
+}
+
+/// <summary>Publishes training-run collection changes to connected local clients.</summary>
+public interface ITrainingRunEvents
+{
+    event Func<IReadOnlyList<TrainingRunStatus>, Task>? TrainingRun_Read;
+    event Func<TrainingRunStatus, Task>? TrainingRun_Create;
+    event Func<TrainingRunStatus, Task>? TrainingRun_Update;
+    event Func<TrainingRunStatus, Task>? TrainingRun_Delete;
+}
+
 /// <summary>Publishes transient provider communication entries to connected clients.</summary>
 public interface IProviderTraceEvents
 {
@@ -60,4 +78,12 @@ public interface IBackendRuntimeStatusPublisher
     Task PublishCreateAsync(BackendRuntimeStatus status, CancellationToken cancellationToken = default);
     Task PublishUpdateAsync(BackendRuntimeStatus status, CancellationToken cancellationToken = default);
     Task PublishDeleteAsync(BackendRuntimeStatus status, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Publishes Vulkan log CRUD changes over SignalR.</summary>
+public interface IVulkanLogStatusPublisher
+{
+    Task PublishCreateAsync(VulkanLogStatus status, CancellationToken cancellationToken = default);
+    Task PublishUpdateAsync(VulkanLogStatus status, CancellationToken cancellationToken = default);
+    Task PublishDeleteAsync(VulkanLogStatus status, CancellationToken cancellationToken = default);
 }

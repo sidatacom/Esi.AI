@@ -58,9 +58,7 @@ internal static class Program
                     applicationDirectory,
                     timeout,
                     devices: request.Devices)),
-            "discover-devices" => new BackendWorkerResponse(
-                true,
-                Devices: await DiscoverDevicesAsync(request, applicationDirectory, timeout)),
+            "discover-devices" => await DiscoverDevicesAsync(request, applicationDirectory, timeout),
             "diagnose-openvino" => new BackendWorkerResponse(
                 true,
                 OpenVino: MapOpenVino(DiagnoseOpenVino())),
@@ -82,7 +80,7 @@ internal static class Program
         }
     }
 
-    private static async Task<IReadOnlyList<DeviceStatus>> DiscoverDevicesAsync(
+    private static async Task<BackendWorkerResponse> DiscoverDevicesAsync(
         BackendWorkerRequest request,
         string applicationDirectory,
         TimeSpan timeout)
@@ -91,31 +89,32 @@ internal static class Program
             ?? throw new ArgumentException("A backend variant ID is required for device discovery.", nameof(request));
         if (variantId == "openvino")
         {
-            return DiagnoseOpenVino().Devices
+            return new BackendWorkerResponse(true, Devices: DiagnoseOpenVino().Devices
                 .Where(device => device.IsCompatible)
-                .Select(device => new DeviceStatus(device.Id, device.Name, 0, null, device.Vendor, device.Driver))
-                .ToArray();
+                .Select(device => new BackendAcceleratorDevice(device.Id, device.Name, device.Vendor, device.Driver))
+                .ToArray());
         }
 
         if (variantId is "vllm.cuda12" or "vllm.xpu")
         {
-            var devicePrefix = variantId == "vllm.cuda12" ? "cuda:" : "xpu:";
-            IBackendRuntime nativeRuntime = variantId == "vllm.cuda12"
-                ? new LlamaCuda12Runtime(applicationDirectory)
-                : new LlamaSyclRuntime(applicationDirectory);
-            using (nativeRuntime)
-            {
-                return nativeRuntime.DiscoverDevices()
-                    .Select((device, index) => new DeviceStatus(
-                        $"{devicePrefix}{index}",
-                        device.DeviceCaption,
-                        0,
-                        null,
-                        device.Vendor,
-                        device.Driver,
-                        device.MemoryCapacityMiB))
-                    .ToArray();
-            }
+            if (variantId == "vllm.cuda12")
+                return new BackendWorkerResponse(true, Devices: (await NvidiaDeviceDiscovery.DiscoverAsync(timeout).ConfigureAwait(false))
+                    .Select(device => new BackendAcceleratorDevice(
+                        device.DeviceId,
+                        device.DeviceCaption ?? device.DeviceId,
+                        device.Vendor ?? string.Empty,
+                        device.Driver ?? string.Empty))
+                    .ToArray());
+
+            const string devicePrefix = "xpu:";
+            using IBackendRuntime nativeRuntime = new LlamaSyclRuntime(applicationDirectory);
+            return new BackendWorkerResponse(true, Devices: nativeRuntime.DiscoverDevices()
+                .Select((device, index) => new BackendAcceleratorDevice(
+                    $"{devicePrefix}{index}",
+                    device.DeviceCaption ?? device.DeviceId,
+                    device.Vendor ?? string.Empty,
+                    device.Driver ?? string.Empty))
+                .ToArray());
         }
 
         if (variantId == "sglang")
@@ -126,13 +125,11 @@ internal static class Program
                 applicationDirectory,
                 timeout,
                 devices: request.Devices);
-            return (diagnostics.AvailableDevices ?? [])
-                .Select(device => new DeviceStatus(device.Route, device.Label, 0, null, device.Vendor, device.Driver))
-                .ToArray();
+            return new BackendWorkerResponse(true, Devices: diagnostics.AvailableDevices ?? []);
         }
 
         if (variantId == "dotllm.cpu")
-            return [];
+            return new BackendWorkerResponse(true, Devices: []);
 
         IBackendRuntime? runtime = variantId switch
         {
@@ -145,7 +142,16 @@ internal static class Program
             throw new ArgumentException($"No device discovery is registered for backend variant '{variantId}'.", nameof(request));
 
         using (runtime)
-            return runtime.DiscoverDevices();
+        {
+            var devices = runtime.DiscoverDevices()
+                .Select(device => new BackendAcceleratorDevice(
+                    device.DeviceId,
+                    device.DeviceCaption ?? device.DeviceId,
+                    device.Vendor ?? string.Empty,
+                    device.Driver ?? string.Empty))
+                .ToArray();
+            return new BackendWorkerResponse(true, Devices: devices, LoadLog: runtime.GetStatus().LoadLog);
+        }
     }
 
     private static OpenVinoDiagnosticsDto MapOpenVino(OpenVinoDiagnostics result) => new()

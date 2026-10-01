@@ -18,6 +18,9 @@ public sealed class LocalModelScannerTests
             var openVinoDirectory = Directory.CreateDirectory(Path.Combine(root.FullName, "openvino-model"));
             await File.WriteAllTextAsync(Path.Combine(openVinoDirectory.FullName, "openvino_language_model.xml"), "<net/>");
 
+            var exportedOpenVinoDirectory = Directory.CreateDirectory(Path.Combine(root.FullName, "exported-openvino-model"));
+            await File.WriteAllTextAsync(Path.Combine(exportedOpenVinoDirectory.FullName, "openvino_model.xml"), "<net/>");
+
             var transformersDirectory = Directory.CreateDirectory(Path.Combine(root.FullName, "transformers-model"));
             await File.WriteAllTextAsync(Path.Combine(transformersDirectory.FullName, "config.json"), "{}");
             await File.WriteAllBytesAsync(Path.Combine(transformersDirectory.FullName, "model.safetensors"), [1, 2, 3]);
@@ -25,9 +28,9 @@ public sealed class LocalModelScannerTests
             var scanner = new LocalModelScanner();
             var models = await scanner.ScanAsync([root.FullName]);
 
-            Assert.AreEqual(3, models.Count);
+            Assert.AreEqual(4, models.Count);
             CollectionAssert.AreEquivalent(
-                new[] { ReferenceModelFormat.Gguf, ReferenceModelFormat.OpenVinoIr, ReferenceModelFormat.Transformers },
+                new[] { ReferenceModelFormat.Gguf, ReferenceModelFormat.OpenVinoIr, ReferenceModelFormat.OpenVinoIr, ReferenceModelFormat.Transformers },
                 models.Select(model => model.Format).ToArray());
         }
         finally

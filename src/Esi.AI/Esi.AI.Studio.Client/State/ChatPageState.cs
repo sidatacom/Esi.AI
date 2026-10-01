@@ -1,16 +1,20 @@
+using System.Text.Json.Serialization;
+using Esi.AI.Models;
+
 namespace Esi.AI.Studio.Client.State;
 
 /// <summary>Single root state for the chat page.</summary>
 public sealed class ChatPageState
 {
-    public ChatHistoryState History { get; } = new();
-    public ActiveModelsState Models { get; }
-    public ComposerState Composer { get; } = new();
-    public CurrentChatState CurrentChat { get; } = new();
+    public ModelLoadStatus? LoadedModelStatus { get; set; }
+    public LocalModel[]? LocalModels { get; set; }
 
-    public ChatPageState(Services.IClientStateStore clientState)
-    {
-        ArgumentNullException.ThrowIfNull(clientState);
-        Models = new ActiveModelsState(clientState.ActiveModels);
-    }
+    [JsonIgnore]
+    public ChatHistoryState History { get; } = new();
+
+    [JsonIgnore]
+    public ComposerState Composer { get; } = new();
+
+    [JsonIgnore]
+    public CurrentChatState CurrentChat { get; } = new();
 }

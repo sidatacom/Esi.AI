@@ -49,7 +49,7 @@ public sealed class BackendSandboxBroker
     }
 
     /// <summary>Discovers one backend variant's devices in a fresh constrained worker process.</summary>
-    public async Task<IReadOnlyList<DeviceStatus>> DiscoverDevicesAsync(
+    public async Task<IReadOnlyList<BackendAcceleratorDevice>> DiscoverDevicesAsync(
         string backendVariantId,
         string applicationDirectory,
         CancellationToken cancellationToken = default)
@@ -74,6 +74,21 @@ public sealed class BackendSandboxBroker
             throw new InvalidOperationException(response.Error ?? "The backend worker could not discover devices.");
 
         return response.Devices ?? [];
+    }
+
+    /// <summary>Returns Vulkan's native device-discovery output from the constrained worker.</summary>
+    public async Task<string> ReadVulkanLogAsync(string applicationDirectory, CancellationToken cancellationToken = default)
+    {
+        var response = await ExecuteAsync(new BackendWorkerRequest(
+            "discover-devices",
+            ConfigurationBackend.Llama,
+            ApplicationDirectory: applicationDirectory,
+            TimeoutSeconds: options.DiagnosticTimeoutSeconds,
+            BackendVariantId: "llama.vulkan"), cancellationToken).ConfigureAwait(false);
+        if (!response.Succeeded)
+            throw new InvalidOperationException(response.Error ?? "The Vulkan worker could not read its runtime log.");
+
+        return response.LoadLog ?? string.Empty;
     }
 
     /// <summary>Runs OpenVINO diagnostics in a constrained worker process.</summary>

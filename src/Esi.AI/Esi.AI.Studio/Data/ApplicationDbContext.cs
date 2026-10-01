@@ -1,5 +1,7 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
+using Esi.AI.Models;
 
 namespace Esi.AI.Studio.Data;
 
@@ -20,7 +22,15 @@ public class ApplicationDbContext(DbContextOptions<ApplicationDbContext> options
 	{
 		base.OnModelCreating(modelBuilder);
 		modelBuilder.Entity<ModelConfigurationEntity>().ToTable("ModelConfigurations");
-		modelBuilder.Entity<ModelSettingsEntity>().HasIndex(entity => entity.Backend).IsUnique();
+		modelBuilder.Entity<ModelSettingsEntity>(entity =>
+		{
+			entity.HasIndex(settings => new { settings.Backend, settings.BackendVariantId }).IsUnique();
+			entity.Property(settings => settings.Devices)
+				.HasConversion(
+					devices => JsonSerializer.Serialize(devices, (JsonSerializerOptions?)null),
+					json => JsonSerializer.Deserialize<List<Device>>(json, (JsonSerializerOptions?)null) ?? new List<Device>())
+				.HasColumnType("TEXT");
+		});
 		modelBuilder.Entity<ModelEntity>().ToTable("Models");
 		modelBuilder.Entity<ModelMetadataEntity>().HasIndex(entity => entity.ModelPath).IsUnique();
 		modelBuilder.Entity<FlowDefinitionEntity>().HasIndex(entity => entity.Name).IsUnique();

@@ -57,6 +57,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Vllm.Xpu", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OptimaJet.Workflow.SQLite", "..\..\origins\optimajet\WorkflowEngine.NET\Providers\OptimaJet.Workflow.SQLite\Source\OptimaJet.Workflow.SQLite.csproj", "{43645BE3-E425-4B40-9513-ACD65A2A5651}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.PyTorch", "Esi.AI.PyTorch\Esi.AI.PyTorch.csproj", "{50B5943C-93F3-48C9-8D99-9CB4037C48EA}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.PyTorch.Tests", "Esi.AI.PyTorch.Tests\Esi.AI.PyTorch.Tests.csproj", "{63369BE7-3327-4A75-BC92-450C3EE48749}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -379,6 +383,30 @@ Global
 		{43645BE3-E425-4B40-9513-ACD65A2A5651}.Release|x64.Build.0 = Release|Any CPU
 		{43645BE3-E425-4B40-9513-ACD65A2A5651}.Release|x86.ActiveCfg = Release|Any CPU
 		{43645BE3-E425-4B40-9513-ACD65A2A5651}.Release|x86.Build.0 = Release|Any CPU
+		{50B5943C-93F3-48C9-8D99-9CB4037C48EA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{50B5943C-93F3-48C9-8D99-9CB4037C48EA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{50B5943C-93F3-48C9-8D99-9CB4037C48EA}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{50B5943C-93F3-48C9-8D99-9CB4037C48EA}.Debug|x64.Build.0 = Debug|Any CPU
+		{50B5943C-93F3-48C9-8D99-9CB4037C48EA}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{50B5943C-93F3-48C9-8D99-9CB4037C48EA}.Debug|x86.Build.0 = Debug|Any CPU
+		{50B5943C-93F3-48C9-8D99-9CB4037C48EA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{50B5943C-93F3-48C9-8D99-9CB4037C48EA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{50B5943C-93F3-48C9-8D99-9CB4037C48EA}.Release|x64.ActiveCfg = Release|Any CPU
+		{50B5943C-93F3-48C9-8D99-9CB4037C48EA}.Release|x64.Build.0 = Release|Any CPU
+		{50B5943C-93F3-48C9-8D99-9CB4037C48EA}.Release|x86.ActiveCfg = Release|Any CPU
+		{50B5943C-93F3-48C9-8D99-9CB4037C48EA}.Release|x86.Build.0 = Release|Any CPU
+		{63369BE7-3327-4A75-BC92-450C3EE48749}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{63369BE7-3327-4A75-BC92-450C3EE48749}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{63369BE7-3327-4A75-BC92-450C3EE48749}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{63369BE7-3327-4A75-BC92-450C3EE48749}.Debug|x64.Build.0 = Debug|Any CPU
+		{63369BE7-3327-4A75-BC92-450C3EE48749}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{63369BE7-3327-4A75-BC92-450C3EE48749}.Debug|x86.Build.0 = Debug|Any CPU
+		{63369BE7-3327-4A75-BC92-450C3EE48749}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{63369BE7-3327-4A75-BC92-450C3EE48749}.Release|Any CPU.Build.0 = Release|Any CPU
+		{63369BE7-3327-4A75-BC92-450C3EE48749}.Release|x64.ActiveCfg = Release|Any CPU
+		{63369BE7-3327-4A75-BC92-450C3EE48749}.Release|x64.Build.0 = Release|Any CPU
+		{63369BE7-3327-4A75-BC92-450C3EE48749}.Release|x86.ActiveCfg = Release|Any CPU
+		{63369BE7-3327-4A75-BC92-450C3EE48749}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

@@ -8,6 +8,7 @@ using Esi.AI.Studio.Data;
 using Esi.AI.Core.Chat;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
+using Esi.AI.PyTorch;
 using Microsoft.EntityFrameworkCore;
 
 namespace Esi.AI.Studio.Services;
@@ -30,7 +31,10 @@ public sealed class DataService(
     ProviderTraceStore? providerTraceStore = null,
     BackendRuntimeCatalogService? backendRuntimeCatalog = null,
     BackendSandboxBroker? backendSandbox = null,
-    IOptimajetFlowRuntime? optimajetFlowRuntime = null) : IDataService
+    IOptimajetFlowRuntime? optimajetFlowRuntime = null,
+    VulkanLogStore? vulkanLogStore = null,
+    IVulkanLogStatusPublisher? vulkanLogStatusPublisher = null,
+    IPyTorchTrainingService? pyTorchTrainingService = null) : IDataService
 {
     private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -41,6 +45,8 @@ public sealed class DataService(
     private readonly BackendRuntimeCatalogService? effectiveBackendRuntimeCatalog = backendRuntimeCatalog;
     private readonly BackendSandboxBroker? effectiveBackendSandbox = backendSandbox;
     private readonly IOptimajetFlowRuntime? effectiveOptimajetFlowRuntime = optimajetFlowRuntime;
+    private readonly VulkanLogStore effectiveVulkanLogStore = vulkanLogStore ?? new();
+    private readonly IVulkanLogStatusPublisher? effectiveVulkanLogStatusPublisher = vulkanLogStatusPublisher;
     private readonly ConcurrentDictionary<Guid, Lazy<Task<ModelLoadStatus>>> configurationLoadTasks = new();
     private readonly object openVinoLoadSync = new();
     private CancellationTokenSource? openVinoLoadCancellation;
@@ -590,10 +596,20 @@ public sealed class DataService(
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         if (!Enum.IsDefined(settings.Backend))
             throw new ArgumentException("A valid model backend is required.", nameof(settings));
-        var entity = await db.ModelSettings.SingleOrDefaultAsync(item => item.Backend == settings.Backend, cancellationToken);
+        var backendVariantId = ResolveAndValidateBackendVariantId(
+            settings.Backend, settings.ConfigurationJson, settings.BackendVariantId, nameof(settings.BackendVariantId));
+        var settingsForBackend = await db.ModelSettings
+            .Where(item => item.Backend == settings.Backend)
+            .ToArrayAsync(cancellationToken);
+        var entity = settingsForBackend.FirstOrDefault(item =>
+            string.Equals(item.BackendVariantId, backendVariantId, StringComparison.OrdinalIgnoreCase));
+        entity ??= settingsForBackend.FirstOrDefault(item =>
+            ConfigurationResolvesToVariant(item.Backend, item.ConfigurationJson, backendVariantId));
         entity ??= new ModelSettingsEntity { Backend = settings.Backend };
         entity.ModelPath = settings.ModelPath;
+        entity.BackendVariantId = backendVariantId;
         entity.ConfigurationJson = settings.ConfigurationJson;
+        entity.Devices = settings.Devices.ToList();
         entity.ConfigurationId = settings.ConfigurationId;
         entity.UpdatedAtUtc = DateTime.UtcNow;
         if (db.Entry(entity).State == EntityState.Detached)
@@ -902,9 +918,9 @@ public sealed class DataService(
         entity.Description = string.IsNullOrWhiteSpace(configuration.Description) ? null : configuration.Description.Trim();
         entity.ModelPath = configuration.ModelPath.Trim();
         entity.Backend = configuration.Backend;
-        entity.BackendVariantId = string.IsNullOrWhiteSpace(configuration.BackendVariantId)
-            ? ResolveBackendVariantId(configuration.Backend, configuration.ConfigurationJson)
-            : configuration.BackendVariantId.Trim();
+        entity.BackendVariantId = ResolveAndValidateBackendVariantId(
+            configuration.Backend, configuration.ConfigurationJson, configuration.BackendVariantId,
+            nameof(configuration.BackendVariantId));
         entity.IsDefault = configuration.IsDefault;
         entity.AutoLaunch = configuration.AutoLaunch;
         entity.SchemaVersion = configuration.SchemaVersion < 1 ? 1 : configuration.SchemaVersion;
@@ -1198,10 +1214,73 @@ public sealed class DataService(
         return new(backend, "OpenVINO", result.IsGpuReady || result.IsNpuReady, checks, result.Error);
     }
 
-    public async Task<IReadOnlyList<DeviceStatus>> BackendDevice_ReadAsync(string backendVariantId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<BackendAcceleratorDevice>> BackendDevice_ReadAsync(string backendVariantId, CancellationToken cancellationToken = default)
     {
         var sandbox = effectiveBackendSandbox ?? throw new InvalidOperationException("The backend device discovery worker is not configured.");
         return await sandbox.DiscoverDevicesAsync(backendVariantId, AppContext.BaseDirectory, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<VulkanLogStatus> VulkanLog_CreateAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var status = effectiveVulkanLogStore.Create();
+        try
+        {
+            if (effectiveVulkanLogStatusPublisher is not null)
+                await effectiveVulkanLogStatusPublisher.PublishCreateAsync(status, cancellationToken).ConfigureAwait(false);
+            return await CompleteVulkanLogUpdateAsync(status, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await VulkanLog_DeleteAsync(status.Id, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public Task<IReadOnlyList<VulkanLogStatus>> VulkanLog_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(effectiveVulkanLogStore.Read());
+    }
+
+    public async Task<VulkanLogStatus> VulkanLog_UpdateAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var status = effectiveVulkanLogStore.BeginUpdate(id);
+        try
+        {
+            if (effectiveVulkanLogStatusPublisher is not null)
+                await effectiveVulkanLogStatusPublisher.PublishUpdateAsync(status, cancellationToken).ConfigureAwait(false);
+            return await CompleteVulkanLogUpdateAsync(status, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            await VulkanLog_DeleteAsync(id, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
+    }
+
+    public async Task VulkanLog_DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var deleted = effectiveVulkanLogStore.Delete(id);
+        if (deleted is not null && effectiveVulkanLogStatusPublisher is not null)
+            await effectiveVulkanLogStatusPublisher.PublishDeleteAsync(deleted, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task<VulkanLogStatus> CompleteVulkanLogUpdateAsync(VulkanLogStatus status, CancellationToken cancellationToken)
+    {
+        var sandbox = effectiveBackendSandbox ?? throw new InvalidOperationException("The backend device discovery worker is not configured.");
+        var log = await sandbox.ReadVulkanLogAsync(AppContext.BaseDirectory, cancellationToken).ConfigureAwait(false);
+        var updated = effectiveVulkanLogStore.Update(status with
+        {
+            LoadLog = log,
+            IsLoading = false,
+            UpdatedAtUtc = DateTimeOffset.UtcNow
+        });
+        if (effectiveVulkanLogStatusPublisher is not null)
+            await effectiveVulkanLogStatusPublisher.PublishUpdateAsync(updated, cancellationToken).ConfigureAwait(false);
+        return updated;
     }
 
     public async Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null)
@@ -1289,6 +1368,28 @@ public sealed class DataService(
             : 0;
         return Task.FromResult(new OpenVinoModelStatusDto(status.ModelPath, status.Device, status.IsModelLoaded, modelSizeInBytes, status.LoadLog));
     }
+
+    #endregion
+
+    #region TrainingRuns
+
+    public Task<TrainingRunStatus> TrainingRun_CreateAsync(CreateTrainingRunRequest request, CancellationToken cancellationToken = default) =>
+        GetPyTorchTrainingService().TrainingRun_CreateAsync(request, cancellationToken);
+
+    public Task<IReadOnlyList<TrainingRunStatus>> TrainingRun_ReadAsync(CancellationToken cancellationToken = default) =>
+        GetPyTorchTrainingService().TrainingRun_ReadAsync(cancellationToken);
+
+    public Task<TrainingRunStatus?> TrainingRun_UpdateAsync(Guid id, CancellationToken cancellationToken = default) =>
+        GetPyTorchTrainingService().TrainingRun_UpdateAsync(id, cancellationToken);
+
+    public Task TrainingRun_DeleteAsync(Guid id, CancellationToken cancellationToken = default) =>
+        GetPyTorchTrainingService().TrainingRun_DeleteAsync(id, cancellationToken);
+
+    public Task<string> TrainingRun_SampleDataset_CreateAsync(CancellationToken cancellationToken = default) =>
+        GetPyTorchTrainingService().TrainingRun_SampleDataset_CreateAsync(cancellationToken);
+
+    private IPyTorchTrainingService GetPyTorchTrainingService() =>
+        pyTorchTrainingService ?? throw new InvalidOperationException("PyTorch training is not configured.");
 
     #endregion
 
@@ -1391,43 +1492,114 @@ public sealed class DataService(
         chat.Messages.OrderBy(message => message.CreatedAtUtc).ThenBy(message => message.Id).Select(message => new PersistedChatMessage(message.Role, message.Content, message.CreatedAtUtc, message.ModelPath, message.Backend, message.TokenCount, message.TokensPerSecond, message.TimeToFirstTokenMs, message.PrefillDurationMs, message.DecodeDurationMs)).ToArray());
 
     private static ModelSettings ToModelSettings(ModelSettingsEntity entity) =>
-        new(entity.ModelPath, entity.Backend, entity.ConfigurationJson, entity.ConfigurationId);
+        new(entity.ModelPath, entity.Backend, entity.ConfigurationJson, entity.ConfigurationId,
+            ResolveBackendVariantId(entity.Backend, entity.ConfigurationJson))
+        {
+            Devices = entity.Devices.ToList()
+        };
 
     private static ModelConfiguration ToConfiguration(ModelConfigurationEntity entity) =>
         new(entity.Id, entity.Name, entity.Description, entity.ModelPath, entity.IsDefault, entity.SchemaVersion,
             entity.ConfigurationJson, entity.CreatedAtUtc, entity.UpdatedAtUtc, entity.Backend,
             DeserializeInferenceTimeout(entity.InferenceTimeoutJson), entity.AutoLaunch,
-            string.IsNullOrWhiteSpace(entity.BackendVariantId)
-                ? ResolveBackendVariantId(entity.Backend, entity.ConfigurationJson)
-                : entity.BackendVariantId);
+            ResolveBackendVariantId(entity.Backend, entity.ConfigurationJson));
+
+    private static string ResolveAndValidateBackendVariantId(
+        ConfigurationBackend backend,
+        string configurationJson,
+        string? suppliedVariantId,
+        string parameterName)
+    {
+        var resolvedVariantId = ResolveBackendVariantId(backend, configurationJson);
+        if (!string.IsNullOrWhiteSpace(suppliedVariantId) &&
+            !string.Equals(suppliedVariantId.Trim(), resolvedVariantId, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException(
+                $"Backend variant '{suppliedVariantId}' does not match the configuration variant '{resolvedVariantId}'.",
+                parameterName);
+
+        return resolvedVariantId;
+    }
+
+    private static bool ConfigurationResolvesToVariant(
+        ConfigurationBackend backend,
+        string configurationJson,
+        string backendVariantId)
+    {
+        try
+        {
+            return string.Equals(
+                ResolveBackendVariantId(backend, configurationJson), backendVariantId, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
 
     private static string ResolveBackendVariantId(ConfigurationBackend backend, string configurationJson)
     {
         using var configuration = JsonDocument.Parse(configurationJson);
         var root = configuration.RootElement;
+        var llamaBackend = GetStringProperty(root, "Backend");
         return backend switch
         {
-            ConfigurationBackend.Llama => root.TryGetProperty("backend", out var llamaBackend)
-                ? llamaBackend.GetString()?.Trim().ToLowerInvariant() switch
+            ConfigurationBackend.Llama => llamaBackend?.Trim().ToLowerInvariant() switch
                 {
                     "vulkan" => "llama.vulkan",
                     "cuda" or "cuda12" => "llama.cuda12",
                     "sycl" or "sycl16" or "xpu" => "llama.sycl",
                     _ => "llama.cpu"
-                }
-                : "llama.cpu",
+                },
             ConfigurationBackend.OpenVino => "openvino",
             ConfigurationBackend.Vllm => IsXpuConfiguration(root) ? "vllm.xpu" : "vllm.cuda12",
-            ConfigurationBackend.Sglang => IsXpuConfiguration(root) ? "sglang.xpu" : "sglang.cuda12",
+            ConfigurationBackend.Sglang => IsXpuDeviceConfiguration(root) ? "sglang.xpu" : "sglang.cuda12",
             ConfigurationBackend.DotLlm => "dotllm.cpu",
             _ => throw new ArgumentOutOfRangeException(nameof(backend), backend, "Unsupported backend family.")
         };
     }
 
+    private static string? GetStringProperty(JsonElement root, string propertyName)
+    {
+        if (root.ValueKind != JsonValueKind.Object)
+            return null;
+
+        foreach (var property in root.EnumerateObject())
+        {
+            if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase) &&
+                property.Value.ValueKind == JsonValueKind.String)
+                return property.Value.GetString();
+        }
+
+        return null;
+    }
+
     private static bool IsXpuConfiguration(JsonElement root) =>
-        root.TryGetProperty("enableXpuGraph", out var xpuGraph) && xpuGraph.ValueKind == JsonValueKind.True ||
-        root.TryGetProperty("device", out var device) && device.ValueKind == JsonValueKind.String &&
-        device.GetString()?.Contains("xpu", StringComparison.OrdinalIgnoreCase) == true;
+        TryGetProperty(root, "EnableXpuGraph", out var xpuGraph) && xpuGraph.ValueKind == JsonValueKind.True ||
+        IsXpuDeviceConfiguration(root);
+
+    private static bool IsXpuDeviceConfiguration(JsonElement root) =>
+        GetStringProperty(root, "Device")?.Contains("xpu", StringComparison.OrdinalIgnoreCase) == true ||
+        TryGetProperty(root, "Devices", out var devices) && devices.ValueKind == JsonValueKind.Array &&
+        devices.EnumerateArray().Any(device => device.ValueKind == JsonValueKind.String &&
+            device.GetString()?.Contains("xpu", StringComparison.OrdinalIgnoreCase) == true);
+
+    private static bool TryGetProperty(JsonElement root, string propertyName, out JsonElement value)
+    {
+        if (root.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in root.EnumerateObject())
+            {
+                if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = property.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
 
     private static InferenceTimeoutSettings? DeserializeInferenceTimeout(string? json) =>
         string.IsNullOrWhiteSpace(json)

@@ -413,10 +413,18 @@ namespace Esi.AI.Studio.Migrations
                     b.Property<int>("Backend")
                         .HasColumnType("INTEGER");
 
+                    b.Property<string>("BackendVariantId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
                     b.Property<Guid?>("ConfigurationId")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("ConfigurationJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Devices")
                         .IsRequired()
                         .HasColumnType("TEXT");
 
@@ -429,7 +437,7 @@ namespace Esi.AI.Studio.Migrations
 
                     b.HasKey("Id");
 
-                    b.HasIndex("Backend")
+                    b.HasIndex("Backend", "BackendVariantId")
                         .IsUnique();
 
                     b.ToTable("ModelSettings");

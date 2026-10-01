@@ -1,0 +1,257 @@
+@page "/training"
+@rendermode InteractiveWebAssembly
+@implements IDisposable
+@using Esi.AI.Models
+@using Esi.AI.Studio.Client.Services
+@using Esi.AI.Studio.Contracts
+@inject IDataService DataService
+@inject IClientStateStore ClientStateStore
+@inject ITrainingRunEvents TrainingRunEvents
+
+<main class="training-page">
+    <header class="training-header">
+        <div>
+            <p class="training-eyebrow">LOCAL XPU EXPERIMENT</p>
+            <h1>QLoRA training</h1>
+            <p class="training-model">Qwen/Qwen3-4B-Instruct-2507 <span>| 4-bit NF4 | BF16</span></p>
+        </div>
+        <div class="training-runtime-note">
+            <span class="runtime-indicator" aria-hidden="true"></span>
+            <span>Intel XPU worker</span>
+        </div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <p class="training-alert" role="alert">@errorMessage</p>
+    }
+    @if (!string.IsNullOrWhiteSpace(message))
+    {
+        <p class="training-notice" role="status">@message</p>
+    }
+    @if (!string.IsNullOrWhiteSpace(lastRunOutcome))
+    {
+        <p class="training-notice" role="status">@lastRunOutcome</p>
+    }
+
+    <div class="training-layout">
+        <section class="training-config" aria-labelledby="configuration-heading">
+            <div class="section-title">
+                <span class="section-index">01</span>
+                <h2 id="configuration-heading">Run configuration</h2>
+            </div>
+
+            <label class="training-field dataset-field">
+                <span>Server-side JSONL dataset</span>
+                <input @bind="datasetPath" placeholder="/path/to/train.jsonl" autocomplete="off" />
+            </label>
+            <button class="training-link-button" type="button" @onclick="LoadSampleDatasetAsync" disabled="@isLoadingSample">
+                @(isLoadingSample ? "Preparing sample..." : "Use the included sample dataset")
+            </button>
+
+            <div class="training-fields-grid">
+                <label class="training-field"><span>Epochs</span><input type="number" min="1" max="5" @bind="epochs" /></label>
+                <label class="training-field"><span>Max sequence</span><input type="number" min="256" max="8192" step="256" @bind="maxSequenceLength" /></label>
+                <label class="training-field"><span>Batch size</span><input type="number" min="1" max="4" @bind="batchSize" /></label>
+                <label class="training-field"><span>Gradient accumulation</span><input type="number" min="1" max="64" @bind="gradientAccumulationSteps" /></label>
+                <label class="training-field"><span>LoRA rank</span><input type="number" min="4" max="64" step="4" @bind="loraRank" /></label>
+                <label class="training-field"><span>Learning rate</span><input type="number" min="0.000001" max="0.0005" step="0.00001" @bind="learningRate" /></label>
+            </div>
+
+            <button class="training-start-button" type="button" @onclick="StartTrainingAsync" disabled="@(isStarting || HasActiveRun)">
+                @(isStarting ? "Starting..." : HasActiveRun ? "Training in progress" : "Start training")
+            </button>
+            <p class="training-footnote">The server Python environment must contain XPU-enabled PyTorch, Transformers, BitsAndBytes, PEFT, Accelerate and Datasets.</p>
+        </section>
+
+        <section class="training-runs" aria-labelledby="runs-heading">
+            <div class="section-title training-runs-title">
+                <div><span class="section-index">02</span><h2 id="runs-heading">Run activity</h2></div>
+                <button class="training-refresh-button" type="button" @onclick="RefreshAsync" disabled="@isRefreshing">@(isRefreshing ? "Refreshing..." : "Refresh runs")</button>
+            </div>
+
+            @if (Runs.Count == 0)
+            {
+                <div class="training-empty-state">
+                    <span class="empty-mark" aria-hidden="true">01</span>
+                    <p>No training run yet</p>
+                </div>
+            }
+            else
+            {
+                @foreach (var run in Runs)
+                {
+                    <article class="training-run" @key="run.Id">
+                        <div class="run-heading">
+                            <div>
+                                <span class="run-status status-@run.State.ToString().ToLowerInvariant()">@run.State</span>
+                                <h3>@run.ModelId</h3>
+                            </div>
+                            <button class="training-delete-button" type="button" @onclick="() => DeleteRunAsync(run)" disabled="@isDeleting">Remove</button>
+                        </div>
+                        <p class="run-dataset" title="@run.DatasetPath">@run.DatasetPath</p>
+                        @if (run.TotalSteps is > 0)
+                        {
+                            <div class="run-progress-line">
+                                <progress max="@run.TotalSteps.Value" value="@Math.Min(run.CurrentStep, run.TotalSteps.Value)"></progress>
+                                <span>@run.CurrentStep / @run.TotalSteps.Value</span>
+                            </div>
+                        }
+                        <div class="run-metrics">
+                            <span>Loss <strong>@(run.Loss?.ToString("0.0000") ?? "-")</strong></span>
+                            <span>Updated <strong>@run.UpdatedAtUtc.ToLocalTime().ToString("t")</strong></span>
+                        </div>
+                        @if (!string.IsNullOrWhiteSpace(run.Error))
+                        {
+                            <p class="run-error">@run.Error</p>
+                        }
+                        <details class="run-log">
+                            <summary>Worker output</summary>
+                            <pre>@run.Log</pre>
+                        </details>
+                        @if (run.State is TrainingRunState.Pending or TrainingRunState.Running)
+                        {
+                            <button class="training-cancel-button" type="button" @onclick="() => DeleteRunAsync(run)" disabled="@isDeleting">Cancel training</button>
+                        }
+                        @if (run.State == TrainingRunState.Completed)
+                        {
+                            <p class="run-output">Adapter: @run.OutputDirectory</p>
+                        }
+                    </article>
+                }
+            }
+        </section>
+    </div>
+</main>
+
+@code {
+    private string datasetPath = string.Empty;
+    private int epochs = 1;
+    private int maxSequenceLength = 1024;
+    private int batchSize = 1;
+    private int gradientAccumulationSteps = 4;
+    private int loraRank = 8;
+    private double learningRate = 0.0002;
+    private bool isStarting;
+    private bool isLoadingSample;
+    private bool isRefreshing;
+    private bool isDeleting;
+    private string? errorMessage;
+    private string? message;
+    private string? lastRunOutcome;
+
+    private IReadOnlyList<TrainingRunStatus> Runs => ClientStateStore.TrainingRuns.Items.Values
+        .OrderByDescending(run => run.CreatedAtUtc)
+        .ToArray();
+
+    private bool HasActiveRun => Runs.Any(run => run.State is TrainingRunState.Pending or TrainingRunState.Running);
+
+    protected override async Task OnInitializedAsync()
+    {
+        ClientStateStore.Changed += OnClientStateChanged;
+        TrainingRunEvents.TrainingRun_Delete += OnTrainingRunDeletedAsync;
+        await RefreshAsync();
+    }
+
+    private async Task LoadSampleDatasetAsync()
+    {
+        isLoadingSample = true;
+        errorMessage = null;
+        message = null;
+        try
+        {
+            datasetPath = await DataService.TrainingRun_SampleDataset_CreateAsync();
+            message = "Sample dataset copied to the Studio host.";
+        }
+        catch (Exception exception)
+        {
+            errorMessage = exception.Message;
+        }
+        finally
+        {
+            isLoadingSample = false;
+        }
+    }
+
+    private async Task StartTrainingAsync()
+    {
+        isStarting = true;
+        errorMessage = null;
+        message = null;
+        try
+        {
+            await DataService.TrainingRun_CreateAsync(new CreateTrainingRunRequest
+            {
+                DatasetPath = datasetPath,
+                Epochs = epochs,
+                MaxSequenceLength = maxSequenceLength,
+                BatchSize = batchSize,
+                GradientAccumulationSteps = gradientAccumulationSteps,
+                LoraRank = loraRank,
+                LearningRate = learningRate
+            });
+        }
+        catch (Exception exception)
+        {
+            errorMessage = exception.Message;
+        }
+        finally
+        {
+            isStarting = false;
+        }
+    }
+
+    private async Task RefreshAsync()
+    {
+        isRefreshing = true;
+        errorMessage = null;
+        try
+        {
+            await DataService.TrainingRun_ReadAsync();
+        }
+        catch (Exception exception)
+        {
+            errorMessage = exception.Message;
+        }
+        finally
+        {
+            isRefreshing = false;
+        }
+    }
+
+    private async Task DeleteRunAsync(TrainingRunStatus run)
+    {
+        isDeleting = true;
+        errorMessage = null;
+        try
+        {
+            await DataService.TrainingRun_DeleteAsync(run.Id);
+        }
+        catch (Exception exception)
+        {
+            errorMessage = exception.Message;
+        }
+        finally
+        {
+            isDeleting = false;
+        }
+    }
+
+    private void OnClientStateChanged() => _ = InvokeAsync(StateHasChanged);
+
+    private Task OnTrainingRunDeletedAsync(TrainingRunStatus status)
+    {
+        lastRunOutcome = status.State == TrainingRunState.Failed
+            ? $"Training failed: {status.Error ?? "See worker output."}"
+            : status.State == TrainingRunState.Cancelled
+                ? "Training cancelled."
+                : "Training run removed.";
+        return InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        ClientStateStore.Changed -= OnClientStateChanged;
+        TrainingRunEvents.TrainingRun_Delete -= OnTrainingRunDeletedAsync;
+    }
+}
