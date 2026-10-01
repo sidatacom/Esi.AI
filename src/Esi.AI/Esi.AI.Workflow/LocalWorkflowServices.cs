@@ -141,11 +141,24 @@ internal sealed class LocalHttpConnectionOptionsConfigurator : IHttpConnectionOp
 
 internal sealed class LocalExpressionService : IExpressionService
 {
+    private const string LiteralExpressionType = "Literal";
+    private const string JavaScriptExpressionType = "JavaScript";
+    private static readonly ExpressionDescriptor LiteralExpression = new(LiteralExpressionType, LiteralExpressionType);
+    private static readonly ExpressionDescriptor JavaScriptExpression = new(JavaScriptExpressionType, JavaScriptExpressionType)
+    {
+        Properties = new Dictionary<string, string> { ["MonacoLanguage"] = "javascript" }
+    };
+
     public Task<IEnumerable<ExpressionDescriptor>> ListDescriptorsAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult<IEnumerable<ExpressionDescriptor>>([]);
+        Task.FromResult<IEnumerable<ExpressionDescriptor>>([LiteralExpression, JavaScriptExpression]);
 
     public Task<ExpressionDescriptor?> GetByTypeAsync(string type, CancellationToken cancellationToken = default) =>
-        Task.FromResult<ExpressionDescriptor?>(null);
+        Task.FromResult<ExpressionDescriptor?>(type switch
+        {
+            LiteralExpressionType => LiteralExpression,
+            JavaScriptExpressionType => JavaScriptExpression,
+            _ => null
+        });
 }
 
 internal sealed class LocalFeatureService(IEnumerable<IFeature> features) : IFeatureService
