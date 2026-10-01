@@ -1,5 +1,6 @@
 using Esi.AI.Workflow;
 using Elsa.Studio.Contracts;
+using Elsa.Studio.Services;
 using Elsa.Studio.Workflows.Domain.Contracts;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -19,6 +20,37 @@ public sealed class LocalWorkflowServicesTests
 
         Assert.IsFalse(await featureProvider.IsEnabledAsync("Elsa.Resilience"));
         Assert.IsEmpty(await featureProvider.ListAsync());
+    }
+
+    [TestMethod]
+    public void AddEsiAiWorkflowDesigner_RegistersTypeDefinitionService()
+    {
+        var services = new ServiceCollection();
+        services.AddEsiAiWorkflowDesigner();
+        using var serviceProvider = services.BuildServiceProvider();
+
+        Assert.IsNotNull(serviceProvider.GetRequiredService<TypeDefinitionService>());
+    }
+
+    [TestMethod]
+    public async Task AddEsiAiWorkflowDesigner_ProvidesExpressionDescriptorsForExpressionEditor()
+    {
+        var services = new ServiceCollection();
+        services.AddEsiAiWorkflowDesigner();
+        using var serviceProvider = services.BuildServiceProvider();
+        var expressionService = serviceProvider.GetRequiredService<IExpressionService>();
+
+        var descriptors = (await expressionService.ListDescriptorsAsync()).ToArray();
+        var expressionEditorDescriptors = descriptors
+            .Where(descriptor => descriptor.Type is not ("Literal" or "Object" or "Variable" or "Input"))
+            .ToArray();
+
+        Assert.IsNotEmpty(expressionEditorDescriptors);
+        Assert.AreEqual("JavaScript", expressionEditorDescriptors[0].Type);
+        Assert.AreEqual("javascript", expressionEditorDescriptors[0].Properties["MonacoLanguage"]);
+        Assert.AreEqual("Literal", (await expressionService.GetByTypeAsync("Literal"))?.Type);
+        Assert.AreEqual("JavaScript", (await expressionService.GetByTypeAsync("JavaScript"))?.Type);
+        Assert.IsNull(await expressionService.GetByTypeAsync("Unknown"));
     }
 
     [TestMethod]

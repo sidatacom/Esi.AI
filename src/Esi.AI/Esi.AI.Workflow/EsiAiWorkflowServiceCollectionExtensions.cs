@@ -67,7 +67,6 @@ public static class EsiAiWorkflowServiceCollectionExtensions
             .AddScoped<IActivityDisplaySettingsProvider, DefaultActivityDisplaySettingsProvider>()
             .RemoveAll<IFeatureService>()
             .RemoveAll<IExpressionService>()
-            .RemoveAll<TypeDefinitionService>()
             .RemoveAll<IMonacoHandler>()
             .AddScoped<IExpressionService, LocalExpressionService>()
             .AddScoped<IFeatureService, LocalFeatureService>()
