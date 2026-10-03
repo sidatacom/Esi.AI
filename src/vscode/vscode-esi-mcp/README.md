@@ -34,11 +34,13 @@ The default port is `3002`; the actual endpoint uses the configured `esimcp.serv
 
 ## Tool Families
 
-| MCP tools                                                          | Purpose                                                                                           |
+| EsiMCP MCP protocol tool IDs                                        | Purpose                                                                                           |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
 | `vscode_terminal_list_commands`, `vscode_terminal_execute_command` | Discover and operate visible VS Code terminal sessions.                                           |
 | `vscode_debug_list_commands`, `vscode_debug_execute_command`       | Discover and execute allowlisted `debug.*` operations through public VS Code Debug and Task APIs. |
-| `msaccess_list_commands`, `msaccess_execute_command`               | Discover and execute tools from the configured upstream `MS-Access-mcp` server.                   |
+| `msaccess_list_commands`, `msaccess_execute_command`               | Discover and execute Access operations through EsiMCP's configured upstream proxy.                |
+
+The identifiers in the first column are tool IDs registered by EsiMCP on its MCP endpoint. A VS Code tool bridge may expose callable wrapper aliases such as `mcp_esimcp_msaccess_list_commands` and `mcp_esimcp_msaccess_execute_command`; these bridge-specific aliases are not EsiMCP protocol tool IDs. Callers must use the EsiMCP connection and must never connect to or start the configured upstream stdio implementation directly.
 
 For every family, list its command catalog before invoking an unfamiliar command. The returned argument schemas are authoritative. EsiMCP does not expose C# Dev Kit commands.
 
@@ -58,9 +60,11 @@ EsiMCP's blocked-command and allowed-directory settings are guardrails, not a sa
 
 ## Microsoft Access
 
-Call `msaccess_list_commands` first and use the exact upstream schema with `msaccess_execute_command`. MCP resources and prompts use their own methods; they are not tool command IDs. The upstream server starts lazily and requires Windows, Microsoft Access, and compatible .NET for COM/DAO operations. Confirm the target database before mutations, and inspect its state before retrying a timed-out write.
+Call the EsiMCP protocol tool `msaccess_list_commands` first and pass the selected upstream tool name as `commandId` to `msaccess_execute_command`, using the returned schema. Where a VS Code bridge is the caller, use its `mcp_esimcp_msaccess_list_commands` and `mcp_esimcp_msaccess_execute_command` callable aliases; those aliases are not protocol tool IDs and are not upstream `commandId` values. MCP resources and prompts use their own methods on the EsiMCP connection; they are not tool command IDs. EsiMCP starts its configured upstream stdio process lazily and owns its lifecycle. Callers must never connect to or start that process directly. The process requires Windows, Microsoft Access, and compatible .NET for COM/DAO operations. Confirm the target database before mutations, and inspect its state before retrying a timed-out write.
 
 ## Configuration
+
+The `esimcp.msAccess*` settings below are EsiMCP-owned configuration for its internal upstream process; they do not define a separate caller connection.
 
 | Setting                                   |                  Default | Description                                                     |
 | ----------------------------------------- | -----------------------: | --------------------------------------------------------------- |
@@ -77,7 +81,7 @@ Call `msaccess_list_commands` first and use the exact upstream schema with `msac
 | `esimcp.msAccessServerCommand`            |                 `dotnet` | Executable used to start the Access MCP server.                 |
 | `esimcp.msAccessServerArguments`          |                     `[]` | Explicit arguments; replaces default `dotnet run` arguments.    |
 | `esimcp.msAccessServerProject`            |     bundled project path | Project used by the default command.                            |
-| `esimcp.msAccessServerWorkingDirectory`   |           workspace root | Access server working directory.                                |
+| `esimcp.msAccessServerWorkingDirectory`   | first workspace folder | Access server working directory.                                |
 | `esimcp.msAccessDatabasePath`             |                    empty | Optional path passed as `ACCESS_DATABASE_PATH`.                 |
 | `esimcp.msAccessTimeoutMs`                |                 `120000` | Access MCP request timeout.                                     |
 
