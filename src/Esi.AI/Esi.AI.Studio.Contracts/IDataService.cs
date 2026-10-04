@@ -57,6 +57,8 @@ public interface IDataService
     Task<IReadOnlyList<LocalModel>> LocalModel_UpdateAsync(ModelCompatibilityUpdate update, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<LocalModel>> LocalModel_UpdateAsync(string modelPath, string huggingFaceModelId, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<LocalModel>> LocalModel_DeleteAsync(ModelDeletionRequest request, CancellationToken cancellationToken = default);
+    Task<ModelCleanupPreview> LocalModel_CleanPreviewAsync(ModelCleanupRequest request, CancellationToken cancellationToken = default);
+    Task<ModelCleanupResult> LocalModel_CleanAsync(ModelCleanupRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<string>> ModelDirectory_ReadAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<HuggingFaceModel>> SearchModelsAsync(HuggingFaceSearchRequest request, CancellationToken cancellationToken = default);
     Task<Guid> ModelDownload_CreateAsync(ModelDownloadRequest request, CancellationToken cancellationToken = default);
@@ -77,7 +79,6 @@ public interface IDataService
 
     Task<ModelLoadStatus> LoadModelAsync(LoadModelRequest request, CancellationToken cancellationToken = default);
     Task<ModelLoadStatus> LoadPythonModelAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default);
-    Task<ModelLoadStatus> LoadDotLlmModelAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default);
 
     Task<ModelLoadStatus> UnloadModelAsync(CancellationToken cancellationToken = default);
 

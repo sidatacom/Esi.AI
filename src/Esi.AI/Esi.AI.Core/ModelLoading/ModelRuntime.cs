@@ -25,11 +25,9 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
     private readonly LlamaModelLoader llama;
     private readonly OpenVinoModelLoader openVino;
     private readonly PythonInferenceServer python;
-    private readonly DotLlmInProcessRuntime dotLlm;
     private readonly LlamaRuntimeAdapter llamaAdapter;
     private readonly OpenVinoRuntimeAdapter openVinoAdapter;
     private readonly PythonRuntimeAdapter pythonAdapter;
-    private readonly DotLlmRuntimeAdapter dotLlmAdapter;
     private readonly BackendRuntimeRegistry runtimeRegistry;
     private readonly BackendPrerequisiteProvisioner prerequisites;
     private readonly IModelRuntimeStatusPublisher statusPublisher;
@@ -41,12 +39,12 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
     private int stopStarted;
 
     public ModelRuntime()
-        : this(new LlamaModelLoader(), new OpenVinoModelLoader(), new PythonInferenceServer(), new DotLlmInProcessRuntime())
+        : this(new LlamaModelLoader(), new OpenVinoModelLoader(), new PythonInferenceServer())
     {
     }
 
     public ModelRuntime(LlamaModelLoader llama, OpenVinoModelLoader openVino)
-        : this(llama, openVino, new PythonInferenceServer(), new DotLlmInProcessRuntime())
+        : this(llama, openVino, new PythonInferenceServer())
     {
     }
 
@@ -54,7 +52,6 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         LlamaModelLoader llama,
         OpenVinoModelLoader openVino,
         PythonInferenceServer python,
-        DotLlmInProcessRuntime dotLlm,
         BackendPrerequisiteProvisioner? prerequisites = null,
         IModelRuntimeStatusPublisher? statusPublisher = null,
         ModelLifecycleCoordinator? lifecycleCoordinator = null,
@@ -65,12 +62,10 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         this.llama = llama ?? throw new ArgumentNullException(nameof(llama));
         this.openVino = openVino ?? throw new ArgumentNullException(nameof(openVino));
         this.python = python ?? throw new ArgumentNullException(nameof(python));
-        this.dotLlm = dotLlm ?? throw new ArgumentNullException(nameof(dotLlm));
         llamaAdapter = new LlamaRuntimeAdapter(this.llama);
         openVinoAdapter = new OpenVinoRuntimeAdapter(this.openVino);
         pythonAdapter = new PythonRuntimeAdapter(this.python);
-        dotLlmAdapter = new DotLlmRuntimeAdapter(this.dotLlm);
-        runtimeRegistry = new BackendRuntimeRegistry([llamaAdapter, openVinoAdapter, pythonAdapter, dotLlmAdapter]);
+        runtimeRegistry = new BackendRuntimeRegistry([llamaAdapter, openVinoAdapter, pythonAdapter]);
         this.prerequisites = prerequisites ?? new BackendPrerequisiteProvisioner();
         this.statusPublisher = statusPublisher ?? NoOpModelRuntimeStatusPublisher.Instance;
         this.lifecycleCoordinator = lifecycleCoordinator ?? new ModelLifecycleCoordinator();
@@ -94,22 +89,18 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         var llamaStatus = llama.GetStatus();
         var openVinoStatus = openVino.GetStatus();
         var pythonStatus = python.GetStatus();
-        var dotLlmStatus = dotLlm.GetStatus();
         var backendRuntimeStatuses = backendRuntimeResolver?.Runtimes.Select(runtime => runtime.GetStatus()).ToArray() ?? [];
         var backendLoadedModels = backendRuntimeStatuses.SelectMany(status => status.LoadedModels).ToArray();
         var loadedModels = llamaStatus.LoadedModels
             .Concat(CreateOpenVinoLoadedModels(openVinoStatus))
             .Concat(pythonStatus.LoadedModels)
-            .Concat(dotLlmStatus.LoadedModels)
             .Concat(backendLoadedModels)
-            .Concat(CreatePendingModelStatuses(llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus, backendLoadedModels))
+            .Concat(CreatePendingModelStatuses(llamaStatus, openVinoStatus, pythonStatus, backendLoadedModels))
             .ToArray();
 
         var activeBackendStatus = backendRuntimeStatuses.FirstOrDefault(status => status.IsModelLoaded);
         if (activeBackendStatus is not null)
             return activeBackendStatus with { LoadedModels = loadedModels };
-        if (dotLlmStatus.IsModelLoaded)
-            return dotLlmStatus with { LoadedModels = loadedModels };
         if (pythonStatus.IsModelLoaded || pythonStatus.ModelPath is not null)
             return pythonStatus with { LoadedModels = loadedModels };
         if (openVinoStatus.IsModelLoaded)
@@ -219,6 +210,9 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
 
     public Task LoadAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(request);
+        if (request.Backend != ConfigurationBackend.Vllm)
+            throw new ArgumentException("The Python inference runtime supports only vLLM.", nameof(request));
         var variantId = request.Backend == ConfigurationBackend.Vllm
             ? request.EnableXpuGraph || request.Device.Contains("xpu", StringComparison.OrdinalIgnoreCase) || request.Devices?.Any(device => device.Contains("xpu", StringComparison.OrdinalIgnoreCase)) == true
                 ? "vllm.xpu"
@@ -233,12 +227,8 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
             return LoadBackendAsync(packagedRequest, cancellationToken);
         }
 
-        return TrackPendingModelAsync(request.ModelPath, request.Backend, request.Backend switch
-        {
-            ConfigurationBackend.Vllm => "vLLM",
-            ConfigurationBackend.Sglang => "SGLang",
-            _ => request.Backend.ToString()
-        }, () => pythonAdapter.LoadAsync(request, cancellationToken));
+        return TrackPendingModelAsync(request.ModelPath, request.Backend, "vLLM",
+            () => pythonAdapter.LoadAsync(request, cancellationToken));
     }
 
     public Task LoadBackendAsync(BackendLoadRequest request, CancellationToken cancellationToken = default)
@@ -246,9 +236,6 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         ArgumentNullException.ThrowIfNull(request);
         var runtime = backendRuntimeResolver?.Resolve(request.VariantId)
             ?? throw new InvalidOperationException("No packaged backend runtime resolver is registered.");
-        if (runtime.Descriptor.Family == ConfigurationBackend.Sglang || runtime.Descriptor.Family == ConfigurationBackend.DotLlm)
-            throw new InvalidOperationException($"Backend family '{runtime.Descriptor.Family}' cannot be loaded by a packaged runtime in this host.");
-
         return TrackPendingModelAsync(request.ModelPath, runtime.Descriptor.Family, runtime.Descriptor.RuntimeName,
             () => runtime.LoadAsync(request, cancellationToken), request.VariantId);
     }
@@ -257,13 +244,18 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
 
     public string? GetBackendRoute(string variantId) => TryResolveBackendRuntime(variantId)?.Descriptor.Route;
 
-    public string? GetLoadedBackendVariantId(string? modelPath)
+    /// <summary>Gets the configuration backend family for a registered packaged variant.</summary>
+    public ConfigurationBackend? GetBackendFamily(string variantId) => TryResolveBackendRuntime(variantId)?.Descriptor.Family;
+
+    public string? GetLoadedBackendVariantId(string? modelPath, string? requestedVariantId = null)
     {
         if (backendRuntimeResolver is null || string.IsNullOrWhiteSpace(modelPath))
             return null;
         var matches = backendRuntimeResolver.Runtimes
             .SelectMany(runtime => runtime.GetStatus().LoadedModels)
             .Where(model => model.IsModelLoaded && string.Equals(model.ModelPath, modelPath, StringComparison.OrdinalIgnoreCase))
+            .Where(model => string.IsNullOrWhiteSpace(requestedVariantId) ||
+                string.Equals(model.BackendVariantId, requestedVariantId, StringComparison.OrdinalIgnoreCase))
             .Select(model => model.BackendVariantId)
             .Where(variantId => !string.IsNullOrWhiteSpace(variantId))
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -288,13 +280,6 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
             ?? throw new InvalidOperationException("No packaged backend runtime resolver is registered.");
         return runtime.GenerateAsync(request, onToken, cancellationToken);
     }
-
-    public Task LoadAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default) =>
-        TrackPendingModelAsync(request.ModelPath, ConfigurationBackend.DotLlm, "dotLLM / In-Process", async () =>
-        {
-            await prerequisites.PrepareAsync(ConfigurationBackend.DotLlm, cancellationToken: cancellationToken).ConfigureAwait(false);
-            await dotLlmAdapter.LoadAsync(request, cancellationToken).ConfigureAwait(false);
-        });
 
     public Task LoadLlamaAsync(
         string modelPath,
@@ -331,7 +316,6 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         await StopRuntimeAsync("LLama", () => llama.StopAsync(cancellationToken), failures).ConfigureAwait(false);
         await StopRuntimeAsync("OpenVINO", () => ExecuteOpenVinoOperationAsync(() => openVino.UnloadAsync(cancellationToken)), failures).ConfigureAwait(false);
         await StopRuntimeAsync("Python", () => python.StopAsync(cancellationToken), failures).ConfigureAwait(false);
-        await StopRuntimeAsync("dotLLM", () => dotLlm.StopAsync(cancellationToken), failures).ConfigureAwait(false);
         if (backendRuntimeResolver is not null)
         {
             foreach (var runtime in backendRuntimeResolver.Runtimes)
@@ -403,14 +387,6 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
 
     public PythonInferenceChatSession CreatePythonChatSession() => python.CreateChatSession();
 
-    public DotLlmInProcessChatSession CreateDotLlmChatSession() => dotLlm.CreateChatSession();
-
-    public async Task StopDotLlmAsync(CancellationToken cancellationToken = default)
-    {
-        await dotLlm.StopAsync(cancellationToken).ConfigureAwait(false);
-        await statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken).ConfigureAwait(false);
-    }
-
     public async Task UnloadAsync(
         string modelPath,
         ConfigurationBackend backend,
@@ -435,10 +411,8 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
 
         if (backend == ConfigurationBackend.OpenVino)
             await ExecuteOpenVinoOperationAsync(() => openVino.UnloadAsync(cancellationToken));
-        else if (backend is ConfigurationBackend.Vllm or ConfigurationBackend.Sglang)
+        else if (backend == ConfigurationBackend.Vllm)
             await python.StopAsync(cancellationToken);
-        else if (backend == ConfigurationBackend.DotLlm)
-            await dotLlm.StopAsync(cancellationToken);
         else
             await llama.UnloadAsync(modelPath, cancellationToken);
 
@@ -450,7 +424,6 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         llama.Dispose();
         openVino.Dispose();
         python.Dispose();
-        dotLlm.Dispose();
     }
 
     private async Task TrackPendingModelAsync(
@@ -545,10 +518,9 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         ModelLoadStatus llamaStatus,
         OpenVinoModelLoadStatus openVinoStatus,
         ModelLoadStatus pythonStatus,
-        ModelLoadStatus dotLlmStatus,
         IReadOnlyCollection<LoadedModelStatus> backendLoadedModels) =>
         pendingModels.Values
-            .Where(pending => !IsAlreadyLoaded(pending, llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus, backendLoadedModels))
+            .Where(pending => !IsAlreadyLoaded(pending, llamaStatus, openVinoStatus, pythonStatus, backendLoadedModels))
             .Select(pending => new LoadedModelStatus(
                 pending.ModelPath,
                 pending.Backend,
@@ -558,7 +530,7 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
                 0,
                 [],
                 null,
-                GetPendingLoadLog(pending.Backend, llamaStatus, openVinoStatus, pythonStatus, dotLlmStatus),
+                GetPendingLoadLog(pending.Backend, llamaStatus, openVinoStatus, pythonStatus),
                 true,
                 false,
                 pending.BackendVariantId)).ToArray();
@@ -568,7 +540,6 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         ModelLoadStatus llamaStatus,
         OpenVinoModelLoadStatus openVinoStatus,
         ModelLoadStatus pythonStatus,
-        ModelLoadStatus dotLlmStatus,
         IReadOnlyCollection<LoadedModelStatus> backendLoadedModels)
     {
         if (!string.IsNullOrWhiteSpace(pending.BackendVariantId))
@@ -583,8 +554,7 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         var loadedModels = pending.Backend switch
         {
             ConfigurationBackend.Llama => llamaStatus.LoadedModels,
-            ConfigurationBackend.Vllm or ConfigurationBackend.Sglang => pythonStatus.LoadedModels,
-            ConfigurationBackend.DotLlm => dotLlmStatus.LoadedModels,
+            ConfigurationBackend.Vllm => pythonStatus.LoadedModels,
             _ => []
         };
         return loadedModels.Any(model =>
@@ -596,13 +566,11 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         ConfigurationBackend backend,
         ModelLoadStatus llamaStatus,
         OpenVinoModelLoadStatus openVinoStatus,
-        ModelLoadStatus pythonStatus,
-        ModelLoadStatus dotLlmStatus) => backend switch
+        ModelLoadStatus pythonStatus) => backend switch
         {
             ConfigurationBackend.Llama => llamaStatus.LoadLog,
             ConfigurationBackend.OpenVino => openVinoStatus.LoadLog,
-            ConfigurationBackend.Vllm or ConfigurationBackend.Sglang => pythonStatus.LoadLog,
-            ConfigurationBackend.DotLlm => dotLlmStatus.LoadLog,
+            ConfigurationBackend.Vllm => pythonStatus.LoadLog,
             _ => string.Empty
         };
 

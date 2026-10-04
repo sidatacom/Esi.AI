@@ -28,7 +28,7 @@ public sealed record BackendReferenceModel(
 public static class BackendReferenceModels
 {
     /// <summary>
-    /// Gets the five backend-specific reference entries.
+    /// Gets the supported backend reference entries.
     /// </summary>
     public static IReadOnlyList<BackendReferenceModel> All { get; } =
     [
@@ -37,10 +37,6 @@ public static class BackendReferenceModels
         new(ConfigurationBackend.OpenVino, "Qwen2.5 1.5B Instruct INT4", "OpenVINO/Qwen2.5-1.5B-Instruct-int4-ov", ReferenceModelFormat.OpenVinoIr,
             null, "ESI_OPENVINO_MODEL_PATH", "https://huggingface.co/OpenVINO/Qwen2.5-1.5B-Instruct-int4-ov"),
         new(ConfigurationBackend.Vllm, "Qwen2.5 0.5B Instruct", "Qwen/Qwen2.5-0.5B-Instruct", ReferenceModelFormat.Transformers,
-            null, "ESI_VLLM_REFERENCE_MODEL", "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct"),
-        new(ConfigurationBackend.Sglang, "Qwen2.5 0.5B Instruct", "Qwen/Qwen2.5-0.5B-Instruct", ReferenceModelFormat.Transformers,
-            null, "ESI_SGLANG_REFERENCE_MODEL", "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct"),
-        new(ConfigurationBackend.DotLlm, "Qwen2.5 0.5B Instruct", "Qwen/Qwen2.5-0.5B-Instruct", ReferenceModelFormat.Gguf,
-            "Qwen2.5-0.5B-Instruct-Q4_K_M.gguf", "ESI_DOTLLM_MODEL_PATH", "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct")
+            null, "ESI_VLLM_REFERENCE_MODEL", "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct")
     ];
 }

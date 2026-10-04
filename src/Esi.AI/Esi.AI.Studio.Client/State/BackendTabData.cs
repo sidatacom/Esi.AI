@@ -37,13 +37,11 @@ public sealed record BackendTabModelConfigurationData(
 /// <param name="IsLlamaLoading">Whether a LLama model is loading.</param>
 /// <param name="IsOpenVinoLoading">Whether an OpenVINO model is loading.</param>
 /// <param name="IsPythonLoading">Whether a Python runtime is loading.</param>
-/// <param name="IsDotLlmLoading">Whether a dotLLM model is loading.</param>
 public sealed record BackendTabRuntimeTelemetryData(
     ModelLoadStatus? LoadStatus,
     bool IsLlamaLoading,
     bool IsOpenVinoLoading,
-    bool IsPythonLoading,
-    bool IsDotLlmLoading);
+    bool IsPythonLoading);
 
 /// <summary>Exposes the shared model-path setting required by backend configuration states.</summary>
 public interface IBackendTabConfigurationData

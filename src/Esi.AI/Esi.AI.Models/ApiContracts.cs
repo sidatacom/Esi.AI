@@ -5,11 +5,11 @@ namespace Esi.AI.Models;
 
 public enum ConfigurationBackend
 {
-    Llama,
-    OpenVino,
-    Vllm,
-    Sglang,
-    DotLlm
+    Llama = 0,
+    OpenVino = 1,
+    Vllm = 2,
+    Sglang = 3,
+    DotLlm = 4
 }
 
 public sealed record BackendModel(
@@ -491,7 +491,8 @@ public sealed record ChatExchangeRequest(
     string? ModelPath = null,
     string? Backend = null,
     IReadOnlyList<ChatImage>? Images = null,
-    IReadOnlyList<ChatMessageContentPart>? ContentParts = null);
+    IReadOnlyList<ChatMessageContentPart>? ContentParts = null,
+    string? BackendVariantId = null);
 
 public sealed record ChatSummary(Guid Id, string Title, DateTime UpdatedAtUtc, int MessageCount);
 
@@ -639,11 +640,6 @@ public sealed record PythonInferenceLoadRequest(
     bool EnablePrefixCaching = false,
     bool EnableXpuGraph = false,
     bool EnableBf16MtpDraft = false);
-
-public sealed record DotLlmLoadRequest(
-    string ModelPath,
-    string Device = "cpu",
-    int? Threads = null);
 
 /// <summary>Identifies one loaded model and its backend for an application API unload operation.</summary>
 public sealed record ApplicationModelUnloadRequest(

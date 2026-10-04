@@ -29,15 +29,24 @@ public sealed record ModelCompatibilityUpdate(
 
 public sealed record ModelDeletionRequest(string ModelPath, bool DeleteFiles);
 
+/// <summary>Identifies one configured model directory to inspect for unused local models.</summary>
+public sealed record ModelCleanupRequest(string DirectoryPath);
+
+/// <summary>Describes local models that are not referenced by an application configuration.</summary>
+public sealed record ModelCleanupPreview(string DirectoryPath, IReadOnlyList<LocalModel> Candidates, long TotalBytes);
+
+/// <summary>Reports the files removed by a model-library cleanup operation.</summary>
+public sealed record ModelCleanupResult(int DeletedCount, long ReclaimedBytes);
+
 /// <summary>Infers supported inference backends from model format and Hugging Face metadata.</summary>
 public static class ModelBackendCompatibility
 {
     /// <summary>Gets the default backends for a locally detected model format.</summary>
     public static IReadOnlyList<ConfigurationBackend> ForFormat(ReferenceModelFormat format) => format switch
     {
-        ReferenceModelFormat.Gguf => [ConfigurationBackend.Llama, ConfigurationBackend.DotLlm],
+        ReferenceModelFormat.Gguf => [ConfigurationBackend.Llama],
         ReferenceModelFormat.OpenVinoIr => [ConfigurationBackend.OpenVino],
-        ReferenceModelFormat.Transformers => [ConfigurationBackend.Vllm, ConfigurationBackend.Sglang],
+        ReferenceModelFormat.Transformers => [ConfigurationBackend.Vllm],
         _ => []
     };
 
@@ -56,10 +65,7 @@ public static class ModelBackendCompatibility
         var isOpenVino = library.Contains("openvino", StringComparison.Ordinal) || normalizedTags.Contains("openvino");
 
         if (isGguf)
-        {
             values.Add(ConfigurationBackend.Llama);
-            values.Add(ConfigurationBackend.DotLlm);
-        }
 
         if (isOpenVino)
             values.Add(ConfigurationBackend.OpenVino);
@@ -68,13 +74,10 @@ public static class ModelBackendCompatibility
             (library.Contains("transformers", StringComparison.Ordinal) || library.Contains("pytorch", StringComparison.Ordinal)))
         {
             values.Add(ConfigurationBackend.Vllm);
-            values.Add(ConfigurationBackend.Sglang);
         }
 
         if (!isGguf && !isOpenVino && normalizedTags.Contains("vllm"))
             values.Add(ConfigurationBackend.Vllm);
-        if (!isGguf && !isOpenVino && normalizedTags.Contains("sglang"))
-            values.Add(ConfigurationBackend.Sglang);
 
         return Enum.GetValues<ConfigurationBackend>().Where(values.Contains).ToArray();
     }

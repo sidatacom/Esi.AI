@@ -16,11 +16,7 @@ public enum BackendTab
     /// <summary>vLLM CUDA 12 backend.</summary>
     VllmCuda12,
     /// <summary>vLLM Intel XPU backend.</summary>
-    VllmXpu,
-    /// <summary>SGLang backend.</summary>
-    Sglang,
-    /// <summary>dotLLM backend.</summary>
-    DotLlm
+    VllmXpu
 }
 
 /// <summary>Single root state for the backends page.</summary>
@@ -38,8 +34,6 @@ public sealed class BackendPageState
             (ConfigurationBackend.OpenVino, "openvino") => BackendTab.OpenVino,
             (ConfigurationBackend.Vllm, "vllm.cuda12") => BackendTab.VllmCuda12,
             (ConfigurationBackend.Vllm, "vllm.xpu") => BackendTab.VllmXpu,
-            (ConfigurationBackend.Sglang, "sglang.cuda12" or "sglang.xpu") => BackendTab.Sglang,
-            (ConfigurationBackend.DotLlm, "dotllm.cpu") => BackendTab.DotLlm,
             _ => throw new ArgumentException(
                 $"Backend variant '{backendVariantId}' is not supported for '{backend}'.", nameof(backendVariantId))
         };
@@ -59,7 +53,6 @@ public sealed class BackendPageState
     public LlamaState Llama { get; set; } = new();
     public OpenVinoState OpenVino { get; set; } = new();
     public PythonState Python { get; set; } = new();
-    public DotLlmState DotLlm { get; set; } = new();
     public ProfileState Profiles { get; set; } = new();
     public LoadingState Loading { get; set; } = new();
     public RequirementsState Requirements { get; set; } = new();

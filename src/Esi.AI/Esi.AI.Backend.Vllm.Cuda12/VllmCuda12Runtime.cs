@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Esi.AI.Backend.Abstractions;
 using Esi.AI.Models;
 using Grpc.Core;
@@ -13,7 +14,10 @@ namespace Esi.AI.Backend.Vllm.Cuda12;
 public sealed class VllmCuda12Runtime : IBackendRuntime
 {
     private const string VariantId = "vllm.cuda12";
-    private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
     private static readonly SemaphoreSlim ProvisioningLock = new(1, 1);
     private readonly object sync = new();
     private readonly SemaphoreSlim lifecycleLock = new(1, 1);
@@ -92,7 +96,7 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
             try
             {
                 var applicationDirectory = AppContext.BaseDirectory;
-                var scriptPath = Path.Combine(applicationDirectory, "Python", "inference_server.py");
+                var scriptPath = Path.Combine(applicationDirectory, "Python", "vllm-cuda12", "inference_server.py");
                 if (!File.Exists(scriptPath))
                     throw new FileNotFoundException("The vLLM CUDA 12 gRPC bridge was not deployed.", scriptPath);
 
@@ -110,6 +114,7 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
                     RedirectStandardError = true,
                     CreateNoWindow = true,
                 };
+                ConfigurePythonPath(startInfo, python.Executable);
                 startInfo.ArgumentList.Add(scriptPath);
                 startInfo.ArgumentList.Add("--host");
                 startInfo.ArgumentList.Add("127.0.0.1");
@@ -150,8 +155,11 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
             }
             catch (Exception exception)
             {
+                var failureDetails = ExtractRootCause(exception.Message);
                 lock (sync)
-                    loadLog = ExtractRootCause(exception.Message);
+                    loadLog = string.IsNullOrWhiteSpace(loadLog)
+                        ? failureDetails
+                        : string.Concat(loadLog, Environment.NewLine, failureDetails);
                 await StopCoreAsync().ConfigureAwait(false);
                 throw;
             }
@@ -165,6 +173,24 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
         {
             lifecycleLock.Release();
         }
+    }
+
+    private static void ConfigurePythonPath(ProcessStartInfo startInfo, string pythonExecutable)
+    {
+        var pathEntries = new List<string>();
+        if (Path.IsPathFullyQualified(pythonExecutable))
+            pathEntries.Add(Path.GetDirectoryName(pythonExecutable)!);
+
+        var cudaHome = startInfo.Environment["CUDA_HOME"];
+        if (string.IsNullOrWhiteSpace(cudaHome))
+            cudaHome = startInfo.Environment["CUDA_PATH"];
+        if (!string.IsNullOrWhiteSpace(cudaHome))
+            pathEntries.Add(Path.Combine(cudaHome, "bin"));
+
+        if (startInfo.Environment.TryGetValue("PATH", out var currentPath) && !string.IsNullOrWhiteSpace(currentPath))
+            pathEntries.AddRange(currentPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries));
+
+        startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, pathEntries.Distinct(StringComparer.Ordinal));
     }
 
     /// <inheritdoc />
@@ -442,7 +468,7 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
         TimeSpan timeout,
         CancellationToken cancellationToken)
     {
-        var pythonDirectory = Path.Combine(applicationDirectory, "Python");
+        var pythonDirectory = Path.Combine(applicationDirectory, "Python", "vllm-cuda12");
         var requirementsPath = Path.Combine(pythonDirectory, "vllm-requirements.txt");
         if (!File.Exists(requirementsPath))
             throw new FileNotFoundException("The vLLM CUDA 12 requirements file was not deployed.", requirementsPath);

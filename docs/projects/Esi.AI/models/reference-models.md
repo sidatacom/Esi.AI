@@ -54,7 +54,7 @@ export ESI_OPENVINO_DEVICE="GPU.0"
 export ESI_VLLM_REFERENCE_MODEL="Qwen/Qwen2.5-0.5B-Instruct"
 export ESI_SGLANG_REFERENCE_MODEL="Qwen/Qwen2.5-0.5B-Instruct"
 
-dotnet test src/Esi.AI/Esi.AI.Core.Tests/Esi.AI.Core.Tests.csproj \
+dotnet test tests/Esi.AI.Core.Tests/Esi.AI.Core.Tests.csproj \
   --filter 'TestCategory=BackendReference'
 ```
 

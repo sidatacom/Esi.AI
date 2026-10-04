@@ -12,12 +12,9 @@ import json
 import os
 from pathlib import Path
 import signal
-import subprocess
 import sys
 import time
 import traceback
-import urllib.error
-import urllib.request
 import uuid
 
 import grpc
@@ -111,17 +108,15 @@ if os.environ.get("VLLM_TARGET_DEVICE", "").lower() == "xpu":
 
 
 class InferenceService(inference_pb2_grpc.InferenceServicer):
-    def __init__(self, backend_port: int) -> None:
+    def __init__(self) -> None:
         self._engine = None
-        self._sglang_process = None
-        self._backend_port = backend_port
         self._model_id = ""
         self._load_lock = asyncio.Lock()
 
     async def CheckReadiness(self, request, context):
         return inference_pb2.ReadinessResponse(
             ready=True,
-            model_loaded=self._engine is not None or self._sglang_process is not None,
+            model_loaded=self._engine is not None,
             model_id=self._model_id,
         )
 
@@ -131,8 +126,6 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
 
         async with self._load_lock:
             await self._unload_model()
-            if request.engine.lower() == "sglang":
-                return await self._load_sglang(request, context)
             if request.engine.lower() != "vllm":
                 return inference_pb2.ModelOperationResponse(error=f"Unsupported engine '{request.engine}'.")
             try:
@@ -153,6 +146,10 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                     "trust_remote_code": request.trust_remote_code,
                     "enforce_eager": request.enforce_eager,
                 }
+                if os.environ.get("VLLM_TARGET_DEVICE", "").lower() == "xpu":
+                    engine_options["compilation_config"] = {
+                        "custom_ops": ["all", "-silu_and_mul"]
+                    }
                 if request.quantization:
                     engine_options["quantization"] = request.quantization
                 if request.dtype:
@@ -195,49 +192,8 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
         return inference_pb2.ModelOperationResponse(succeeded=True)
 
     async def Generate(self, request, context):
-        if self._engine is None and self._sglang_process is None:
+        if self._engine is None:
             yield inference_pb2.GenerateResponse(error="No vLLM model is loaded.")
-            return
-
-        if self._sglang_process is not None:
-            started = time.monotonic()
-            try:
-                payload = {
-                    "model": self._model_id,
-                    "messages": self._chat_messages(request.messages),
-                    "max_tokens": request.max_tokens or 512,
-                    "temperature": request.temperature,
-                    "top_p": request.top_p,
-                    "top_k": request.top_k,
-                    "min_p": request.min_p,
-                    "repetition_penalty": request.repetition_penalty or 1.0,
-                    "seed": request.seed or None,
-                    "stop": list(request.stop_sequences) or None,
-                }
-                tools = self._tool_definitions(request.tools)
-                if tools:
-                    payload["tools"] = tools
-                tool_choice = self._tool_choice(request.tool_choice_json)
-                if tool_choice is not None:
-                    payload["tool_choice"] = tool_choice
-                response = await asyncio.to_thread(self._post_json, "/v1/chat/completions", payload)
-                message = response["choices"][0]["message"]
-                content = message.get("content") or ""
-                tool_calls = message.get("tool_calls") or []
-                usage = response.get("usage") or {}
-                generated_tokens = int(usage.get("completion_tokens") or 0)
-                prompt_tokens = int(usage.get("prompt_tokens") or 0)
-                elapsed = time.monotonic() - started
-                yield inference_pb2.GenerateResponse(
-                    delta=content,
-                    finished=True,
-                    generated_tokens=generated_tokens,
-                    prompt_tokens=prompt_tokens,
-                    tokens_per_second=generated_tokens / elapsed if elapsed > 0 else 0,
-                    tool_calls_json=json.dumps(tool_calls, separators=(",", ":")),
-                )
-            except Exception as exception:
-                yield inference_pb2.GenerateResponse(error=f"SGLang generation failed: {exception}")
             return
 
         request_id = request.request_id or str(uuid.uuid4())
@@ -248,8 +204,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
             if request.tools and tool_choice != "none":
                 yield inference_pb2.GenerateResponse(
                     error=(
-                        "Structured tool calls are not supported by the direct vLLM engine path. "
-                        "Use the SGLang/OpenAI-compatible path or a backend with a native tool parser."
+                        "Structured tool calls are not supported by this vLLM integration."
                     )
                 )
                 return
@@ -355,68 +310,6 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
             with contextlib.suppress(Exception):
                 await self._engine.abort(request_id)
 
-    async def _load_sglang(self, request, context):
-        devices = [device.strip() for device in request.devices if device.strip()]
-        if not devices and request.device.strip():
-            devices = [request.device.strip()]
-        vendors = {device.split(":", 1)[0].lower() for device in devices}
-        if len(vendors) != 1:
-            return inference_pb2.ModelOperationResponse(
-                error="CUDA and XPU devices cannot be mixed in one SGLang worker."
-            )
-
-        bridge_directory = os.path.dirname(os.path.abspath(__file__))
-        bootstrap = (
-            f"import sys; sys.path.insert(0, {json.dumps(bridge_directory)}); "
-            "import runpy; import vllm_xpu_bootstrap; "
-            "vllm_xpu_bootstrap.enable_sglang_xpu_memory_probe_fallback(); "
-            "vllm_xpu_bootstrap.enable_sglang_xpu_eager_sampling_fallback(); "
-            "runpy.run_module('sglang.launch_server', run_name='__main__')"
-        )
-        command = [
-            sys.executable,
-            "-c",
-            bootstrap,
-            "--model-path",
-            request.model_path,
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(self._backend_port),
-            "--context-length",
-            str(request.max_model_len or 262144),
-            "--tp-size",
-            str(request.tensor_parallel_size or 1),
-        ]
-        if "xpu" in vendors:
-            command.extend(["--device", "xpu", "--attention-backend", "torch_native"])
-        if request.gpu_memory_utilization > 0:
-            command.extend(["--mem-fraction-static", str(request.gpu_memory_utilization)])
-        if request.trust_remote_code:
-            command.append("--trust-remote-code")
-        self._sglang_process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        while context is None or not context.cancelled():
-            if self._sglang_process.returncode is not None:
-                process = self._sglang_process
-                self._sglang_process = None
-                output, _ = await process.communicate()
-                return inference_pb2.ModelOperationResponse(
-                    error=_extract_root_error((output or b"").decode(errors="replace"))
-                )
-            try:
-                models = await asyncio.to_thread(self._get_json, "/v1/models")
-                model_id = models["data"][0]["id"]
-                self._model_id = model_id
-                return inference_pb2.ModelOperationResponse(succeeded=True, model_id=model_id)
-            except (OSError, KeyError, IndexError, json.JSONDecodeError):
-                await asyncio.sleep(.25)
-        await self._unload_model()
-        return inference_pb2.ModelOperationResponse(error="SGLang model loading was cancelled.")
-
     async def _unload_model(self) -> None:
         if self._engine is not None:
             engine = self._engine
@@ -429,37 +322,9 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                     await result
             del engine
             gc.collect()
-        if self._sglang_process is None:
-            return
-        process = self._sglang_process
-        self._sglang_process = None
-        self._model_id = ""
-        if process.returncode is None:
-            process.terminate()
-            with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(process.wait(), timeout=2)
-        if process.returncode is None:
-            process.kill()
-            await process.wait()
-
-    def _get_json(self, path):
-        with urllib.request.urlopen(f"http://127.0.0.1:{self._backend_port}{path}", timeout=2) as response:
-            return json.loads(response.read())
-
-    def _post_json(self, path, payload):
-        body = json.dumps(payload).encode()
-        request = urllib.request.Request(
-            f"http://127.0.0.1:{self._backend_port}{path}",
-            data=body,
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(request, timeout=300) as response:
-            return json.loads(response.read())
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--engine", choices=("vllm", "sglang"), default="vllm")
     parser.add_argument("--model")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--grpc-port", type=int, default=8000)
@@ -468,9 +333,7 @@ def parse_args() -> argparse.Namespace:
 
 async def run(options: argparse.Namespace) -> None:
     server = grpc.aio.server()
-    if options.grpc_port >= 65535:
-        raise ValueError("The gRPC port must leave one port available for the SGLang compatibility process.")
-    service = InferenceService(options.grpc_port + 1)
+    service = InferenceService()
     inference_pb2_grpc.add_InferenceServicer_to_server(service, server)
     bound_port = server.add_insecure_port(f"{options.host}:{options.grpc_port}")
     if bound_port == 0:
@@ -479,7 +342,7 @@ async def run(options: argparse.Namespace) -> None:
 
     if options.model:
         await service.LoadModel(
-            inference_pb2.LoadModelRequest(model_path=options.model, engine=options.engine),
+            inference_pb2.LoadModelRequest(model_path=options.model, engine="vllm"),
             None,
         )
 

@@ -146,7 +146,7 @@ public sealed class OpenAiCompatibleController(
             modelRequest => RequireDataService().LoadModelAsync(modelRequest, cancellationToken),
             cancellationToken);
 
-    /// <summary>Loads a vLLM or SGLang model through the application API.</summary>
+    /// <summary>Loads a vLLM model through the application API.</summary>
     [HttpPost("application/models/load/python")]
     public Task<IActionResult> LoadPythonModel(
         PythonInferenceLoadRequest? request,
@@ -154,16 +154,6 @@ public sealed class OpenAiCompatibleController(
         ExecuteApplicationModelOperationAsync(
             request,
             modelRequest => RequireDataService().LoadPythonModelAsync(modelRequest, cancellationToken),
-            cancellationToken);
-
-    /// <summary>Loads a dotLLM model through the application API.</summary>
-    [HttpPost("application/models/load/dotllm")]
-    public Task<IActionResult> LoadDotLlmModel(
-        DotLlmLoadRequest? request,
-        CancellationToken cancellationToken) =>
-        ExecuteApplicationModelOperationAsync(
-            request,
-            modelRequest => RequireDataService().LoadDotLlmModelAsync(modelRequest, cancellationToken),
             cancellationToken);
 
     /// <summary>Unloads one model selected by path and backend through the application API.</summary>
@@ -496,8 +486,6 @@ public sealed class OpenAiCompatibleController(
                 : modelRuntime.GetBackendRoute(loadedModel.BackendVariantId) ?? loadedModel.Runtime,
             ConfigurationBackend.OpenVino => "OpenVINO",
             ConfigurationBackend.Vllm => "vLLM",
-            ConfigurationBackend.Sglang => "SGLang",
-            ConfigurationBackend.DotLlm => "dotLLM",
             _ => status.Backend
         };
         return status with

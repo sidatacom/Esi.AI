@@ -21,11 +21,12 @@
 
   <ItemGroup>
     <Protobuf Include="../Esi.AI.Models/Grpc/vllm_inference.proto" GrpcServices="Client" />
-    <None Update="Python/**/*"
+            <None Update="Python/*"
+              Link="Python/vllm-cuda12/%(Filename)%(Extension)"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest"
           Pack="true"
-          PackagePath="contentFiles/any/any/Python/%(RecursiveDir)%(Filename)%(Extension)"
+          PackagePath="contentFiles/any/any/Python/vllm-cuda12/%(Filename)%(Extension)"
           PackageCopyToOutput="true" />
   </ItemGroup>
 

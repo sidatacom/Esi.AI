@@ -15,9 +15,9 @@
     <ProjectReference Include="../Esi.AI.Backend.Abstractions/Esi.AI.Backend.Abstractions.csproj" />
     <ProjectReference Include="../Esi.AI.Models/Esi.AI.Models.csproj" />
     <ProjectReference Include="../../../origins/sidatacom/OpenVINO-CSharp-API/src/OpenVINO.CSharp.API/OpenVINO.CSharp.API.csproj" />
-    <PackageReference Include="JYPPX.OpenVINO.GenAI.runtime.ubuntu.26-x86_64" Version="2026.3.1" />
+    <PackageReference Include="JYPPX.OpenVINO.GenAI.runtime.ubuntu.26-x86_64" Version="2026.4.0" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.0" />
-    <PackageReference Include="OpenVINO.runtime.ubuntu.26-x86_64" Version="2026.3.1" />
+    <PackageReference Include="OpenVINO.runtime.ubuntu.26-x86_64" Version="2026.4.0" />
     <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
   </ItemGroup>
 

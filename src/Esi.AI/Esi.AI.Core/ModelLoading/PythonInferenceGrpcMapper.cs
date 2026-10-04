@@ -13,7 +13,7 @@ internal static class PythonInferenceGrpcMapper
         var grpcRequest = new Esi.AI.Core.Grpc.LoadModelRequest
         {
             ModelPath = request.ModelPath,
-            Engine = request.Backend == ConfigurationBackend.Vllm ? "vllm" : "sglang",
+            Engine = "vllm",
             MaxModelLen = request.MaxModelLength,
             TensorParallelSize = (uint)request.TensorParallelSize,
             GpuMemoryUtilization = request.GpuMemoryUtilization is int utilization ? utilization / 100f : 0,

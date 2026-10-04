@@ -45,7 +45,7 @@ Run the optional integration smoke test with an installed model environment:
 ESI_VLLM_REFERENCE_MODEL=Qwen/Qwen2.5-0.5B-Instruct \
 ESI_PYTHON_REFERENCE_EXECUTABLE=python3 \
 VLLM_USE_FLASHINFER_SAMPLER=0 \
-dotnet test src/Esi.AI/Esi.AI.Core.Tests/Esi.AI.Core.Tests.csproj \
+dotnet test tests/Esi.AI.Core.Tests/Esi.AI.Core.Tests.csproj \
   --filter FullyQualifiedName~LoadReferenceModel_Vllm
 ```
 

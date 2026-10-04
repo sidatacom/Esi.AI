@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Esi.AI.Backend.Abstractions;
 using Esi.AI.Backend.Vllm.Xpu.Grpc;
 using Esi.AI.Models;
@@ -14,7 +15,10 @@ namespace Esi.AI.Backend.Vllm.Xpu;
 public sealed class VllmXpuRuntime : IBackendRuntime
 {
     private const string VariantId = "vllm.xpu";
-    private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new JsonStringEnumConverter() }
+    };
     private readonly object sync = new();
     private readonly HashSet<VllmXpuChatSession> sessions = [];
     private readonly VllmXpuPythonEnvironment provisioner = new();

@@ -106,7 +106,7 @@
                 <div class="source-row">
                     <div class="source-row-header"><strong>@package.Id</strong><button class="secondary-button" type="button" @onclick="() => RemovePackage(package)">Entfernen</button></div>
                     <div class="package-grid">
-                        <label class="field-group"><span>Backend</span><select @bind="package.Backend"><option>Llama</option><option>OpenVINO</option><option>vLLM</option><option>SGLang</option><option>dotLLM</option></select></label>
+                        <label class="field-group"><span>Backend</span><select @bind="package.Backend"><option>Llama</option><option>OpenVINO</option><option>vLLM</option></select></label>
                         <label class="field-group"><span>Route</span><input @bind="package.Route" /></label>
                         <label class="field-group"><span>RID</span><input @bind="package.RuntimeIdentifier" /></label>
                         <label class="field-group"><span>Version</span><input @bind="package.Version" /></label>
@@ -379,7 +379,7 @@
         public bool ClearHuggingFaceToken { get; set; }
 
         public ApplicationSettings ToContract() => new(
-            Backends.Select(item => item.ToContract()).ToArray(),
+            Backends.Select(item => item.ToContract()).Concat(legacyInferenceTimeouts).ToArray(),
             ModelLibrary: ModelLibrary with
             {
                 HuggingFaceToken = ClearHuggingFaceToken
@@ -389,6 +389,9 @@
 
         public void Apply(ApplicationSettings settings)
         {
+            legacyInferenceTimeouts = settings.InferenceTimeouts
+                .Where(backend => !Backends.Any(item => string.Equals(item.Backend, backend.Backend, StringComparison.OrdinalIgnoreCase)))
+                .ToList();
             foreach (var backend in settings.InferenceTimeouts)
             {
                 var form = Backends.FirstOrDefault(item => string.Equals(item.Backend, backend.Backend, StringComparison.OrdinalIgnoreCase));
@@ -403,9 +406,10 @@
         }
 
         private string? existingHuggingFaceToken;
+        private List<InferenceTimeoutSettings> legacyInferenceTimeouts = [];
     }
 
-    private static IReadOnlyList<string> BackendNames { get; } = ["Llama", "OpenVINO", "vLLM", "SGLang", "dotLLM"];
+    private static IReadOnlyList<string> BackendNames { get; } = ["Llama", "OpenVINO", "vLLM"];
 
     private sealed class BackendSettingsForm(string backend)
     {

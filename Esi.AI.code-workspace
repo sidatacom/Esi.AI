@@ -13,6 +13,7 @@
 		"dotnet.preferVisualStudioCodeFileSystemWatcher": true,
 		"dotnet.defaultSolution": "src/Esi.AI/Esi.AI.Studio.sln",
 		"workbench.colorTheme": "Default High Contrast",
-		"esimcp.serverPort": 3001
+		"esimcp.serverPort": 3001,
+		"chat.agent.maxRequests": 5000
 	}
 }

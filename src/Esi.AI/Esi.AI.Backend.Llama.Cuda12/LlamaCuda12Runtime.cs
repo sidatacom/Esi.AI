@@ -90,7 +90,7 @@ public sealed class LlamaCuda12Runtime : IBackendRuntime
         var runtimeDirectory = Cuda12RuntimeFiles.GetRuntimeDirectory(applicationDirectory);
         Cuda12RuntimeFiles.PrepareLibraryPath(runtimeDirectory);
         Cuda12RuntimeFiles.Validate(runtimeDirectory);
-        ConfigureNativeBackend(runtimeDirectory);
+        ConfigureNativeBackend(applicationDirectory, runtimeDirectory);
         return EnumerateCudaDevices();
     }
 
@@ -134,7 +134,7 @@ public sealed class LlamaCuda12Runtime : IBackendRuntime
         var runtimeDirectory = Cuda12RuntimeFiles.GetRuntimeDirectory(applicationDirectory);
         Cuda12RuntimeFiles.PrepareLibraryPath(runtimeDirectory);
         Cuda12RuntimeFiles.Validate(runtimeDirectory);
-        ConfigureNativeBackend(runtimeDirectory);
+        ConfigureNativeBackend(applicationDirectory, runtimeDirectory);
 
         await runtimeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -360,7 +360,7 @@ public sealed class LlamaCuda12Runtime : IBackendRuntime
         runtimeLock.Dispose();
     }
 
-    private static void ConfigureNativeBackend(string runtimeDirectory)
+    private static void ConfigureNativeBackend(string applicationDirectory, string runtimeDirectory)
     {
         lock (NativeConfigurationLock)
         {
@@ -368,6 +368,7 @@ public sealed class LlamaCuda12Runtime : IBackendRuntime
                 return;
 
             NativeLibraryConfig.All
+                .WithSearchDirectory(applicationDirectory)
                 .WithSearchDirectory(runtimeDirectory)
                 .WithCuda(true)
                 .WithVulkan(false)

@@ -63,8 +63,8 @@ public sealed class PythonInferenceServer : IDisposable
         ArgumentNullException.ThrowIfNull(request);
         if (string.IsNullOrWhiteSpace(request.ModelPath))
             throw new ArgumentException("A model path or Hugging Face model id is required.", nameof(request));
-        if (request.Backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
-            throw new ArgumentException("The Python inference server supports only vLLM and SGLang.", nameof(request));
+        if (request.Backend != ConfigurationBackend.Vllm)
+            throw new ArgumentException("The Python inference server supports only vLLM.", nameof(request));
         if (request.Port is < 1 or > 65535)
             throw new ArgumentOutOfRangeException(nameof(request), "The local gRPC port must be between 1 and 65535.");
         if (request.TensorParallelSize < 1)
@@ -114,7 +114,6 @@ public sealed class PythonInferenceServer : IDisposable
             foreach (var argument in new[]
             {
                 scriptPath,
-                "--engine", GetEngineName(request.Backend),
                 "--host", "127.0.0.1",
                 "--grpc-port", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
             })
@@ -358,7 +357,7 @@ public sealed class PythonInferenceServer : IDisposable
 
         var vendors = routes.Select(GetDeviceVendor).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (vendors.Length > 1)
-            throw new ArgumentException("CUDA and XPU devices cannot be mixed in one vLLM or SGLang worker; use a backend that supports heterogeneous device scheduling.", nameof(devices));
+            throw new ArgumentException("CUDA and XPU devices cannot be mixed in one vLLM worker.", nameof(devices));
 
         if (string.Equals(vendors[0], "cuda", StringComparison.OrdinalIgnoreCase))
         {
@@ -473,8 +472,7 @@ public sealed class PythonInferenceServer : IDisposable
         return value;
     }
 
-    private static string GetEngineName(ConfigurationBackend value) => value == ConfigurationBackend.Vllm ? "vllm" : "sglang";
-    private static string GetBackendName(ConfigurationBackend value) => value == ConfigurationBackend.Vllm ? "vLLM" : "SGLang";
+    private static string GetBackendName(ConfigurationBackend value) => "vLLM";
 
 }
 

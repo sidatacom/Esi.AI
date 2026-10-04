@@ -43,7 +43,6 @@ internal sealed class LocalActivityRegistryProvider : IActivityRegistryProvider
                 ],
                 Ports =
                 [
-                    new Port { Name = "In", DisplayName = "In", Type = PortType.Flow },
                     new Port { Name = "Done", DisplayName = "Done", Type = PortType.Flow }
                 ]
             }

@@ -260,6 +260,172 @@ public sealed class DataService(
         return await LocalModel_ReadAsync(cancellationToken);
     }
 
+    public async Task<ModelCleanupPreview> LocalModel_CleanPreviewAsync(
+        ModelCleanupRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var (directoryPath, candidates) = await GetModelCleanupCandidatesAsync(request.DirectoryPath, cancellationToken);
+        return new ModelCleanupPreview(directoryPath, candidates, candidates.Sum(model => model.SizeInBytes));
+    }
+
+    public async Task<ModelCleanupResult> LocalModel_CleanAsync(
+        ModelCleanupRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var (directoryPath, candidates) = await GetModelCleanupCandidatesAsync(request.DirectoryPath, cancellationToken);
+        var deletedCount = 0;
+        long reclaimedBytes = 0;
+
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var referencedPaths = await GetReferencedModelPathsAsync(db, cancellationToken);
+        var protectedRuntimePaths = GetProtectedRuntimeModelPaths();
+        var activeDownloadPaths = await GetActiveModelDownloadPathsAsync(db, cancellationToken);
+
+        foreach (var candidate in candidates)
+        {
+            if (!IsPathWithinDirectory(candidate.Path, directoryPath) ||
+                !IsWithinModelDirectory(candidate.Path) ||
+                IsPathReferenced(candidate.Path, referencedPaths) ||
+                IsPathReferenced(candidate.Path, protectedRuntimePaths) ||
+                IsPathReferenced(candidate.Path, activeDownloadPaths))
+                continue;
+
+            if (!File.Exists(candidate.Path) && !Directory.Exists(candidate.Path))
+                continue;
+
+            DeleteModelFiles(candidate.Path);
+            var metadata = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == candidate.Path, cancellationToken);
+            if (metadata is not null)
+                db.ModelMetadata.Remove(metadata);
+
+            var modelEntries = await db.Models.Where(model => model.Path == candidate.Path).ToArrayAsync(cancellationToken);
+            db.Models.RemoveRange(modelEntries);
+            await db.SaveChangesAsync(cancellationToken);
+            deletedCount++;
+            reclaimedBytes += candidate.SizeInBytes;
+        }
+
+        return new ModelCleanupResult(deletedCount, reclaimedBytes);
+    }
+
+    private async Task<(string DirectoryPath, IReadOnlyList<LocalModel> Candidates)> GetModelCleanupCandidatesAsync(
+        string requestedDirectoryPath,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(requestedDirectoryPath))
+            throw new ArgumentException("A configured model directory is required.", nameof(requestedDirectoryPath));
+
+        var directoryPath = ResolveConfiguredModelDirectory(requestedDirectoryPath);
+        var scannedModels = await localModelCatalog.ScanLocalModelsAsync(cancellationToken);
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var referencedPaths = await GetReferencedModelPathsAsync(db, cancellationToken);
+        var protectedRuntimePaths = GetProtectedRuntimeModelPaths();
+        var activeDownloadPaths = await GetActiveModelDownloadPathsAsync(db, cancellationToken);
+
+        var candidates = scannedModels
+            .Where(model => IsPathWithinDirectory(model.Path, directoryPath))
+            .Where(model => !IsPathReferenced(model.Path, referencedPaths))
+            .Where(model => !IsPathReferenced(model.Path, protectedRuntimePaths))
+            .Where(model => !IsPathReferenced(model.Path, activeDownloadPaths))
+            .Select(model => new LocalModel(model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc, model.Format))
+            .ToArray();
+
+        return (directoryPath, candidates);
+    }
+
+    private string ResolveConfiguredModelDirectory(string requestedDirectoryPath)
+    {
+        var requestedPath = Path.GetFullPath(requestedDirectoryPath.Trim());
+        return modelDirectoryCatalog.GetModelDirectories()
+            .Select(directory => Path.GetFullPath(directory))
+            .FirstOrDefault(directory => string.Equals(directory, requestedPath, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException("The model directory is not configured in the model library.");
+    }
+
+    private static async Task<string[]> GetReferencedModelPathsAsync(
+        ApplicationDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var configurationPaths = await db.ModelConfigurations.AsNoTracking()
+            .Select(configuration => configuration.ModelPath)
+            .ToArrayAsync(cancellationToken);
+        var settingsPaths = await db.ModelSettings.AsNoTracking()
+            .Select(settings => settings.ModelPath)
+            .ToArrayAsync(cancellationToken);
+        var chatPaths = await db.ChatMessages.AsNoTracking()
+            .Where(message => message.ModelPath != null)
+            .Select(message => message.ModelPath!)
+            .ToArrayAsync(cancellationToken);
+        var assignedModelPaths = await db.Models.AsNoTracking()
+            .Where(model => model.ConfigurationId != null)
+            .Select(model => model.Path)
+            .ToArrayAsync(cancellationToken);
+        var manuallyConfiguredPaths = await db.ModelMetadata.AsNoTracking()
+            .Where(metadata => metadata.IsManuallyConfigured && !metadata.IsDeleted)
+            .Select(metadata => metadata.ModelPath)
+            .ToArrayAsync(cancellationToken);
+
+        return configurationPaths
+            .Concat(settingsPaths)
+            .Concat(chatPaths)
+            .Concat(assignedModelPaths)
+            .Concat(manuallyConfiguredPaths)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToArray();
+    }
+
+    private async Task<string[]> GetActiveModelDownloadPathsAsync(
+        ApplicationDbContext db,
+        CancellationToken cancellationToken)
+    {
+        var persistedPaths = await db.ModelDownloads.AsNoTracking()
+            .Where(download => !download.Completed && download.Error == null)
+            .Select(download => download.DestinationPath)
+            .ToArrayAsync(cancellationToken);
+        var activePaths = downloadManager.GetDownloads()
+            .Where(download => !download.Completed && download.Error is null)
+            .Select(download => download.DestinationPath);
+
+        return persistedPaths.Concat(activePaths).ToArray();
+    }
+
+    private IReadOnlyList<string> GetProtectedRuntimeModelPaths()
+    {
+        var status = modelRuntime.LoadedModel_Read();
+        var paths = status.LoadedModels
+            .Where(model => model.IsLoading || model.IsModelLoaded)
+            .Select(model => model.ModelPath)
+            .ToList();
+        if (status.IsModelLoaded && !string.IsNullOrWhiteSpace(status.ModelPath))
+            paths.Add(status.ModelPath);
+
+        return paths;
+    }
+
+    private static bool IsPathReferenced(string modelPath, IEnumerable<string> referencePaths) =>
+        referencePaths.Any(referencePath => PathsOverlap(modelPath, referencePath));
+
+    private static bool PathsOverlap(string firstPath, string secondPath)
+    {
+        if (string.IsNullOrWhiteSpace(firstPath) || string.IsNullOrWhiteSpace(secondPath))
+            return false;
+
+        var first = Path.TrimEndingDirectorySeparator(Path.GetFullPath(firstPath));
+        var second = Path.TrimEndingDirectorySeparator(Path.GetFullPath(secondPath));
+        return string.Equals(first, second, StringComparison.OrdinalIgnoreCase) ||
+            IsPathWithinDirectory(first, second) ||
+            IsPathWithinDirectory(second, first);
+    }
+
+    private static bool IsPathWithinDirectory(string path, string directory)
+    {
+        var relativePath = Path.GetRelativePath(directory, path);
+        return relativePath == "." ||
+            (relativePath != ".." &&
+                !relativePath.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
+                !Path.IsPathRooted(relativePath));
+    }
+
     private bool IsWithinModelDirectory(string modelPath) => modelDirectoryCatalog.GetModelDirectories()
         .Select(Path.GetFullPath)
         .Any(directory =>
@@ -384,7 +550,6 @@ public sealed class DataService(
     public async Task FlowDefinition_SeedDefaultsAsync(CancellationToken cancellationToken = default)
     {
         var definitions = await FlowDefinition_ReadAsync(cancellationToken).ConfigureAwait(false);
-        var existingNames = definitions.Select(definition => definition.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var defaults = new (string Name, string Trigger, string Target)[]
         {
             ("Chat request router", "Receive chat request", "Loaded local model"),
@@ -395,8 +560,19 @@ public sealed class DataService(
 
         foreach (var (name, trigger, target) in defaults)
         {
-            if (existingNames.Contains(name))
+            var existing = definitions.FirstOrDefault(definition =>
+                string.Equals(definition.Name, name, StringComparison.OrdinalIgnoreCase));
+            if (existing is not null)
+            {
+                if (!existing.IsPublished)
+                    await FlowDefinition_UpdateAsync(existing with
+                    {
+                        IsPublished = true,
+                        Version = existing.Version + 1
+                    }, cancellationToken).ConfigureAwait(false);
+
                 continue;
+            }
 
             var json = JsonSerializer.Serialize(new
             {
@@ -435,8 +611,16 @@ public sealed class DataService(
         string? currentModelIdentifier,
         CancellationToken cancellationToken)
     {
-        var definition = (await FlowDefinition_ReadAsync(cancellationToken).ConfigureAwait(false))
+        var definitions = await FlowDefinition_ReadAsync(cancellationToken).ConfigureAwait(false);
+        var definition = definitions
             .FirstOrDefault(item => item.IsPublished && string.Equals(item.Name, workflowName, StringComparison.OrdinalIgnoreCase));
+        if (definition is null)
+        {
+            await FlowDefinition_SeedDefaultsAsync(cancellationToken).ConfigureAwait(false);
+            definition = (await FlowDefinition_ReadAsync(cancellationToken).ConfigureAwait(false))
+                .FirstOrDefault(item => item.IsPublished && string.Equals(item.Name, workflowName, StringComparison.OrdinalIgnoreCase));
+        }
+
         if (definition is null)
             throw new InvalidOperationException($"The published workflow '{workflowName}' is not configured.");
 
@@ -475,7 +659,21 @@ public sealed class DataService(
     {
         var decision = await FlowRouteAsync(request, cancellationToken).ConfigureAwait(false);
         if (decision.SelectedConfiguration is not { } configuration)
-            return (request, ValidateChatBackend(request.Backend));
+        {
+            var requestedBackend = request.Backend;
+            if (!string.IsNullOrWhiteSpace(request.BackendVariantId))
+            {
+                var backendVariantId = request.BackendVariantId;
+                var backendRoute = modelRuntime.GetBackendRoute(backendVariantId)
+                    ?? throw new InvalidOperationException($"No backend route is registered for '{backendVariantId}'.");
+                requestedBackend = modelRuntime.GetBackendFamily(backendVariantId) == ConfigurationBackend.Vllm
+                    ? "vLLM"
+                    : backendRoute;
+            }
+
+            var validatedBackend = ValidateChatBackend(requestedBackend);
+            return (request with { Backend = validatedBackend }, validatedBackend);
+        }
 
         var isLoaded = modelRuntime.LoadedModel_Read().LoadedModels.Any(model =>
             !model.IsLoading &&
@@ -500,11 +698,14 @@ public sealed class DataService(
             },
             ConfigurationBackend.OpenVino => "OpenVINO",
             ConfigurationBackend.Vllm => "vLLM",
-            ConfigurationBackend.Sglang => "SGLang",
-            ConfigurationBackend.DotLlm => "dotLLM",
             _ => throw new ArgumentOutOfRangeException(nameof(configuration), configuration.Backend, "Unsupported backend family.")
         };
-        return (request with { ModelPath = configuration.ModelPath, Backend = backend }, backend);
+        return (request with
+        {
+            ModelPath = configuration.ModelPath,
+            Backend = backend,
+            BackendVariantId = configuration.BackendVariantId
+        }, backend);
     }
 
     private async Task<FlowDefinition> FlowDefinition_SaveAsync(FlowDefinition definition, CancellationToken cancellationToken)
@@ -694,15 +895,11 @@ public sealed class DataService(
                 await modelRuntime.LoadAsync(DeserializeConfiguration<OpenVinoLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, CancellationToken.None);
                 break;
             case ConfigurationBackend.Vllm:
-            case ConfigurationBackend.Sglang:
                 await LoadPythonModelAsync(DeserializeConfiguration<PythonInferenceLoadRequest>(configuration.ConfigurationJson) with
                 {
                     ModelPath = model.Path,
                     Backend = configuration.Backend
                 }, CancellationToken.None);
-                break;
-            case ConfigurationBackend.DotLlm:
-                await LoadDotLlmModelAsync(DeserializeConfiguration<DotLlmLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, CancellationToken.None);
                 break;
             default:
                 throw new ArgumentException("The model configuration backend is not supported.", nameof(request));
@@ -1069,15 +1266,9 @@ public sealed class DataService(
 
     public async Task<ModelLoadStatus> LoadPythonModelAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default)
     {
-        if (request.Backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
-            throw new ArgumentException("A vLLM or SGLang backend is required.", nameof(request));
+        if (request.Backend != ConfigurationBackend.Vllm)
+            throw new ArgumentException("A vLLM backend is required.", nameof(request));
 
-        await modelRuntime.LoadAsync(request, cancellationToken);
-        return modelRuntime.LoadedModel_Read();
-    }
-
-    public async Task<ModelLoadStatus> LoadDotLlmModelAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default)
-    {
         await modelRuntime.LoadAsync(request, cancellationToken);
         return modelRuntime.LoadedModel_Read();
     }
@@ -1309,7 +1500,7 @@ public sealed class DataService(
             return new(result.IsInstalled, result.Message, $"Package: {result.PackageId}{Environment.NewLine}Version: {result.Version}{Environment.NewLine}Route: {result.Route}");
         }
 
-        if (backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
+        if (backend != ConfigurationBackend.Vllm)
             return new(false, "This backend has no user-space preparation action.", string.Empty);
 
         try
@@ -1466,10 +1657,9 @@ public sealed class DataService(
              !string.Equals(normalizedBackend, "Vulkan", StringComparison.OrdinalIgnoreCase) &&
              !string.Equals(normalizedBackend, "CUDA", StringComparison.OrdinalIgnoreCase) &&
              !string.Equals(normalizedBackend, "SYCL", StringComparison.OrdinalIgnoreCase) &&
+             !string.Equals(normalizedBackend, "XPU", StringComparison.OrdinalIgnoreCase) &&
              !string.Equals(normalizedBackend, "CPU", StringComparison.OrdinalIgnoreCase) &&
-             !string.Equals(normalizedBackend, "vLLM", StringComparison.OrdinalIgnoreCase) &&
-             !string.Equals(normalizedBackend, "SGLang", StringComparison.OrdinalIgnoreCase) &&
-             !string.Equals(normalizedBackend, "dotLLM", StringComparison.OrdinalIgnoreCase)))
+             !string.Equals(normalizedBackend, "vLLM", StringComparison.OrdinalIgnoreCase)))
             throw new ArgumentException($"Unsupported chat backend '{backend}'.", nameof(backend));
 
         return normalizedBackend;
@@ -1493,7 +1683,9 @@ public sealed class DataService(
 
     private static ModelSettings ToModelSettings(ModelSettingsEntity entity) =>
         new(entity.ModelPath, entity.Backend, entity.ConfigurationJson, entity.ConfigurationId,
-            ResolveBackendVariantId(entity.Backend, entity.ConfigurationJson))
+            string.IsNullOrWhiteSpace(entity.BackendVariantId)
+                ? ResolveBackendVariantId(entity.Backend, entity.ConfigurationJson)
+                : entity.BackendVariantId)
         {
             Devices = entity.Devices.ToList()
         };
@@ -1502,7 +1694,9 @@ public sealed class DataService(
         new(entity.Id, entity.Name, entity.Description, entity.ModelPath, entity.IsDefault, entity.SchemaVersion,
             entity.ConfigurationJson, entity.CreatedAtUtc, entity.UpdatedAtUtc, entity.Backend,
             DeserializeInferenceTimeout(entity.InferenceTimeoutJson), entity.AutoLaunch,
-            ResolveBackendVariantId(entity.Backend, entity.ConfigurationJson));
+            string.IsNullOrWhiteSpace(entity.BackendVariantId)
+                ? ResolveBackendVariantId(entity.Backend, entity.ConfigurationJson)
+                : entity.BackendVariantId);
 
     private static string ResolveAndValidateBackendVariantId(
         ConfigurationBackend backend,
@@ -1511,8 +1705,17 @@ public sealed class DataService(
         string parameterName)
     {
         var resolvedVariantId = ResolveBackendVariantId(backend, configurationJson);
-        if (!string.IsNullOrWhiteSpace(suppliedVariantId) &&
-            !string.Equals(suppliedVariantId.Trim(), resolvedVariantId, StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(suppliedVariantId) ||
+            string.Equals(suppliedVariantId.Trim(), resolvedVariantId, StringComparison.OrdinalIgnoreCase))
+            return resolvedVariantId;
+
+        var normalizedVariantId = suppliedVariantId.Trim().ToLowerInvariant();
+        if (backend == ConfigurationBackend.Vllm &&
+            normalizedVariantId is "vllm.cuda12" or "vllm.xpu" &&
+            !HasConfiguredVllmDeviceRoute(configurationJson))
+            return normalizedVariantId;
+
+        if (!string.Equals(normalizedVariantId, resolvedVariantId, StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException(
                 $"Backend variant '{suppliedVariantId}' does not match the configuration variant '{resolvedVariantId}'.",
                 parameterName);
@@ -1552,11 +1755,25 @@ public sealed class DataService(
                 },
             ConfigurationBackend.OpenVino => "openvino",
             ConfigurationBackend.Vllm => IsXpuConfiguration(root) ? "vllm.xpu" : "vllm.cuda12",
-            ConfigurationBackend.Sglang => IsXpuDeviceConfiguration(root) ? "sglang.xpu" : "sglang.cuda12",
+            ConfigurationBackend.Sglang => IsXpuConfiguration(root) ? "sglang.xpu" : "sglang.cuda12",
             ConfigurationBackend.DotLlm => "dotllm.cpu",
             _ => throw new ArgumentOutOfRangeException(nameof(backend), backend, "Unsupported backend family.")
         };
     }
+
+    private static bool HasConfiguredVllmDeviceRoute(string configurationJson)
+    {
+        using var configuration = JsonDocument.Parse(configurationJson);
+        var root = configuration.RootElement;
+        return IsVllmDeviceRoute(GetStringProperty(root, "Device")) ||
+            TryGetProperty(root, "Devices", out var devices) && devices.ValueKind == JsonValueKind.Array &&
+            devices.EnumerateArray().Any(device => device.ValueKind == JsonValueKind.String &&
+                IsVllmDeviceRoute(device.GetString()));
+    }
+
+    private static bool IsVllmDeviceRoute(string? route) =>
+        route?.StartsWith("cuda:", StringComparison.OrdinalIgnoreCase) == true ||
+        route?.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase) == true;
 
     private static string? GetStringProperty(JsonElement root, string propertyName)
     {

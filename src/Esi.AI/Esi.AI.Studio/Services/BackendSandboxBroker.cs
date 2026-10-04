@@ -57,13 +57,11 @@ public sealed class BackendSandboxBroker
         ArgumentException.ThrowIfNullOrWhiteSpace(backendVariantId);
         var backend = backendVariantId.StartsWith("vllm.", StringComparison.OrdinalIgnoreCase)
             ? ConfigurationBackend.Vllm
-            : string.Equals(backendVariantId, "sglang", StringComparison.OrdinalIgnoreCase)
-                ? ConfigurationBackend.Sglang
-                : string.Equals(backendVariantId, "openvino", StringComparison.OrdinalIgnoreCase)
-                    ? ConfigurationBackend.OpenVino
-                    : string.Equals(backendVariantId, "dotllm.cpu", StringComparison.OrdinalIgnoreCase)
-                        ? ConfigurationBackend.DotLlm
-                        : ConfigurationBackend.Llama;
+            : string.Equals(backendVariantId, "openvino", StringComparison.OrdinalIgnoreCase)
+                ? ConfigurationBackend.OpenVino
+                : backendVariantId.StartsWith("llama.", StringComparison.OrdinalIgnoreCase)
+                    ? ConfigurationBackend.Llama
+                    : throw new ArgumentException($"Backend variant '{backendVariantId}' is not supported.", nameof(backendVariantId));
         var response = await ExecuteAsync(new BackendWorkerRequest(
             "discover-devices",
             backend,
@@ -140,8 +138,16 @@ public sealed class BackendSandboxBroker
             var errorTask = process.StandardError.ReadToEndAsync(timeout.Token);
             var output = await outputTask.ConfigureAwait(false);
             var error = await errorTask.ConfigureAwait(false);
+            await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(output))
                 return new(false, Error: string.IsNullOrWhiteSpace(error) ? "The backend worker returned no output." : error.Trim());
+
+            if (process.ExitCode != 0 && !output.TrimStart().StartsWith('{'))
+            {
+                var diagnostics = string.Join(Environment.NewLine,
+                    new[] { output.Trim(), error.Trim() }.Where(value => !string.IsNullOrWhiteSpace(value)));
+                return new(false, Error: $"The backend worker exited with code {process.ExitCode} without returning a response.{Environment.NewLine}{diagnostics}");
+            }
 
             return JsonSerializer.Deserialize<BackendWorkerResponse>(output, jsonOptions)
                 ?? new BackendWorkerResponse(false, Error: "The backend worker returned invalid JSON.");

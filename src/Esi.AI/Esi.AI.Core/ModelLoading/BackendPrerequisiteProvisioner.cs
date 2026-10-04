@@ -27,7 +27,7 @@ public sealed class BackendPrerequisiteProvisioner
         CancellationToken cancellationToken = default,
         IReadOnlyList<string>? devices = null)
     {
-        if (backend is ConfigurationBackend.Vllm or ConfigurationBackend.Sglang)
+        if (backend == ConfigurationBackend.Vllm)
         {
             var preparation = await pythonProvisioner.PrepareAsync(
                 backend,
@@ -50,7 +50,6 @@ public sealed class BackendPrerequisiteProvisioner
         {
             ConfigurationBackend.Llama => "LLama native runtime is bundled with the application.",
             ConfigurationBackend.OpenVino => "OpenVINO native runtime is bundled with the application.",
-            ConfigurationBackend.DotLlm => "dotLLM native runtime is bundled with the application.",
             _ => throw new ArgumentException("The selected backend is not supported.", nameof(backend))
         };
         return new(backend, null, null, false, message);
@@ -85,7 +84,7 @@ public sealed class BackendPrerequisiteProvisioner
         CancellationToken cancellationToken = default,
         IReadOnlyList<string>? devices = null)
     {
-        if (backend is ConfigurationBackend.Vllm or ConfigurationBackend.Sglang)
+        if (backend == ConfigurationBackend.Vllm)
             return await pythonProvisioner.DiagnoseAsync(backend, requestedPythonExecutable, applicationDirectory ?? AppContext.BaseDirectory, timeout ?? TimeSpan.FromSeconds(20), cancellationToken, devices).ConfigureAwait(false);
 
         if (backend == ConfigurationBackend.Llama)
@@ -94,7 +93,6 @@ public sealed class BackendPrerequisiteProvisioner
         var name = backend switch
         {
             ConfigurationBackend.OpenVino => "OpenVINO",
-            ConfigurationBackend.DotLlm => "dotLLM",
             _ => throw new ArgumentException("The selected backend is not supported.", nameof(backend))
         };
         return new(backend, name, true,

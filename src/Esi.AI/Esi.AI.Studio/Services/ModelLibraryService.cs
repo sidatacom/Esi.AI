@@ -65,9 +65,12 @@ public sealed class ModelLibraryService : ILocalModelCatalog, IModelDirectoryCat
         if (backend == ConfigurationBackend.OpenVino)
             return models.Where(model => model.Format == ReferenceModelFormat.OpenVinoIr).ToArray();
 
-        return backend is ConfigurationBackend.Llama or ConfigurationBackend.DotLlm
-            ? models.Where(model => model.Format == ReferenceModelFormat.Gguf).ToArray()
-            : [];
+        return backend switch
+        {
+            ConfigurationBackend.Llama => models.Where(model => model.Format == ReferenceModelFormat.Gguf).ToArray(),
+            ConfigurationBackend.Vllm => models.Where(model => model.Format == ReferenceModelFormat.Transformers).ToArray(),
+            _ => []
+        };
     }
 
     public async Task<IReadOnlyList<HuggingFaceModelInfo>> SearchHuggingFaceAsync(HuggingFaceSearchRequest request, CancellationToken cancellationToken = default)

@@ -37,7 +37,7 @@ public sealed record InferenceTimeoutDecision(
 /// <summary>Calculates a backend-independent deadline without changing the request payload.</summary>
 public sealed class InferenceTimeoutPolicy
 {
-    public static IReadOnlyList<string> BackendNames { get; } = ["Llama", "OpenVINO", "vLLM", "SGLang", "dotLLM"];
+    public static IReadOnlyList<string> BackendNames { get; } = ["Llama", "OpenVINO", "vLLM"];
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly InferenceTimeoutOptions options;
     private readonly ApplicationSettingsService? applicationSettings;

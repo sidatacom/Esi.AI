@@ -11,7 +11,7 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Esi.AI", "Esi.AI", "{4EB8C85B-F801-9A97-2D31-0114BD2D0289}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Core.Tests", "src\Esi.AI\Esi.AI.Core.Tests\Esi.AI.Core.Tests.csproj", "{3E478041-E4CA-409A-830B-650A1D29A710}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Core.Tests", "..\tests\Esi.AI.Core.Tests\Esi.AI.Core.Tests.csproj", "{3E478041-E4CA-409A-830B-650A1D29A710}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Core", "src\Esi.AI\Esi.AI.Core\Esi.AI.Core.csproj", "{41376023-C505-48EB-A415-803A49B662CB}"
 EndProject
@@ -55,7 +55,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DotLLM.Telemetry", "origins
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "DotLLM.Cli", "origins\sidatacom\dotLLM\src\DotLLM.Cli\DotLLM.Cli.csproj", "{80808F54-665F-433E-9DDC-FF677C56D435}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Studio.Tests", "src\Esi.AI\Esi.AI.Studio.Tests\Esi.AI.Studio.Tests.csproj", "{09B100A2-0426-44AC-8E04-6941D2DD8EF6}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Studio.Tests", "..\tests\Esi.AI.Studio.Tests\Esi.AI.Studio.Tests.csproj", "{09B100A2-0426-44AC-8E04-6941D2DD8EF6}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Studio.Contracts", "src\Esi.AI\Esi.AI.Studio.Contracts\Esi.AI.Studio.Contracts.csproj", "{424DB566-7694-4CE8-A7A3-13784CA2AB23}"
 EndProject
@@ -107,25 +107,25 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Abstractions
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Llama.Vulkan", "src\Esi.AI\Esi.AI.Backend.Llama.Vulkan\Esi.AI.Backend.Llama.Vulkan.csproj", "{B0D37B4A-6145-4ED4-B71D-D007DAAEC9D5}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Llama.Vulkan.Tests", "src\Esi.AI\Esi.AI.Backend.Llama.Vulkan.Tests\Esi.AI.Backend.Llama.Vulkan.Tests.csproj", "{E837FF97-14A7-4A36-A9D6-3854E5B5BBF9}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Llama.Vulkan.Tests", "..\tests\Esi.AI.Backend.Llama.Vulkan.Tests\Esi.AI.Backend.Llama.Vulkan.Tests.csproj", "{E837FF97-14A7-4A36-A9D6-3854E5B5BBF9}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Llama.Cuda12.Tests", "src\Esi.AI\Esi.AI.Backend.Llama.Cuda12.Tests\Esi.AI.Backend.Llama.Cuda12.Tests.csproj", "{22A1784B-68E5-4396-9F2B-DE31B0ECE05B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Llama.Cuda12.Tests", "..\tests\Esi.AI.Backend.Llama.Cuda12.Tests\Esi.AI.Backend.Llama.Cuda12.Tests.csproj", "{22A1784B-68E5-4396-9F2B-DE31B0ECE05B}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Llama.Cuda12", "src\Esi.AI\Esi.AI.Backend.Llama.Cuda12\Esi.AI.Backend.Llama.Cuda12.csproj", "{732ED6A1-1140-4410-A9CA-321DCC405135}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Llama.Sycl", "src\Esi.AI\Esi.AI.Backend.Llama.Sycl\Esi.AI.Backend.Llama.Sycl.csproj", "{9613E942-C68F-4559-85EE-D908B62C9D71}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Vllm.Xpu.Tests", "src\Esi.AI\Esi.AI.Backend.Vllm.Xpu.Tests\Esi.AI.Backend.Vllm.Xpu.Tests.csproj", "{839FDA11-E38F-4DFC-8036-5CDEF9DA0DBA}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Vllm.Xpu.Tests", "..\tests\Esi.AI.Backend.Vllm.Xpu.Tests\Esi.AI.Backend.Vllm.Xpu.Tests.csproj", "{839FDA11-E38F-4DFC-8036-5CDEF9DA0DBA}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Vllm.Xpu", "src\Esi.AI\Esi.AI.Backend.Vllm.Xpu\Esi.AI.Backend.Vllm.Xpu.csproj", "{E8138B8E-07F0-4CFB-900E-63BE9C48D0C7}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.OpenVino", "src\Esi.AI\Esi.AI.Backend.OpenVino\Esi.AI.Backend.OpenVino.csproj", "{FB4FE2FC-87B6-4894-A196-2D7A5D2DB02B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Vllm.Cuda12.Tests", "src\Esi.AI\Esi.AI.Backend.Vllm.Cuda12.Tests\Esi.AI.Backend.Vllm.Cuda12.Tests.csproj", "{F3D08BF1-BC9A-4F4D-83C8-159A3789767E}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Vllm.Cuda12.Tests", "..\tests\Esi.AI.Backend.Vllm.Cuda12.Tests\Esi.AI.Backend.Vllm.Cuda12.Tests.csproj", "{F3D08BF1-BC9A-4F4D-83C8-159A3789767E}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Vllm.Cuda12", "src\Esi.AI\Esi.AI.Backend.Vllm.Cuda12\Esi.AI.Backend.Vllm.Cuda12.csproj", "{5195AA6A-2E88-490F-A754-7F758307177A}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.OpenVino.Tests", "src\Esi.AI\Esi.AI.Backend.OpenVino.Tests\Esi.AI.Backend.OpenVino.Tests.csproj", "{F4EB3DD8-FF18-41F8-B408-73EF5E2B3861}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.OpenVino.Tests", "..\tests\Esi.AI.Backend.OpenVino.Tests\Esi.AI.Backend.OpenVino.Tests.csproj", "{F4EB3DD8-FF18-41F8-B408-73EF5E2B3861}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

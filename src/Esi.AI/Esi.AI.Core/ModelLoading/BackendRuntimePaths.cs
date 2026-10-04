@@ -49,7 +49,6 @@ public static class BackendRuntimePaths
         ArgumentException.ThrowIfNullOrWhiteSpace(directory);
         if (!Directory.Exists(directory) || !OperatingSystem.IsLinux())
             return;
-
         var currentPath = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
         if (currentPath?.Split(Path.PathSeparator).Contains(directory, StringComparer.Ordinal) == true)
             return;
@@ -60,7 +59,7 @@ public static class BackendRuntimePaths
         Environment.SetEnvironmentVariable("LD_LIBRARY_PATH", string.Join(Path.PathSeparator, paths));
     }
 
-    /// <summary>Sets the bundled Level Zero and Unified Runtime selectors before native runtimes initialize.</summary>
+    /// <summary>Prepares Level Zero system management and the default Intel GPU selector for SYCL.</summary>
     public static void PrepareSyclRuntimeEnvironment(string applicationDirectory)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(applicationDirectory);
@@ -69,11 +68,7 @@ public static class BackendRuntimePaths
 
         var runtimeDirectory = GetLlamaDirectory("SYCL", applicationDirectory);
         var bundledLoader = Path.Combine(runtimeDirectory, "libze_loader.so.1");
-        var bundledDriver = Path.Combine(runtimeDirectory, "libze_intel_gpu.so.1");
         var bundledAdapter = Path.Combine(runtimeDirectory, "libur_adapter_level_zero_v2.so.0");
-        if (File.Exists(bundledLoader) && File.Exists(bundledDriver) && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ZE_ENABLE_ALT_DRIVERS")))
-            Environment.SetEnvironmentVariable("ZE_ENABLE_ALT_DRIVERS", bundledDriver);
-
         if (File.Exists(bundledLoader) && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ZES_ENABLE_SYSMAN")))
             Environment.SetEnvironmentVariable("ZES_ENABLE_SYSMAN", "1");
 
@@ -82,6 +77,5 @@ public static class BackendRuntimePaths
 
         if (string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ONEAPI_DEVICE_SELECTOR")))
             Environment.SetEnvironmentVariable("ONEAPI_DEVICE_SELECTOR", "level_zero:gpu");
-
     }
 }

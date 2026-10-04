@@ -6,22 +6,14 @@
 @inject IDataService DataService
 
 <div class="flow-shell">
-    <header class="flow-header">
-        <div>
-            <p class="eyebrow">WORKFLOW ROUTING</p>
+    <section class="flow-toolbar" aria-label="Workflow controls">
+        <div class="toolbar-identity">
             <h1>Flow</h1>
-            <p class="lede">Optimajet WorkflowEngine.NET</p>
+            <span class="toolbar-subtitle">Optimajet WorkflowEngine.NET</span>
         </div>
-        <div class="flow-actions">
-            <span class="engine-status"><span class="status-dot"></span> Runtime online</span>
-            <button class="primary-button" type="button" @onclick="PublishFlowAsync" disabled="@isSaving || isLoading">Publish</button>
-        </div>
-    </header>
-
-    <section class="flow-toolbar" aria-label="Flow controls">
-        <div class="toolbar-group">
-            <span class="toolbar-label">Workflow</span>
-            <select value="@selectedWorkflow" @onchange="OnWorkflowChangedAsync" disabled="@isLoading">
+        <div class="toolbar-group workflow-group">
+            <label class="toolbar-label" for="flow-workflow">Workflow</label>
+            <select id="flow-workflow" value="@selectedWorkflow" @onchange="OnWorkflowChangedAsync" disabled="@isLoading">
                 <option>Chat request router</option>
                 <option>Vision request router</option>
                 <option>Tool calling router</option>
@@ -29,7 +21,9 @@
             <span class="version-label">v@(currentDefinition?.Version ?? 1) · @(currentDefinition?.IsPublished == true ? "Published" : "Draft")</span>
         </div>
         <div class="toolbar-group toolbar-right">
-            <button class="tool-button" type="button" @onclick="() => SaveFlowAsync()" disabled="@isSaving || isLoading">@(isSaving ? "Saving..." : "Save draft")</button>
+            <span class="engine-status"><span class="status-dot"></span> Runtime online</span>
+            <button class="tool-button" type="button" @onclick="() => SaveFlowAsync()" disabled="@(isSaving || isLoading)">@(isSaving ? "Saving..." : "Save draft")</button>
+            <button class="primary-button" type="button" @onclick="PublishFlowAsync" disabled="@(isSaving || isLoading)">Publish</button>
         </div>
     </section>
 
@@ -53,24 +47,34 @@
 </div>
 
 <style>
-    .flow-shell { min-height: calc(100vh - 5rem); padding: 1.4rem 1.25rem 2rem; color: #203033; }
-    .flow-header, .flow-toolbar, .toolbar-group, .flow-actions { display: flex; align-items: center; gap: 1rem; }
-    .flow-header { justify-content: space-between; margin: 0 auto 1.25rem; max-width: 1500px; }
-    .flow-header h1 { margin: .25rem 0 .4rem; font-size: 2rem; }
-    .flow-header .lede { max-width: 42rem; margin: 0; }
-    .flow-actions { flex-wrap: wrap; justify-content: flex-end; }
+    .flow-shell { min-height: calc(100vh - 5rem); padding: 0; color: #203033; }
+    .flow-toolbar, .toolbar-group, .toolbar-identity { display: flex; align-items: center; gap: .75rem; }
+    .flow-toolbar { flex-wrap: wrap; }
+    .toolbar-identity { flex: 0 0 auto; gap: .55rem; white-space: nowrap; }
+    .toolbar-identity h1 { margin: 0; font-size: 1.15rem; }
+    .toolbar-subtitle { color: #667976; font-size: .75rem; }
     .engine-status { display: inline-flex; align-items: center; gap: .45rem; color: #35675e; font-size: .82rem; font-weight: 700; }
     .status-dot { width: .55rem; height: .55rem; border-radius: 50%; background: #38a169; box-shadow: 0 0 0 .2rem #d7f2e4; }
     .primary-button, .tool-button { border: 1px solid #b7c7c2; background: #fff; color: #254b4b; cursor: pointer; font: inherit; }
     .primary-button { padding: .65rem 1rem; border-color: #236b70; background: #236b70; color: #fff; font-weight: 700; }
-    .flow-toolbar { justify-content: space-between; max-width: 1500px; margin: 0 auto 1rem; padding: .7rem .9rem; border: 1px solid #d6dfdb; background: #f7faf8; }
-    .toolbar-label, .version-label { color: #667976; font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; }
+    .flow-toolbar { max-width: 1500px; margin: 0 auto 1rem; padding: .55rem .9rem; border: 1px solid #d6dfdb; background: #f7faf8; }
+    .toolbar-label, .version-label { color: #667976; font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0; }
     .flow-toolbar select { border: 1px solid #c4d0cc; background: #fff; color: #203033; font: inherit; padding: .5rem .6rem; }
     .toolbar-right { margin-left: auto; }.tool-button { padding: .5rem .8rem; }
     .flow-workspace { max-width: 1500px; height: min(72vh, 820px); min-height: 34rem; margin: 0 auto; overflow: hidden; border: 1px solid #cbd8d3; background: #fff; }
     .workspace-message { padding: 3rem; text-align: center; color: #667976; }
     .save-status { max-width: 1500px; margin: .75rem auto; padding: .45rem .7rem; border: 1px solid #b9d5c8; background: #f1faf4; color: #35675e; font-size: .75rem; }
-    @@media (max-width: 680px) { .flow-shell { padding: 1rem .75rem; }.flow-header, .flow-toolbar { align-items: stretch; flex-direction: column; }.flow-actions, .toolbar-right { justify-content: flex-start; margin-left: 0; }.toolbar-group { align-items: flex-start; flex-wrap: wrap; }.flow-workspace { height: 72vh; min-height: 30rem; } }
+    @@media (max-width: 1000px) { .toolbar-identity { flex-basis: 100%; }.toolbar-right { margin-left: 0; } }
+    @@media (max-width: 680px) {
+        .flow-toolbar { align-items: stretch; flex-direction: column; gap: .55rem; padding: .55rem .7rem; }
+        .workflow-group { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .35rem .6rem; }
+        .flow-toolbar select { width: 100%; min-width: 0; }
+        .version-label { grid-column: 2; }
+        .toolbar-group { align-items: center; flex-wrap: wrap; }
+        .toolbar-right { justify-content: space-between; margin-left: 0; gap: .45rem; }
+        .primary-button, .tool-button { padding: .4rem .55rem; font-size: .82rem; }
+        .flow-workspace { height: 72vh; min-height: 30rem; }
+    }
 </style>
 
 @code {

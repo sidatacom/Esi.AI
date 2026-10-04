@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using Elsa.Studio.Workflows.Designer.Extensions;
 using System.Net.Http.Headers;
 using Esi.AI.Studio.Components;
 using Esi.AI.Studio.Components.Account;
@@ -33,7 +34,6 @@ catch (AbandonedMutexException)
 }
 
 BackendRuntimePaths.PrepareSyclRuntimeEnvironment(AppContext.BaseDirectory);
-BackendRuntimePaths.PrependLibraryPath(BackendRuntimePaths.GetLlamaDirectory("SYCL", AppContext.BaseDirectory));
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -44,7 +44,10 @@ builder.WebHost.UseStaticWebAssets();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents()
+    .AddInteractiveServerComponents(options =>
+    {
+        options.RootComponents.RegisterCustomElsaStudioElements();
+    })
     .AddInteractiveWebAssemblyComponents()
     .AddAuthenticationStateSerialization();
 builder.Services.AddFluentUIComponents();
@@ -160,7 +163,6 @@ builder.Services.AddSingleton<ModelRuntime>(services =>
         new LlamaModelLoader(),
         services.GetRequiredService<OpenVinoModelLoader>(),
         new PythonInferenceServer(),
-        new DotLlmInProcessRuntime(),
         services.GetRequiredService<BackendPrerequisiteProvisioner>(),
         services.GetRequiredService<IModelRuntimeStatusPublisher>(),
         new ModelLifecycleCoordinator(),

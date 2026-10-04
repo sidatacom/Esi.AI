@@ -74,11 +74,17 @@ public sealed class InferenceService(
         var content = request.Content.Trim();
         var messages = chat.Messages.Select(message => new ChatMessage(message.Role, message.Content))
             .Append(new ChatMessage("user", content, request.Images, request.ContentParts)).ToArray();
+        var loadedBackendVariantId = modelRuntime.GetLoadedBackendVariantId(request.ModelPath, request.BackendVariantId);
+        if (!string.IsNullOrWhiteSpace(request.BackendVariantId) &&
+            modelRuntime.HasBackendRuntime(request.BackendVariantId) &&
+            string.IsNullOrWhiteSpace(loadedBackendVariantId))
+            throw new InvalidOperationException($"The selected backend variant '{request.BackendVariantId}' is not loaded for model '{request.ModelPath}'.");
+
         OpenVinoModelLoadStatus? openVinoStatus = null;
         if (string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase))
         {
             var modelPath = Path.GetFullPath(request.ModelPath!);
-            if (string.IsNullOrWhiteSpace(modelRuntime.GetLoadedBackendVariantId(modelPath)))
+            if (string.IsNullOrWhiteSpace(loadedBackendVariantId))
             {
                 openVinoStatus = modelRuntime.GetOpenVinoStatus();
                 if (!openVinoStatus.IsModelLoaded)
@@ -90,17 +96,15 @@ public sealed class InferenceService(
 
         if (request.Images is { Count: > 0 } && !modelRuntime.SupportsImageInput(backend, request.ModelPath))
             throw new InvalidOperationException($"The {backend} backend does not support image input.");
-        if (!string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase) &&
+        if (string.IsNullOrWhiteSpace(loadedBackendVariantId) &&
+            !string.Equals(backend, "OpenVINO", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(backend, "vLLM", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(backend, "SGLang", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(backend, "dotLLM", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(Path.GetExtension(request.ModelPath), ".gguf", StringComparison.OrdinalIgnoreCase))
             throw new ArgumentException("LLama chat requires a .gguf model path.", nameof(request));
 
         try
         {
-            var backendVariantId = modelRuntime.GetLoadedBackendVariantId(request.ModelPath);
-            if (!string.IsNullOrWhiteSpace(backendVariantId))
+            if (!string.IsNullOrWhiteSpace(loadedBackendVariantId))
             {
                 var normalizedRequest = new OpenAiBackendChatRequest(
                     backend,
@@ -114,7 +118,7 @@ public sealed class InferenceService(
                     messages,
                     null,
                     new ChatGenerationOptions(),
-                    BackendVariantId: backendVariantId);
+                    BackendVariantId: loadedBackendVariantId);
                 return await modelRuntime.GenerateBackendAsync(normalizedRequest, onDelta, cancellationToken).ConfigureAwait(false);
             }
 
@@ -138,16 +142,10 @@ public sealed class InferenceService(
                 }
             }
 
-            if (string.Equals(backend, "vLLM", StringComparison.OrdinalIgnoreCase) || string.Equals(backend, "SGLang", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(backend, "vLLM", StringComparison.OrdinalIgnoreCase))
             {
                 using var pythonSession = modelRuntime.CreatePythonChatSession();
                 return await pythonSession.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
-            }
-
-            if (string.Equals(backend, "dotLLM", StringComparison.OrdinalIgnoreCase))
-            {
-                using var dotLlmSession = modelRuntime.CreateDotLlmChatSession();
-                return await dotLlmSession.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
             }
 
             using var session = modelRuntime.CreateLlamaChatSession("You are a helpful assistant.", request.ModelPath);

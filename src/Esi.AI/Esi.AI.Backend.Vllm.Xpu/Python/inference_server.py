@@ -132,7 +132,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                     "tensor_parallel_size": request.tensor_parallel_size or 1,
                     "trust_remote_code": request.trust_remote_code,
                     "enforce_eager": request.enforce_eager,
-                    "device": "xpu",
+                    "compilation_config": {"custom_ops": ["all", "-silu_and_mul"]},
                 }
                 if request.quantization:
                     engine_options["quantization"] = request.quantization

@@ -25,7 +25,7 @@
     @if (activeTab == ModelTab.Library)
     {
     <section class="library-section">
-        <div class="search-row local-search-row"><span class="count-label">@localModels.Count(model => model.Format == ReferenceModelFormat.Gguf) GGUF · @localModels.Count(model => model.Format == ReferenceModelFormat.OpenVinoIr) OpenVINO · @localModels.Count(model => model.Format == ReferenceModelFormat.Transformers) Transformers</span></div>
+        <div class="search-row local-search-row"><span class="count-label">@localModels.Count(model => model.Format == ReferenceModelFormat.Gguf) GGUF · @localModels.Count(model => model.Format == ReferenceModelFormat.OpenVinoIr) OpenVINO · @localModels.Count(model => model.Format == ReferenceModelFormat.Transformers) Transformers</span><div class="cleanup-controls"><InputSelect class="form-select" @bind-Value="selectedCleanupDirectory" disabled="@(isBusy || modelDirectories.Count == 0)">@foreach (var directory in modelDirectories) { <option value="@directory">@directory</option> }</InputSelect><button class="secondary-button" type="button" @onclick="PreviewCleanupAsync" disabled="@(isBusy || string.IsNullOrWhiteSpace(selectedCleanupDirectory))">Nicht verwendete bereinigen</button></div></div>
         @if (modelDirectories.Count > 0) { <p class="directories">Suche in: @string.Join(" · ", modelDirectories)</p> }
         @if (localModels.Count == 0) { <p class="empty-state">Keine unterstützten Modelle in den konfigurierten Ordnern gefunden.</p> }
         else
@@ -142,6 +142,20 @@
         </div>
     }
 
+    @if (pendingCleanup is not null)
+    {
+        <div class="dialog-backdrop" role="presentation">
+            <section class="delete-dialog cleanup-dialog" role="dialog" aria-modal="true" aria-labelledby="cleanup-title">
+                <p class="eyebrow">MODELL-LIBRARY AUFRÄUMEN</p>
+                <h2 id="cleanup-title">@pendingCleanup.Candidates.Count Modell(e) löschen?</h2>
+                <p>@pendingCleanup.DirectoryPath</p>
+                <p>@FormatSize(pendingCleanup.TotalBytes) werden voraussichtlich freigegeben. Konfigurierte, manuell gepflegte, geladene oder im Chatverlauf verwendete Modelle bleiben erhalten.</p>
+                <div class="cleanup-candidates">@foreach (var candidate in pendingCleanup.Candidates) { <div><strong>@candidate.Name</strong><span>@FormatSize(candidate.SizeInBytes) · @candidate.Path</span></div> }</div>
+                <div class="dialog-actions"><button class="secondary-button" type="button" @onclick="CancelCleanup">Abbrechen</button><button class="danger-button" type="button" @onclick="ConfirmCleanupAsync" disabled="@isBusy">Dateien endgültig löschen</button></div>
+            </section>
+        </div>
+    }
+
     @if (!string.IsNullOrWhiteSpace(message)) { <p class="model-message" role="status">@message</p> }
 </div>
 
@@ -170,6 +184,7 @@
     .local-search-row { align-items: center; border-bottom: 1px solid #d9e4e1; padding-bottom: .8rem; }.model-list { gap: .8rem; }.model-row { align-items: stretch; background: #fff; border: 1px solid #d9e4e1; border-radius: 4px; box-shadow: 0 8px 24px rgba(16, 42, 67, .06); display: grid; grid-template-columns: minmax(0, 1fr) auto; padding: 1.1rem 1.15rem; transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease; }.model-row:hover { border-color: #9bc4c2; box-shadow: 0 12px 28px rgba(16, 42, 67, .1); transform: translateY(-1px); }.model-details { gap: .55rem; }.model-details > strong { color: #102a43; font-size: 1rem; line-height: 1.25; }.model-details > span { color: #627d98; font-size: .76rem; }.compatibility-editor { background: #f5f9f8; border: 1px solid #e1ece9; border-radius: 3px; margin-top: .35rem; padding: .7rem .75rem; }.control-label { color: #236b70; display: block; font-size: .68rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }.backend-checkboxes, .model-capabilities { align-items: center; display: flex; flex-wrap: wrap; gap: .45rem .8rem; }.backend-checkboxes { margin-top: .45rem; }.backend-checkboxes label, .model-capabilities label { align-items: center; color: #304b50; display: inline-flex; font-size: .78rem; gap: .3rem; }.backend-checkboxes input, .model-capabilities input { accent-color: #087f8c; }.hf-sync-row { align-items: center; border-top: 1px solid #dbe8e5; display: grid; gap: .5rem; grid-template-columns: minmax(0, 1fr) auto; margin-top: .7rem; padding-top: .7rem; }.hf-sync-row .form-control { min-width: 0; }.model-capabilities { border-top: 1px solid #e1dbd1; margin-top: .75rem; padding-top: .7rem; }.model-capabilities > span { color: #236b70; font-size: .68rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }.model-actions { align-items: flex-end; display: flex; flex-direction: column; gap: .55rem; justify-content: center; min-width: 5.5rem; }.model-actions .danger-button { background: transparent; border: 1px solid #e6b8ad; color: #8a3b2b; font-size: .78rem; padding: .5rem .7rem; }.model-actions .danger-button:hover { background: #fff4f1; border-color: #c97f70; }.model-actions .secondary-button { font-size: .78rem; padding: .5rem .7rem; }
     @@media (max-width: 640.98px) { .dialog-backdrop { inset: 0; } }
     @@media (max-width: 680px) { .models-header, .runtime-status, .model-row, .search-row { align-items: stretch; flex-direction: column; } .model-row { display: flex; padding: .9rem; }.model-actions { align-items: stretch; flex-direction: row; justify-content: flex-start; min-width: 0; }.model-actions button { flex: 0 1 auto; }.hf-sync-row { grid-template-columns: 1fr; }.filter-columns { grid-template-columns: 1fr; }.secondary-button, .primary-button { width: 100%; } }
+    .cleanup-controls { align-items: center; display: flex; flex-wrap: wrap; gap: .55rem; }.cleanup-controls .form-select { max-width: 24rem; min-width: 12rem; }.cleanup-candidates { display: grid; gap: .35rem; max-height: 14rem; overflow: auto; }.cleanup-candidates > div { border-top: 1px solid #e1dbd1; display: grid; gap: .15rem; padding: .45rem 0; }.cleanup-candidates span { color: #756f65; font-size: .8rem; overflow-wrap: anywhere; }.cleanup-dialog { max-height: min(90vh, 42rem); }
 </style>
 
 @code {
@@ -186,7 +201,7 @@
     private readonly Dictionary<string, DownloadOptions> downloadOptions = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> huggingFaceIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> modelDirectories = [];
-    private static readonly ConfigurationBackend[] supportedBackends = Enum.GetValues<ConfigurationBackend>();
+    private static readonly ConfigurationBackend[] supportedBackends = [ConfigurationBackend.Llama, ConfigurationBackend.OpenVino, ConfigurationBackend.Vllm];
     private string searchQuery = string.Empty;
     private string searchLibrary = "gguf";
     private string searchTask = string.Empty;
@@ -219,6 +234,8 @@
     private string? message;
     private LocalModel? pendingDeleteModel;
     private bool deleteModelFiles;
+    private string selectedCleanupDirectory = string.Empty;
+    private ModelCleanupPreview? pendingCleanup;
 
     protected override async Task OnInitializedAsync()
     {
@@ -248,6 +265,10 @@
             pageState.ModelDirectories = PrerenderStateSnapshots.TryCapture(directories);
         }
         modelDirectories.AddRange(directories);
+        selectedCleanupDirectory = modelDirectories.FirstOrDefault(directory =>
+            directory.EndsWith(Path.Combine(".cache", "esi-ai", "models"), StringComparison.OrdinalIgnoreCase))
+            ?? modelDirectories.FirstOrDefault()
+            ?? string.Empty;
     }
     private async Task LoadStatusAsync()
     {
@@ -267,11 +288,11 @@
     {
         var backends = model.CompatibleBackends ?? [];
         var targets = new List<DownloadTarget>();
-        if (backends.Contains(ConfigurationBackend.Llama) || backends.Contains(ConfigurationBackend.DotLlm))
+        if (backends.Contains(ConfigurationBackend.Llama))
             targets.Add(new("Versionen anzeigen", "gguf"));
         if (backends.Contains(ConfigurationBackend.OpenVino))
             targets.Add(new("OpenVINO herunterladen", "openvino"));
-        if (backends.Contains(ConfigurationBackend.Vllm) || backends.Contains(ConfigurationBackend.Sglang))
+        if (backends.Contains(ConfigurationBackend.Vllm))
             targets.Add(new("Transformers herunterladen", "transformers"));
         return targets;
     }
@@ -288,14 +309,21 @@
     private void RequestDeleteModel(LocalModel model) { pendingDeleteModel = model; deleteModelFiles = false; message = null; }
     private void CancelDeleteModel() { pendingDeleteModel = null; deleteModelFiles = false; }
     private async Task ConfirmDeleteModelAsync() { if (pendingDeleteModel is null) return; var model = pendingDeleteModel; try { isBusy = true; var models = await DataService.LocalModel_DeleteAsync(new ModelDeletionRequest(model.Path, deleteModelFiles)); ReplaceLocalModels(models); message = deleteModelFiles ? "Modell und Dateien gelöscht." : "Modell aus der Library entfernt; Dateien behalten."; pendingDeleteModel = null; } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
+    private async Task PreviewCleanupAsync() { if (string.IsNullOrWhiteSpace(selectedCleanupDirectory)) return; try { isBusy = true; message = null; pendingCleanup = await DataService.LocalModel_CleanPreviewAsync(new ModelCleanupRequest(selectedCleanupDirectory)); if (pendingCleanup.Candidates.Count == 0) { pendingCleanup = null; message = "In diesem Ordner gibt es keine unkonfigurierten Modelle zum Bereinigen."; } } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
+    private void CancelCleanup() => pendingCleanup = null;
+    private async Task ConfirmCleanupAsync() { if (pendingCleanup is null) return; var directoryPath = pendingCleanup.DirectoryPath; try { isBusy = true; var result = await DataService.LocalModel_CleanAsync(new ModelCleanupRequest(directoryPath)); pendingCleanup = null; ReplaceLocalModels(await DataService.LocalModel_ReadAsync()); message = $"{result.DeletedCount} Modell(e) gelöscht, {FormatSize(result.ReclaimedBytes)} freigegeben."; } catch (Exception exception) { message = exception.Message; } finally { isBusy = false; } }
     private void ReplaceLocalModels(IEnumerable<LocalModel> models) { localModels.Clear(); huggingFaceIds.Clear(); foreach (var model in models) { localModels.Add(model); huggingFaceIds[model.Path] = model.HuggingFaceModelId ?? string.Empty; } }
     private static ModelCapabilities GetCapabilities(LocalModel model) => model.Capabilities ?? new ModelCapabilities();
     private string GetHuggingFaceId(LocalModel model) => huggingFaceIds.TryGetValue(model.Path, out var modelId) ? modelId : model.HuggingFaceModelId ?? string.Empty;
     private void SetHuggingFaceId(string modelPath, string? modelId) => huggingFaceIds[modelPath] = modelId ?? string.Empty;
     private static bool IsBackendAssigned(LocalModel model, ConfigurationBackend backend) => model.CompatibleBackends?.Contains(backend) == true;
     private static bool IsCompatible(LocalModel model, ConfigurationBackend backend) => IsBackendAssigned(model, backend);
-    private static string GetBackendLabel(ConfigurationBackend backend) => backend switch { ConfigurationBackend.Llama => "LLama", ConfigurationBackend.OpenVino => "OpenVINO", ConfigurationBackend.Vllm => "vLLM", ConfigurationBackend.Sglang => "SGLang", ConfigurationBackend.DotLlm => "dotLLM", _ => backend.ToString() };
-    private static string FormatBackends(IReadOnlyList<ConfigurationBackend>? backends) => backends is { Count: > 0 } values ? string.Join(", ", values.Select(GetBackendLabel)) : "nicht zugeordnet";
+    private static string GetBackendLabel(ConfigurationBackend backend) => backend switch { ConfigurationBackend.Llama => "LLama", ConfigurationBackend.OpenVino => "OpenVINO", ConfigurationBackend.Vllm => "vLLM", _ => backend.ToString() };
+    private static string FormatBackends(IReadOnlyList<ConfigurationBackend>? backends)
+    {
+        var labels = backends?.Where(supportedBackends.Contains).Select(GetBackendLabel).ToArray() ?? [];
+        return labels.Length > 0 ? string.Join(", ", labels) : "nicht zugeordnet";
+    }
     private static bool IsChecked(ChangeEventArgs args) => args.Value is bool value && value;
     private bool HasCompletedDownloads => downloads.Values.Any(download => download.Completed);
     private bool HasFailedDownloads => downloads.Values.Any(download => !download.Completed && !string.IsNullOrWhiteSpace(download.Error));

@@ -372,12 +372,6 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         return await connection.InvokeAsync<ModelLoadStatus>("LoadPythonModel", request, cancellationToken);
     }
 
-    public async Task<ModelLoadStatus> LoadDotLlmModelAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default)
-    {
-        await EnsureConnectedAsync(cancellationToken);
-        return await connection.InvokeAsync<ModelLoadStatus>("LoadDotLlmModel", request, cancellationToken);
-    }
-
     public async Task<ModelLoadStatus> UnloadModelAsync(CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
@@ -538,6 +532,18 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     {
         await EnsureConnectedAsync(cancellationToken);
         return await connection.InvokeAsync<IReadOnlyList<LocalModel>>("LocalModel_Delete", request, cancellationToken);
+    }
+
+    public async Task<ModelCleanupPreview> LocalModel_CleanPreviewAsync(ModelCleanupRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<ModelCleanupPreview>("LocalModel_CleanPreview", request, cancellationToken);
+    }
+
+    public async Task<ModelCleanupResult> LocalModel_CleanAsync(ModelCleanupRequest request, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<ModelCleanupResult>("LocalModel_Clean", request, cancellationToken);
     }
 
     public async Task<IReadOnlyList<string>> ModelDirectory_ReadAsync(CancellationToken cancellationToken = default)

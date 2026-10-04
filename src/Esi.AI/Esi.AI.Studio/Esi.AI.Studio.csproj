@@ -34,12 +34,13 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.11" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11" PrivateAssets="all" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Tools" Version="10.0.11" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Scripting" Version="5.0.0" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
     <!-- Use the locally built Ubuntu 26.04 runtime packages from NuGet.config. -->
-    <PackageReference Include="OpenVINO.runtime.ubuntu.26-x86_64" Version="2026.3.1" />
-    <PackageReference Include="JYPPX.OpenVINO.GenAI.runtime.ubuntu.26-x86_64" Version="2026.3.1" />
+    <PackageReference Include="OpenVINO.runtime.ubuntu.26-x86_64" Version="2026.4.0" />
+    <PackageReference Include="JYPPX.OpenVINO.GenAI.runtime.ubuntu.26-x86_64" Version="2026.4.0" />
   </ItemGroup>
 
 </Project>

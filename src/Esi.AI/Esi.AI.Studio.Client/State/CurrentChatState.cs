@@ -9,6 +9,7 @@ public sealed class CurrentChatState
     public string? SelectedModelPath { get; set; }
     public ConfigurationBackend? SelectedBackend { get; set; }
     public string? SelectedRuntime { get; set; }
+    public string? SelectedBackendVariantId { get; set; }
     public string? SelectedModelKey { get; set; }
     public bool IsSending { get; set; }
     public string PendingAssistantContent { get; set; } = string.Empty;

@@ -117,20 +117,6 @@ internal static class Program
                 .ToArray());
         }
 
-        if (variantId == "sglang")
-        {
-            var diagnostics = await new BackendPrerequisiteProvisioner().DiagnoseAsync(
-                request.Backend,
-                request.PythonExecutable,
-                applicationDirectory,
-                timeout,
-                devices: request.Devices);
-            return new BackendWorkerResponse(true, Devices: diagnostics.AvailableDevices ?? []);
-        }
-
-        if (variantId == "dotllm.cpu")
-            return new BackendWorkerResponse(true, Devices: []);
-
         IBackendRuntime? runtime = variantId switch
         {
             "llama.vulkan" => new LlamaVulkanRuntime(applicationDirectory),

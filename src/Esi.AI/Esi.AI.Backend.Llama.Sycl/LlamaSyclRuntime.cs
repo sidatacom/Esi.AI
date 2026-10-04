@@ -88,7 +88,6 @@ public sealed class LlamaSyclRuntime : IBackendRuntime
     {
         var runtimeDirectory = SyclRuntimeFiles.GetRuntimeDirectory(applicationDirectory);
         SyclRuntimeFiles.Validate(runtimeDirectory);
-        SyclRuntimeFiles.PrepareLibraryPath(runtimeDirectory);
         SyclRuntimeFiles.PrepareSyclRuntimeEnvironment(runtimeDirectory);
         ConfigureNativeBackend(runtimeDirectory);
         return EnumerateSyclDevices();
@@ -118,7 +117,6 @@ public sealed class LlamaSyclRuntime : IBackendRuntime
 
         var runtimeDirectory = SyclRuntimeFiles.GetRuntimeDirectory(applicationDirectory);
         SyclRuntimeFiles.Validate(runtimeDirectory);
-        SyclRuntimeFiles.PrepareLibraryPath(runtimeDirectory);
         SyclRuntimeFiles.PrepareSyclRuntimeEnvironment(runtimeDirectory);
         ConfigureNativeBackend(runtimeDirectory);
 
@@ -308,6 +306,7 @@ public sealed class LlamaSyclRuntime : IBackendRuntime
             if (nativeConfigured)
                 return;
 
+            SyclRuntimeFiles.LoadAdapterDependencies(runtimeDirectory);
             NativeLibraryConfig.All
                 .WithSearchDirectory(runtimeDirectory)
                 .WithCuda(false)
@@ -413,17 +412,31 @@ public sealed class LlamaSyclRuntime : IBackendRuntime
 
 internal static class SyclRuntimeFiles
 {
+    private const int RtldNow = 2;
+    private const int RtldGlobal = 0x100;
+    private static readonly List<nint> NativeDependencyHandles = [];
+    private static readonly string[] AdapterDependencies =
+    [
+        "libintlc.so.5",
+        "libimf.so",
+        "libsvml.so",
+        "libirng.so",
+        "libumf.so.1"
+    ];
     private static readonly string[] RequiredFiles =
     [
         "libggml-base.so",
         "libggml.so",
         "libggml-sycl.so",
         "libimf.so",
+        "libintlc.so.5",
         "libirng.so",
         "libllama.so",
         "libmtmd.so",
         "libsvml.so",
+        "libumf.so.1",
         "libur_adapter_level_zero.so",
+        "libur_adapter_level_zero_v2.so.0",
         "libze_loader.so"
     ];
 
@@ -442,18 +455,23 @@ internal static class SyclRuntimeFiles
             throw new InvalidOperationException($"The LLama SYCL runtime is incomplete. Missing: {string.Join(", ", missing)} in '{runtimeDirectory}'.");
     }
 
-    internal static void PrepareLibraryPath(string runtimeDirectory)
+    internal static void LoadAdapterDependencies(string runtimeDirectory)
     {
-        if (!OperatingSystem.IsLinux() || !Directory.Exists(runtimeDirectory))
+        if (!OperatingSystem.IsLinux())
             return;
 
-        var currentPath = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
-        if (currentPath?.Split(Path.PathSeparator).Contains(runtimeDirectory, StringComparer.Ordinal) == true)
-            return;
+        foreach (var dependency in AdapterDependencies)
+        {
+            var path = Path.Combine(runtimeDirectory, dependency);
+            var handle = Dlopen(path, RtldNow | RtldGlobal);
+            if (handle == 0)
+            {
+                var error = Marshal.PtrToStringAnsi(DlError());
+                throw new InvalidOperationException($"The SYCL adapter dependency '{dependency}' could not be loaded: {error}");
+            }
 
-        Environment.SetEnvironmentVariable("LD_LIBRARY_PATH", string.IsNullOrWhiteSpace(currentPath)
-            ? runtimeDirectory
-            : string.Join(Path.PathSeparator, runtimeDirectory, currentPath));
+            NativeDependencyHandles.Add(handle);
+        }
     }
 
     internal static void PrepareSyclRuntimeEnvironment(string runtimeDirectory)
@@ -462,10 +480,7 @@ internal static class SyclRuntimeFiles
             return;
 
         var bundledLoader = Path.Combine(runtimeDirectory, "libze_loader.so.1");
-        var bundledDriver = Path.Combine(runtimeDirectory, "libze_intel_gpu.so.1");
-        var bundledAdapter = Path.Combine(runtimeDirectory, "libur_adapter_level_zero.so");
-        if (File.Exists(bundledLoader) && File.Exists(bundledDriver) && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ZE_ENABLE_ALT_DRIVERS")))
-            Environment.SetEnvironmentVariable("ZE_ENABLE_ALT_DRIVERS", bundledDriver);
+        var bundledAdapter = Path.Combine(runtimeDirectory, "libur_adapter_level_zero_v2.so.0");
         if (File.Exists(bundledLoader) && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ZES_ENABLE_SYSMAN")))
             Environment.SetEnvironmentVariable("ZES_ENABLE_SYSMAN", "1");
         if (File.Exists(bundledAdapter) && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("UR_ADAPTERS_FORCE_LOAD")))
@@ -473,4 +488,10 @@ internal static class SyclRuntimeFiles
 
         Environment.SetEnvironmentVariable("ONEAPI_DEVICE_SELECTOR", "level_zero:gpu");
     }
+
+    [DllImport("libdl.so.2", EntryPoint = "dlopen")]
+    private static extern nint Dlopen([MarshalAs(UnmanagedType.LPUTF8Str)] string fileName, int flags);
+
+    [DllImport("libdl.so.2", EntryPoint = "dlerror")]
+    private static extern nint DlError();
 }

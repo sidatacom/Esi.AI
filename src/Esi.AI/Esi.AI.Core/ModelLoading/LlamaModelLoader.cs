@@ -118,7 +118,8 @@ public sealed class LlamaModelLoader : IDisposable
             throw new ArgumentOutOfRangeException(nameof(contextSize), "The context size must be one of the supported values.");
         }
 
-        BackendRuntimePaths.PrependLibraryPath(BackendRuntimePaths.GetLlamaDirectory(backend, applicationDirectory));
+        if (!string.Equals(backend, "SYCL", StringComparison.OrdinalIgnoreCase))
+            BackendRuntimePaths.PrependLibraryPath(BackendRuntimePaths.GetLlamaDirectory(backend, applicationDirectory));
         new BackendPrerequisiteProvisioner().EnsureLlamaReady(backend, applicationDirectory);
         advanced ??= new();
         if (string.Equals(backend, "SYCL", StringComparison.OrdinalIgnoreCase))

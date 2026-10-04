@@ -113,9 +113,6 @@ public sealed class DataHub(
     public Task<ModelLoadStatus> LoadPythonModel(PythonInferenceLoadRequest request) =>
         dataService.LoadPythonModelAsync(request, CancellationToken.None);
 
-    public Task<ModelLoadStatus> LoadDotLlmModel(DotLlmLoadRequest request) =>
-        dataService.LoadDotLlmModelAsync(request, CancellationToken.None);
-
     public Task<ModelLoadStatus> UnloadModel() =>
         dataService.UnloadModelAsync(Context.ConnectionAborted);
 
@@ -184,7 +181,7 @@ public sealed class DataHub(
 
     public async Task<BackendPrerequisiteSolveResult> PrepareBackend(ConfigurationBackend backend, string pythonExecutable, IReadOnlyList<string>? devices)
     {
-        if (backend is not (ConfigurationBackend.Llama or ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
+        if (backend is not (ConfigurationBackend.Llama or ConfigurationBackend.Vllm))
             return new(false, "This backend has no preparation action from this tile.", string.Empty);
 
         var result = await dataService.PrepareBackendAsync(backend, pythonExecutable, Context.ConnectionAborted, devices);
@@ -228,6 +225,12 @@ public sealed class DataHub(
 
     public Task<IReadOnlyList<LocalModel>> LocalModel_Delete(ModelDeletionRequest request) =>
         dataService.LocalModel_DeleteAsync(request, Context.ConnectionAborted);
+
+    public Task<ModelCleanupPreview> LocalModel_CleanPreview(ModelCleanupRequest request) =>
+        dataService.LocalModel_CleanPreviewAsync(request, Context.ConnectionAborted);
+
+    public Task<ModelCleanupResult> LocalModel_Clean(ModelCleanupRequest request) =>
+        dataService.LocalModel_CleanAsync(request, Context.ConnectionAborted);
 
     public IReadOnlyList<string> ModelDirectory_Read() => modelDirectories.GetModelDirectories();
 

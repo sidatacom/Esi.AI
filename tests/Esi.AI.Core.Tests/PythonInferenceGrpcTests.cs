@@ -1,0 +1,230 @@
+using System.Runtime.CompilerServices;
+using System.Text.Json;
+using Esi.AI.Core.Chat;
+using Esi.AI.Core.Grpc;
+using Esi.AI.Core.ModelLoading;
+using Esi.AI.Models;
+using ModelChatMessage = Esi.AI.Models.ChatMessage;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+
+namespace Esi.AI.Core.Tests;
+
+[TestClass]
+public sealed class PythonInferenceGrpcTests
+{
+    [TestMethod]
+    public void GetXpuAffinityMask_SelectedRoutes_UsesTheirOrdinalsInPriorityOrder()
+    {
+        var affinityMask = PythonInferenceServer.GetXpuAffinityMask(["xpu:3", "xpu:1"]);
+
+        Assert.AreEqual("3,1", affinityMask);
+    }
+
+    [TestMethod]
+    public void ToGrpcRequest_LoadRequest_MapsBackendAndRuntimeOptions()
+    {
+        var request = new PythonInferenceLoadRequest(
+            "Qwen/test",
+            ConfigurationBackend.Vllm,
+            Port: 7011,
+            GpuMemoryUtilization: 75,
+            MaxModelLength: 4096,
+            TensorParallelSize: 2,
+            TrustRemoteCode: false,
+            EnforceEager: true,
+            Devices: ["cuda:0", "cuda:1"],
+            Quantization: "gptq",
+            DType: "float16",
+            KvCacheDType: "fp8",
+            SpeculativeConfigJson: "{\"method\":\"mtp\",\"num_speculative_tokens\":4}",
+            MaxNumSeqs: 1,
+            MaxNumBatchedTokens: 8192,
+            EnablePrefixCaching: true,
+            EnableXpuGraph: true,
+            EnableBf16MtpDraft: true);
+
+        var grpcRequest = PythonInferenceGrpcMapper.ToGrpcRequest(request);
+
+        Assert.AreEqual("Qwen/test", grpcRequest.ModelPath);
+        Assert.AreEqual("vllm", grpcRequest.Engine);
+        Assert.AreEqual((uint)4096, grpcRequest.MaxModelLen);
+        Assert.AreEqual((uint)2, grpcRequest.TensorParallelSize);
+        Assert.AreEqual(.75f, grpcRequest.GpuMemoryUtilization, .001f);
+        Assert.IsFalse(grpcRequest.TrustRemoteCode);
+        Assert.IsTrue(grpcRequest.EnforceEager);
+        Assert.AreEqual("gptq", grpcRequest.Quantization);
+        Assert.AreEqual("float16", grpcRequest.Dtype);
+        Assert.AreEqual("fp8", grpcRequest.KvCacheDtype);
+        Assert.AreEqual("{\"method\":\"mtp\",\"num_speculative_tokens\":4}", grpcRequest.SpeculativeConfigJson);
+        Assert.AreEqual((uint)1, grpcRequest.MaxNumSeqs);
+        Assert.AreEqual((uint)8192, grpcRequest.MaxNumBatchedTokens);
+        Assert.IsTrue(grpcRequest.EnablePrefixCaching);
+        Assert.IsTrue(grpcRequest.EnableXpuGraph);
+        Assert.IsTrue(grpcRequest.EnableBf16MtpDraft);
+        CollectionAssert.AreEqual(new[] { "cuda:0", "cuda:1" }, grpcRequest.Devices.ToArray());
+    }
+
+    [TestMethod]
+    public void ToGrpcRequest_EmptyMessages_ThrowsArgumentException()
+    {
+        Assert.ThrowsException<ArgumentException>(() => PythonInferenceGrpcMapper.ToGrpcRequest([], "local-model"));
+    }
+
+    [TestMethod]
+    public void ToGrpcRequest_GenerationOptions_MapsSharedSamplingValues()
+    {
+        var request = PythonInferenceGrpcMapper.ToGrpcRequest(
+            [new ModelChatMessage("user", "Hello")],
+            "local-model",
+            new ChatGenerationOptions(
+                MaxTokens: 17,
+                Temperature: .25f,
+                TopP: .8f,
+                TopK: 12,
+                MinP: .05f,
+                RepetitionPenalty: 1.1f,
+                Seed: 42,
+                StopSequences: ["END"]));
+
+        Assert.AreEqual((uint)17, request.MaxTokens);
+        Assert.AreEqual(.25f, request.Temperature, .001f);
+        Assert.AreEqual(.8f, request.TopP, .001f);
+        Assert.AreEqual(12, request.TopK);
+        Assert.AreEqual(.05f, request.MinP, .001f);
+        Assert.AreEqual(1.1f, request.RepetitionPenalty, .001f);
+        Assert.AreEqual(42, request.Seed);
+        CollectionAssert.AreEqual(new[] { "END" }, request.StopSequences.ToArray());
+    }
+
+    [TestMethod]
+    public void ToGrpcRequest_GenerationOptions_PreservesToolsAndToolChoice()
+    {
+        using var toolChoiceDocument = JsonDocument.Parse("{\"type\":\"function\",\"function\":{\"name\":\"lookup\"}}");
+        var request = PythonInferenceGrpcMapper.ToGrpcRequest(
+            [new ModelChatMessage("user", "Look this up.")],
+            "local-model",
+            new ChatGenerationOptions(
+                Tools:
+                [
+                    new OpenAiToolDefinition(
+                        "function",
+                        new OpenAiToolFunction(
+                            "lookup",
+                            "Looks up a value.",
+                            JsonDocument.Parse("{\"type\":\"object\",\"properties\":{\"query\":{\"type\":\"string\"}}}").RootElement.Clone()))
+                ],
+                ToolChoice: toolChoiceDocument.RootElement.Clone()));
+
+        var tool = request.Tools.Single();
+        Assert.AreEqual("function", tool.Type);
+        Assert.AreEqual("lookup", tool.Name);
+        Assert.AreEqual("Looks up a value.", tool.Description);
+        StringAssert.Contains(tool.ParametersJson, "\"query\"");
+        Assert.AreEqual(toolChoiceDocument.RootElement.GetRawText(), request.ToolChoiceJson);
+    }
+
+    [TestMethod]
+    public async Task GenerateWithStatsAsync_FakeStream_ReturnsMappedTextAndStatistics()
+    {
+        GenerateRequest? capturedRequest = null;
+        using var session = new PythonInferenceChatSession(
+            (request, _) => CaptureAndStreamAsync(request, value => capturedRequest = value),
+            () => "vLLM",
+            () => "Qwen/test");
+
+        var result = await session.GenerateWithStatsAsync([
+            new ModelChatMessage("system", "Be brief."),
+            new ModelChatMessage("user", "Hello")]);
+
+        Assert.AreEqual("Hello world", result.Text);
+        Assert.AreEqual(3, result.TokenCount);
+        Assert.AreEqual(0, result.PromptTokenCount);
+        Assert.AreEqual(4.2d, result.TokensPerSecond, .001d);
+        Assert.IsNotNull(capturedRequest);
+        Assert.AreEqual("Qwen/test", capturedRequest.ModelId);
+        Assert.AreEqual(2, capturedRequest.Messages.Count);
+        Assert.AreEqual("system", capturedRequest.Messages[0].Role);
+        Assert.AreEqual("Hello", capturedRequest.Messages[1].Content);
+    }
+
+    [TestMethod]
+    public async Task GenerateWithStatsAsync_FakeErrorResponse_ThrowsInformativeException()
+    {
+        using var session = new PythonInferenceChatSession(
+            (_, _) => ErrorStreamAsync(),
+            () => "vLLM",
+            () => "Qwen/test");
+
+        var exception = await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+            () => session.GenerateWithStatsAsync([new ModelChatMessage("user", "Hello")]));
+
+        StringAssert.Contains(exception.Message, "vLLM generation failed");
+        StringAssert.Contains(exception.Message, "backend unavailable");
+    }
+
+    [TestMethod]
+    public async Task GenerateWithStatsAsync_StructuredToolResponse_ReturnsToolCalls()
+    {
+        using var session = new PythonInferenceChatSession(
+            (_, _) => StructuredToolResponseAsync(),
+            () => "vLLM",
+            () => "Qwen/test");
+
+        var result = await session.GenerateWithStatsAsync([new ModelChatMessage("user", "Look this up.")]);
+
+        Assert.AreEqual(string.Empty, result.Text);
+        Assert.AreEqual("tool_calls", result.FinishReason);
+        var toolCall = result.ToolCalls!.Single();
+        Assert.AreEqual("lookup", toolCall.Function.Name);
+        Assert.AreEqual("{\"query\":\"weather\"}", toolCall.Function.Arguments);
+    }
+
+    [TestMethod]
+    public async Task GenerateWithStatsAsync_CancellationToken_CancelsFakeStream()
+    {
+        using var session = new PythonInferenceChatSession(
+            (_, cancellationToken) => CancellationStreamAsync(cancellationToken),
+            () => "vLLM",
+            () => "Qwen/test");
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+
+        await Assert.ThrowsExceptionAsync<TaskCanceledException>(
+            () => session.GenerateWithStatsAsync([new ModelChatMessage("user", "Hello")], cancellation.Token));
+    }
+
+    private static async IAsyncEnumerable<GenerateResponse> CaptureAndStreamAsync(
+        GenerateRequest request,
+        Action<GenerateRequest> capture,
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        capture(request);
+        await Task.Yield();
+        yield return new GenerateResponse { Delta = "Hello", GeneratedTokens = 1 };
+        yield return new GenerateResponse { Delta = " world", GeneratedTokens = 2 };
+        yield return new GenerateResponse { Finished = true, GeneratedTokens = 3, TokensPerSecond = 4.2d };
+    }
+
+    private static async IAsyncEnumerable<GenerateResponse> ErrorStreamAsync()
+    {
+        await Task.Yield();
+        yield return new GenerateResponse { Error = "backend unavailable" };
+    }
+
+    private static async IAsyncEnumerable<GenerateResponse> StructuredToolResponseAsync()
+    {
+        await Task.Yield();
+        yield return new GenerateResponse
+        {
+            Finished = true,
+            ToolCallsJson = "[{\"id\":\"call_1\",\"type\":\"function\",\"function\":{\"name\":\"lookup\",\"arguments\":\"{\\\"query\\\":\\\"weather\\\"}\"}}]"
+        };
+    }
+
+    private static async IAsyncEnumerable<GenerateResponse> CancellationStreamAsync(
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        yield break;
+    }
+}

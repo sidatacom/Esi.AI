@@ -138,8 +138,7 @@ public sealed class OpenAiCompatibleBackendMiddleware(
             return request.Backend switch
             {
                 "OpenVINO" => await GenerateOpenVinoAsync(request, onDelta, cancellationToken).ConfigureAwait(false),
-                "vLLM" or "SGLang" => await GeneratePythonAsync(request, onDelta, cancellationToken).ConfigureAwait(false),
-                "dotLLM" => await GenerateDotLlmAsync(request, onDelta, cancellationToken).ConfigureAwait(false),
+                "vLLM" => await GeneratePythonAsync(request, onDelta, cancellationToken).ConfigureAwait(false),
                 "Vulkan" or "VULKAN" or "CUDA" or "SYCL" or "CPU" => await GenerateLlamaAsync(request, onDelta, cancellationToken).ConfigureAwait(false),
                 _ => throw new ArgumentException($"Unsupported backend '{request.Backend}'.", nameof(request))
             };
@@ -214,15 +213,6 @@ public sealed class OpenAiCompatibleBackendMiddleware(
         return ParseToolResult(await session.GenerateWithStatsAsync(request.Messages, onDelta, request.Options, cancellationToken).ConfigureAwait(false));
     }
 
-    private async Task<GenerationResult> GenerateDotLlmAsync(
-        OpenAiBackendChatRequest request,
-        Func<string, Task>? onDelta,
-        CancellationToken cancellationToken)
-    {
-        using var session = modelRuntime.CreateDotLlmChatSession();
-        return ParseToolResult(await session.GenerateWithStatsAsync(request.Messages, onDelta, request.Options, cancellationToken).ConfigureAwait(false));
-    }
-
     private static GenerationResult ParseToolResult(GenerationResult result)
     {
         var parsed = OpenAiToolCallParser.Parse(result.Text);
@@ -245,7 +235,7 @@ public sealed class OpenAiCompatibleBackendMiddleware(
     {
         if (tools is not { Count: > 0 })
             return;
-        if (status.Backend is "OpenVINO" or "vLLM" or "SGLang" or "dotLLM")
+        if (status.Backend is "OpenVINO" or "vLLM")
             return;
 
         throw new ArgumentException(

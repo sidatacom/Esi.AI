@@ -109,6 +109,9 @@ public sealed class OpenVinoRuntime : IBackendRuntime
             throw new FileNotFoundException($"The GGUF file or OpenVINO model directory was not found: {modelPath}", modelPath);
         }
 
+        if (!isGgufFile && !HasLanguageModelIrFiles(modelPath))
+            throw new InvalidDataException($"The OpenVINO model directory does not contain a complete language model IR pair (openvino_model.xml/.bin or openvino_language_model.xml/.bin): {modelPath}");
+
         if (string.IsNullOrWhiteSpace(configuration.Device))
             throw new ArgumentException("An OpenVINO device is required.", nameof(request));
         var isNpu = configuration.Device.Equals("NPU", StringComparison.OrdinalIgnoreCase);
@@ -297,7 +300,7 @@ public sealed class OpenVinoRuntime : IBackendRuntime
                 request.Options.MaxTokens,
                 request.Options.Temperature,
                 request.Options.TopP,
-                true,
+                request.Options.Temperature > 0,
                 request.Options.TopK,
                 request.Options.RepetitionPenalty,
                 request.Options.FrequencyPenalty,
@@ -546,6 +549,14 @@ public sealed class OpenVinoRuntime : IBackendRuntime
         return document.RootElement.TryGetProperty("model_type", out var modelType) &&
             string.Equals(modelType.GetString(), "qwen3_5", StringComparison.OrdinalIgnoreCase);
     }
+
+    private static bool HasLanguageModelIrFiles(string modelPath) =>
+        HasIrFilePair(modelPath, "openvino_model") ||
+        HasIrFilePair(modelPath, "openvino_language_model");
+
+    private static bool HasIrFilePair(string modelPath, string modelName) =>
+        File.Exists(Path.Combine(modelPath, $"{modelName}.xml")) &&
+        File.Exists(Path.Combine(modelPath, $"{modelName}.bin"));
 
     private static int? TryGetDynamicQuantizationGroupSize(string modelPath)
     {

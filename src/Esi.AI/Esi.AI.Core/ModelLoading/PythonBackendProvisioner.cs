@@ -19,8 +19,8 @@ public sealed class PythonBackendProvisioner
         CancellationToken cancellationToken = default,
         IReadOnlyList<string>? devices = null)
     {
-        if (backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
-            throw new ArgumentException("Only vLLM and SGLang have Python environments.", nameof(backend));
+        if (backend != ConfigurationBackend.Vllm)
+            throw new ArgumentException("Only vLLM has a Python environment.", nameof(backend));
         if (string.IsNullOrWhiteSpace(requestedPythonExecutable))
             throw new ArgumentException("A Python executable is required.", nameof(requestedPythonExecutable));
         if (string.IsNullOrWhiteSpace(applicationDirectory))
@@ -76,8 +76,6 @@ public sealed class PythonBackendProvisioner
                 {
                     "-m", "pip", "install", "--disable-pip-version-check"
                 };
-                if (backend == ConfigurationBackend.Sglang && IsXpuRoute(devices))
-                    installArguments.Add("--no-deps");
                 installArguments.AddRange(["-r", requirementsPath]);
                 var installResult = await RunProcessAsync(
                     environmentPython,
@@ -107,11 +105,10 @@ public sealed class PythonBackendProvisioner
         CancellationToken cancellationToken = default,
         IReadOnlyList<string>? devices = null)
     {
-        if (backend is ConfigurationBackend.Vllm or ConfigurationBackend.Sglang && HasMixedDeviceVendors(devices))
+        if (backend == ConfigurationBackend.Vllm && HasMixedDeviceVendors(devices))
         {
-            var backendName = backend == ConfigurationBackend.Vllm ? "vLLM" : "SGLang";
             const string detail = "CUDA and XPU devices cannot use the same Python environment.";
-            return new(backend, backendName, false,
+            return new(backend, "vLLM", false,
                 [new("device-routing", "Device routing", false, detail, false)], detail);
         }
 
@@ -122,9 +119,10 @@ public sealed class PythonBackendProvisioner
         checks.Add(new("requirements-file", "Backend requirements", requirementsAvailable,
             requirementsAvailable ? $"{definition.RequirementsFileName} is available." : $"{definition.RequirementsFileName} was not deployed.", false));
 
-        var executable = IsAutomaticExecutable(requestedPythonExecutable)
+        var configuredExecutable = ResolveConfiguredExecutable(backend, requestedPythonExecutable);
+        var executable = IsAutomaticExecutable(configuredExecutable)
             ? GetEnvironmentPythonPath(ResolveEnvironmentPath(definition.EnvironmentName))
-            : requestedPythonExecutable;
+            : configuredExecutable;
         var pythonAvailable = File.Exists(executable) || (!Path.IsPathFullyQualified(executable) && await CanStartProcessAsync(executable, timeout, cancellationToken).ConfigureAwait(false));
         checks.Add(new("python-environment", "Python environment", pythonAvailable,
             pythonAvailable ? $"Using {executable}." : $"Python executable was not found: {executable}.", true));
@@ -353,10 +351,7 @@ public sealed class PythonBackendProvisioner
         if (!IsAutomaticExecutable(requestedExecutable))
             return requestedExecutable;
 
-        var backendVariable = backend == ConfigurationBackend.Vllm
-            ? "ESI_VLLM_PYTHON_EXECUTABLE"
-            : "ESI_SGLANG_PYTHON_EXECUTABLE";
-        var configuredExecutable = Environment.GetEnvironmentVariable(backendVariable);
+        var configuredExecutable = Environment.GetEnvironmentVariable("ESI_VLLM_PYTHON_EXECUTABLE");
         if (!string.IsNullOrWhiteSpace(configuredExecutable) && !IsAutomaticExecutable(configuredExecutable))
             return configuredExecutable;
 
@@ -380,9 +375,7 @@ public sealed class PythonBackendProvisioner
     {
         ConfigurationBackend.Vllm when IsXpuRoute(devices) => new("vLLM Intel XPU", "vllm", "vllm-xpu-requirements.txt", "esi-ai-vllm-xpu", ["grpc", "google.protobuf", "vllm", "vllm_xpu_kernels"], true, []),
         ConfigurationBackend.Vllm => new("vLLM CUDA", "vllm", "vllm-requirements.txt", "esi-ai-vllm", ["grpc", "google.protobuf", "vllm"], false, []),
-        ConfigurationBackend.Sglang when IsXpuRoute(devices) => new("SGLang Intel XPU", "sglang", "sglang-requirements.txt", "esi-ai-sglang", ["grpc", "google.protobuf", "sglang"], false, ["sglang-kernel", "flashinfer-python"]),
-        ConfigurationBackend.Sglang => new("SGLang CUDA", "sglang", "sglang-cuda-requirements.txt", "esi-ai-sglang-cuda", ["grpc", "google.protobuf", "sglang"], false, []),
-        _ => throw new ArgumentException("Only vLLM and SGLang have Python environments.", nameof(backend))
+        _ => throw new ArgumentException("Only vLLM has a Python environment.", nameof(backend))
     };
 
     private static bool IsXpuRoute(IReadOnlyList<string>? devices)

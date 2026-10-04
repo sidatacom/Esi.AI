@@ -16,12 +16,7 @@ public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequi
         new("llama.sycl", ConfigurationBackend.Llama, "Intel / XPU", ["sycl:0"]),
         new("openvino", ConfigurationBackend.OpenVino, "Intel / XPU", []),
         new("vllm.cuda12", ConfigurationBackend.Vllm, "NVIDIA / CUDA", ["cuda:0"]),
-        new("vllm.xpu", ConfigurationBackend.Vllm, "Intel / XPU", ["xpu:0"]),
-        new("sglang", ConfigurationBackend.Sglang, "NVIDIA / CUDA", ["cuda:0"]),
-        new("sglang", ConfigurationBackend.Sglang, "Intel / XPU", ["xpu:0"]),
-        new("dotllm.cpu", ConfigurationBackend.DotLlm, "NVIDIA / CUDA", [], IsBundled: true),
-        new("dotllm.cpu", ConfigurationBackend.DotLlm, "Intel / XPU", [], IsBundled: true),
-        new("dotllm.cpu", ConfigurationBackend.DotLlm, "AMD / ROCm", [], IsBundled: true)
+        new("vllm.xpu", ConfigurationBackend.Vllm, "Intel / XPU", ["xpu:0"])
     ];
 
     private static readonly string[] BackendIds = Routes

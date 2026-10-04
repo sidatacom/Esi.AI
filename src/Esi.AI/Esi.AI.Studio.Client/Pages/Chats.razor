@@ -21,14 +21,14 @@
     </aside>
 
     <main class="chat-main">
-            <header class="chat-header"><div><p class="eyebrow">LOCAL CONVERSATION</p><h1>@(currentChat?.Title ?? "Chats")</h1><p class="lede">Gespräche mit einem ausgewählten geladenen Modell.</p></div>@if (currentChat is not null) { <label class="model-picker" for="chat-model">Modell<select id="chat-model" value="@selectedModelKey" @onchange="SelectModel" disabled="@isSending"><option value="">Modell auswählen ...</option>@foreach (var model in LoadedModels) { <option value="@GetModelKey(model)">@GetModelDisplayName(model) (@model.Backend)</option>}</select></label> }</header>
+            <header class="chat-header"><div><p class="eyebrow">LOCAL CONVERSATION</p><h1>@(currentChat?.Title ?? "Chats")</h1><p class="lede">Gespräche mit einem ausgewählten geladenen Modell.</p></div>@if (currentChat is not null) { <label class="model-picker" for="chat-model">Modell<select id="chat-model" value="@selectedModelKey" @onchange="SelectModel" disabled="@isSending"><option value="">Modell auswählen ...</option>@foreach (var model in LoadedModels) { <option value="@GetModelKey(model)">@GetModelDisplayName(model) (@GetModelBackendName(model))</option>}</select></label> }</header>
         @if (currentChat is null)
         {
             <section class="chat-empty-page"><strong>Bereit für eine neue Unterhaltung.</strong><button class="send-button" type="button" @onclick="NewChatAsync">Neuen Chat starten</button></section>
         }
         else
         {
-            <section class="chat-panel" aria-busy="@isSending">
+            <section class="chat-panel" aria-busy="@isSending" data-selected-backend-variant-id="@selectedBackendVariantId">
                 <div class="message-list">
                     @if (currentChat.Messages.Count == 0) { <div class="chat-empty"><strong>Bereit für deine erste Nachricht.</strong><span>Die Unterhaltung wird automatisch gespeichert.</span></div> }
                     @foreach (var message in currentChat.Messages)
@@ -148,6 +148,7 @@
     private string? selectedModelPath { get => pageState.CurrentChat.SelectedModelPath; set => pageState.CurrentChat.SelectedModelPath = value; }
     private ConfigurationBackend? selectedBackend { get => pageState.CurrentChat.SelectedBackend; set => pageState.CurrentChat.SelectedBackend = value; }
     private string? selectedRuntime { get => pageState.CurrentChat.SelectedRuntime; set => pageState.CurrentChat.SelectedRuntime = value; }
+    private string? selectedBackendVariantId { get => pageState.CurrentChat.SelectedBackendVariantId; set => pageState.CurrentChat.SelectedBackendVariantId = value; }
     private string? selectedModelKey { get => pageState.CurrentChat.SelectedModelKey; set => pageState.CurrentChat.SelectedModelKey = value; }
     private ChatImage? selectedImage { get => pageState.Composer.SelectedImage; set => pageState.Composer.SelectedImage = value; }
     private string? selectedImageName { get => pageState.Composer.SelectedImageName; set => pageState.Composer.SelectedImageName = value; }
@@ -201,9 +202,12 @@
         selectedModelPath = model?.ModelPath;
         selectedBackend = model?.Backend;
         selectedRuntime = model?.Runtime;
+        selectedBackendVariantId = model?.BackendVariantId;
         selectedModelKey = model is null ? null : GetModelKey(model);
     }
-    private static string GetModelKey(LoadedModelStatus model) => $"{model.Backend}|{model.ModelPath}";
+    private static string GetModelKey(LoadedModelStatus model) => $"{model.Backend}|{model.BackendVariantId}|{model.ModelPath}";
+    private static string GetModelBackendName(LoadedModelStatus model) =>
+        string.IsNullOrWhiteSpace(model.BackendVariantId) ? model.Backend.ToString() : model.BackendVariantId;
     private static MessageContent ParseMessageContent(PersistedChatMessage message)
     {
         if (message.Role != "assistant")
@@ -304,7 +308,7 @@
         {
             var chatId = currentChat.Id;
             var backend = selectedBackend == ConfigurationBackend.OpenVino ? "OpenVINO" : selectedRuntime;
-            await foreach (var update in DataService.Chat_UpdateStreamAsync(chatId, new ChatExchangeRequest(content, selectedModelPath, backend, image is null ? null : [image], contentParts)))
+            await foreach (var update in DataService.Chat_UpdateStreamAsync(chatId, new ChatExchangeRequest(content, selectedModelPath, backend, image is null ? null : [image], contentParts, selectedBackendVariantId)))
             {
                 if (update.IsCompleted && update.Chat is not null)
                 {

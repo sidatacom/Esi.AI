@@ -673,13 +673,6 @@
                 <small class="form-text">The requirements environment follows the selected device vendor. CUDA and XPU devices cannot be mixed in one worker.</small>
             </div>
         }
-        else
-        {
-            <div class="field-group">
-                <label class="form-label" for="dotllm-device-route">Device route</label>
-                <InputText id="dotllm-device-route" class="form-control" @bind-Value="dotLlmForm.Device" @bind-Value:after="SaveSettingsAsync" />
-            </div>
-        }
     </section>
 </DeviceRouting>
 
@@ -739,21 +732,6 @@
             <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.EnableBf16MtpDraft" @bind-Value:after="SaveSettingsAsync" /> Keep MTP draft layers in BF16</label>
         }
         @if (!string.IsNullOrWhiteSpace(pythonStatus)) { <p class="mt-3" role="status">@pythonStatus</p> }
-    </section>
-
-}
-
-@if (activeBackend == BackendTab.DotLlm)
-{
-    <section class="config-panel">
-        <div class="section-heading"><div><p class="eyebrow">NATIVE .NET INFERENCE</p><h2>dotLLM configuration</h2></div><span class="step-label">01</span></div>
-        <div class="field-row">
-            <div class="field-group"><label class="form-label" for="dotllm-model">GGUF model path or ID</label><InputText id="dotllm-model" class="form-control" @bind-Value="dotLlmForm.ModelPath" /></div>
-            <div class="field-group"><label class="form-label" for="dotllm-device">Device</label><InputText id="dotllm-device" class="form-control" @bind-Value="dotLlmForm.Device" placeholder="cpu" /></div>
-            <div class="field-group"><label class="form-label" for="dotllm-threads">CPU threads</label><InputNumber id="dotllm-threads" class="form-control" @bind-Value="dotLlmForm.Threads" /></div>
-        </div>
-        <div class="model-actions"><button class="profile-button" type="button" @onclick="StopDotLlmModelAsync" disabled="@(!isDotLlmLoading && loadStatus?.Backend != "dotLLM")">Unload dotLLM</button></div>
-        @if (!string.IsNullOrWhiteSpace(dotLlmStatus)) { <p class="mt-3" role="status">@dotLlmStatus</p> }
     </section>
 
 }
@@ -990,18 +968,7 @@ else if (activeBackend == BackendTab.OpenVino)
             <dt>Python executable</dt><dd>@pythonForm.PythonExecutable</dd>
             <dt>Model</dt><dd>@(string.IsNullOrWhiteSpace(pythonForm.ModelPath) ? "Not selected" : pythonForm.ModelPath)</dd>
             <dt>Transport</dt><dd>Local gRPC bridge</dd>
-            <dt>Runtime</dt><dd class="diagnostic-@(loadStatus?.Backend is "vLLM" or "SGLang" ? "ok" : "error")">@(isPythonLoading ? "Starting" : loadStatus?.Backend is "vLLM" or "SGLang" ? "Ready" : "Not running")</dd>
-        </dl>
-    </section>
-}
-@if (activeBackend == BackendTab.DotLlm)
-{
-    <section class="telemetry-panel">
-        <div class="section-heading"><div><p class="eyebrow">RUNTIME TELEMETRY</p><h2>dotLLM status</h2></div></div>
-        <dl class="telemetry-grid">
-            <dt>Model</dt><dd>@(string.IsNullOrWhiteSpace(dotLlmForm.ModelPath) ? "Not selected" : dotLlmForm.ModelPath)</dd>
-            <dt>Device</dt><dd>@dotLlmForm.Device</dd>
-            <dt>Runtime</dt><dd class="diagnostic-@(loadStatus?.Backend == "dotLLM" ? "ok" : "error")">@(isDotLlmLoading ? "Loading in process" : loadStatus?.Backend == "dotLLM" ? "Ready in process" : "Not loaded")</dd>
+            <dt>Runtime</dt><dd class="diagnostic-@(loadStatus?.Backend == "vLLM" ? "ok" : "error")">@(isPythonLoading ? "Starting" : loadStatus?.Backend == "vLLM" ? "Ready" : "Not running")</dd>
         </dl>
     </section>
 }
@@ -1046,6 +1013,10 @@ else if (activeBackend == BackendTab.OpenVino)
 </div>
 
 @code {
+    private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() }
+    };
     private BackendPageState pageState = new();
     [Microsoft.AspNetCore.Components.PersistentState]
     public BackendPageState PageState
@@ -1055,11 +1026,13 @@ else if (activeBackend == BackendTab.OpenVino)
     }
     private BackendTab activeBackend
     {
-        get => pageState.ActiveBackend;
+        get => BackendTabOptions.Any(option => option.Backend == pageState.ActiveBackend)
+            ? pageState.ActiveBackend
+            : BackendTab.LlamaVulkan;
         set => pageState.ActiveBackend = value;
     }
     private IReadOnlyList<BackendAcceleratorDevice> llamaRoutingDevices = [];
-    private readonly HashSet<BackendTab> enabledBackendTabs = Enum.GetValues<BackendTab>().ToHashSet();
+    private readonly HashSet<BackendTab> enabledBackendTabs = BackendTabOptions.Select(option => option.Backend).ToHashSet();
     private bool isBackendVisibilityLoaded;
     private PythonState pythonForm => pageState.Python;
     private bool isPythonLoading;
@@ -1080,10 +1053,7 @@ else if (activeBackend == BackendTab.OpenVino)
     private BackendPrerequisiteDiagnostics? backendPrerequisites;
     private BackendRequirementState? backendRequirementState;
     private OpenVinoState openVinoState => pageState.OpenVino;
-    private DotLlmState dotLlmForm => pageState.DotLlm;
     private IReadOnlyList<BackendModel> backendModels = [];
-    private bool isDotLlmLoading;
-    private string? dotLlmStatus;
     private string? matrixDialogBackend;
     private string? matrixDialogVendor;
     private BackendTab? matrixDialogBackendTab;
@@ -1159,7 +1129,7 @@ else if (activeBackend == BackendTab.OpenVino)
             .Where(option => configuredIds is null || configuredIds.Contains(option.Id, StringComparer.OrdinalIgnoreCase))
             .Select(option => option.Backend));
         if (enabledBackendTabs.Count == 0)
-            enabledBackendTabs.UnionWith(Enum.GetValues<BackendTab>());
+            enabledBackendTabs.UnionWith(BackendTabOptions.Select(option => option.Backend));
 
         isBackendVisibilityLoaded = true;
     }
@@ -1217,8 +1187,7 @@ else if (activeBackend == BackendTab.OpenVino)
     {
         BackendTab.LlamaVulkan or BackendTab.LlamaCuda12 or BackendTab.LlamaSycl => isLoading || !IsBackendPrerequisitesReady || !string.Equals(Path.GetExtension(CurrentModelPath), ".gguf", StringComparison.OrdinalIgnoreCase),
         BackendTab.OpenVino => isOpenVinoLoading || !IsOpenVinoValidationReady || string.IsNullOrWhiteSpace(openVinoState.Device),
-        BackendTab.VllmCuda12 or BackendTab.VllmXpu or BackendTab.Sglang => isPythonLoading || !IsBackendPrerequisitesReady,
-        BackendTab.DotLlm => isDotLlmLoading,
+        BackendTab.VllmCuda12 or BackendTab.VllmXpu => isPythonLoading || !IsBackendPrerequisitesReady,
         _ => true
     };
 
@@ -1226,8 +1195,7 @@ else if (activeBackend == BackendTab.OpenVino)
     {
         BackendTab.LlamaVulkan or BackendTab.LlamaCuda12 or BackendTab.LlamaSycl => isLoading ? "Loading model..." : "Load model",
         BackendTab.OpenVino => isOpenVinoLoading ? "Loading model..." : "Load model",
-        BackendTab.VllmCuda12 or BackendTab.VllmXpu or BackendTab.Sglang => isPythonLoading ? "Starting server..." : "Start Python backend",
-        BackendTab.DotLlm => isDotLlmLoading ? "Loading in process..." : "Load dotLLM",
+        BackendTab.VllmCuda12 or BackendTab.VllmXpu => isPythonLoading ? "Starting server..." : "Start Python backend",
         _ => "Load model"
     };
 
@@ -1305,9 +1273,6 @@ else if (activeBackend == BackendTab.OpenVino)
     private async Task RefreshMatrixRequirementActionsAsync()
     {
         matrixRequirementActions.Clear();
-        matrixRequirementActions[(BackendTab.DotLlm, "NVIDIA / CUDA")] = false;
-        matrixRequirementActions[(BackendTab.DotLlm, "Intel / XPU")] = false;
-        matrixRequirementActions[(BackendTab.DotLlm, "AMD / ROCm")] = false;
 
         foreach (var entry in backendRequirementState?.Entries ?? [])
         {
@@ -1317,7 +1282,6 @@ else if (activeBackend == BackendTab.OpenVino)
                 ConfigurationBackend.Vllm => entry.Vendor.Equals("Intel / XPU", StringComparison.OrdinalIgnoreCase)
                     ? BackendTab.VllmXpu
                     : BackendTab.VllmCuda12,
-                ConfigurationBackend.Sglang => BackendTab.Sglang,
                 ConfigurationBackend.OpenVino => BackendTab.OpenVino,
                 _ => (BackendTab?)null
             };
@@ -1373,8 +1337,8 @@ else if (activeBackend == BackendTab.OpenVino)
             {
                 optimisticLoadingModel = null;
             }
-            if (status.Backend is "vLLM" or "SGLang" && !string.IsNullOrWhiteSpace(status.LoadLog))
-                backendLoadLogs[status.Backend == "SGLang" ? ConfigurationBackend.Sglang : ConfigurationBackend.Vllm] = status.LoadLog;
+            if (status.Backend == "vLLM" && !string.IsNullOrWhiteSpace(status.LoadLog))
+                backendLoadLogs[ConfigurationBackend.Vllm] = status.LoadLog;
             StateHasChanged();
         });
     }
@@ -1387,20 +1351,18 @@ else if (activeBackend == BackendTab.OpenVino)
         "OpenVINO" => BackendTab.OpenVino,
         "vLLM / CUDA 12" => BackendTab.VllmCuda12,
         "vLLM / Intel XPU" => BackendTab.VllmXpu,
-        "SGLang" => BackendTab.Sglang,
-        "dotLLM" => BackendTab.DotLlm,
         _ => null
     };
 
     private IReadOnlyList<BackendRequirementTile> GetMatrixRequirementTiles(string vendor) =>
-        Enum.GetValues<BackendTab>()
+        BackendTabOptions.Select(option => option.Backend)
             .Select(backend =>
             {
                 var row = GetMatrixRow(backend, vendor);
                 var supportStatus = GetMatrixSupportStatus(row, vendor);
                 var isSupported = !supportStatus.StartsWith("Not ", StringComparison.OrdinalIgnoreCase);
                 var canSolve = isSupported && (IsLlamaBackendTab(backend) && CanSolveMatrixBackend(vendor) || IsPythonBackendTab(backend) && GetMatrixDeviceRoute(vendor) is not null || backend == BackendTab.OpenVino && vendor == "Intel / XPU");
-                var canOpen = isSupported && (canSolve || IsLlamaBackendTab(backend) || backend == BackendTab.DotLlm);
+                var canOpen = isSupported && (canSolve || IsLlamaBackendTab(backend));
                 var detail = canSolve
                     ? $"Use the {vendor} driver route and solve the isolated {GetBackendLabel(backend)} environment."
                     : isSupported
@@ -1579,8 +1541,7 @@ else if (activeBackend == BackendTab.OpenVino)
             {
                 BackendTab.LlamaVulkan or BackendTab.LlamaCuda12 or BackendTab.LlamaSycl => LoadModelAsync(),
                 BackendTab.OpenVino => LoadOpenVinoModelAsync(),
-                BackendTab.VllmCuda12 or BackendTab.VllmXpu or BackendTab.Sglang => LoadPythonModelAsync(),
-                BackendTab.DotLlm => LoadDotLlmModelAsync(),
+                BackendTab.VllmCuda12 or BackendTab.VllmXpu => LoadPythonModelAsync(),
                 _ => Task.FromResult(false)
             });
         }
@@ -1650,8 +1611,6 @@ else if (activeBackend == BackendTab.OpenVino)
             BackendTab.OpenVino => openVinoState.Device,
             BackendTab.VllmCuda12 => "vLLM CUDA 12",
             BackendTab.VllmXpu => "vLLM Intel XPU",
-            BackendTab.Sglang => "SGLang",
-            BackendTab.DotLlm => "dotLLM / In-Process",
             _ => GetBackendLabel(activeBackend)
         };
 
@@ -1699,36 +1658,6 @@ else if (activeBackend == BackendTab.OpenVino)
         }
     }
 
-    private async Task<bool> LoadDotLlmModelAsync()
-    {
-        isDotLlmLoading = true;
-        dotLlmStatus = null;
-        await InvokeAsync(StateHasChanged);
-        try
-        {
-            await DataService.LoadDotLlmModelAsync(new DotLlmLoadRequest(
-                dotLlmForm.ModelPath, dotLlmForm.Device, dotLlmForm.Threads));
-            dotLlmStatus = "dotLLM is ready.";
-            return true;
-        }
-        catch (Exception exception)
-        {
-            dotLlmStatus = exception.Message;
-            statusMessage = dotLlmStatus;
-            return false;
-        }
-        finally
-        {
-            isDotLlmLoading = false;
-        }
-    }
-
-    private async Task StopDotLlmModelAsync()
-    {
-        await DataService.UnloadModelAsync(loadStatus?.ModelPath ?? dotLlmForm.ModelPath, ConfigurationBackend.DotLlm);
-        dotLlmStatus = "dotLLM stopped.";
-    }
-
     private async Task RefreshOpenVinoDiagnosticsAsync()
     {
         isCheckingOpenVino = true;
@@ -1756,8 +1685,6 @@ else if (activeBackend == BackendTab.OpenVino)
                 CurrentPrerequisiteBackend,
                 pythonForm.PythonExecutable,
                 devices: IsLlamaBackendTab(activeBackend) ? GetLlamaPrerequisiteDevices(llamaState.Backend) : pythonForm.SelectedDevices);
-            if (activeBackend == BackendTab.Sglang)
-                SyncPythonDevices(backendPrerequisites.AvailableDevices ?? []);
         }
         catch (Exception exception)
         {
@@ -1962,7 +1889,6 @@ else if (activeBackend == BackendTab.OpenVino)
         {
             BackendTab.LlamaVulkan or BackendTab.LlamaCuda12 or BackendTab.LlamaSycl => llamaState.ModelPath,
             BackendTab.OpenVino => openVinoState.ModelPath,
-            BackendTab.DotLlm => dotLlmForm.ModelPath,
             _ => pythonForm.ModelPath
         };
         var configurationBackend = GetConfigurationBackend(backend);
@@ -2010,8 +1936,6 @@ else if (activeBackend == BackendTab.OpenVino)
                 pythonForm.Reset();
                 ConfigureVllmBackend(backend);
             }
-            else if (backend == BackendTab.Sglang)
-                pythonForm.Reset();
         }
         await RestoreBackendRoutingSettingsAsync(backend);
         await InvokeAsync(StateHasChanged);
@@ -2094,16 +2018,14 @@ else if (activeBackend == BackendTab.OpenVino)
         new(BackendTab.LlamaSycl, ConfigurationBackend.Llama, "llama.sycl", "llama.sycl", "Llama SYCL 16", "Intel SYCL inference", "llama"),
         new(BackendTab.OpenVino, ConfigurationBackend.OpenVino, "openvino", "openvino", "OpenVINO", "Intel GPU and NPU inference", "other"),
         new(BackendTab.VllmCuda12, ConfigurationBackend.Vllm, "vllm.cuda12", "vllm.cuda12", "vLLM CUDA 12", "NVIDIA CUDA inference server", "vllm"),
-        new(BackendTab.VllmXpu, ConfigurationBackend.Vllm, "vllm.xpu", "vllm.xpu", "vLLM Intel XPU", "Intel XPU inference server", "vllm"),
-        new(BackendTab.Sglang, ConfigurationBackend.Sglang, "sglang", "sglang.cuda12", "SGLang", "Structured generation server", "other"),
-        new(BackendTab.DotLlm, ConfigurationBackend.DotLlm, "dotllm.cpu", "dotllm.cpu", "dotLLM", "In-process inference runtime", "other")
+        new(BackendTab.VllmXpu, ConfigurationBackend.Vllm, "vllm.xpu", "vllm.xpu", "vLLM Intel XPU", "Intel XPU inference server", "vllm")
     ];
 
     private static readonly IReadOnlyList<BackendTabGroup> BackendTabGroups =
     [
         new("backend-visibility-llama", "Llama", BackendTabOptions.Where(option => option.GroupId == "llama").ToArray()),
         new("backend-visibility-vllm", "vLLM", BackendTabOptions.Where(option => option.GroupId == "vllm").ToArray()),
-        new("backend-visibility-other", "Other backends", BackendTabOptions.Where(option => option.GroupId == "other").ToArray())
+        new("backend-visibility-other", "OpenVINO", BackendTabOptions.Where(option => option.GroupId == "other").ToArray())
     ];
 
     private sealed record PythonExecutableOption(string Value, string Label);
@@ -2135,9 +2057,7 @@ else if (activeBackend == BackendTab.OpenVino)
         new("LLama / SYCL 16", "Not supported", "Supported", "Not supported", "Yes", "No", "Intel oneAPI SYCL and Level Zero runtime"),
         new("OpenVINO", "Not supported", "GPU/NPU", "Not supported", "Yes (MULTI)", "No", "Intel OpenVINO plugin and device driver"),
         new("vLLM / CUDA 12", "CUDA", "Not supported", "Not supported", "Yes (TP)", "No", "CUDA runtime per worker"),
-        new("vLLM / Intel XPU", "Not supported", "XPU", "Not supported", "Yes (TP)", "No", "Intel XPU stack per worker"),
-        new("SGLang", "CUDA", "XPU", "ROCm where installed", "Yes (TP)", "No", "One homogeneous vendor driver stack"),
-        new("dotLLM", "Not supported", "Not supported", "Not supported", "No", "No", "CPU runtime")
+        new("vLLM / Intel XPU", "Not supported", "XPU", "Not supported", "Yes (TP)", "No", "Intel XPU stack per worker")
     ];
 
     private IReadOnlyList<PythonDeviceRoute> pythonDeviceRoutes = [];
@@ -2146,8 +2066,7 @@ else if (activeBackend == BackendTab.OpenVino)
     {
         BackendTab.OpenVino => $"{openVinoDiagnostics?.Devices.Count ?? 0} detected",
         BackendTab.LlamaVulkan or BackendTab.LlamaCuda12 or BackendTab.LlamaSycl => $"{GetLlamaRoutingDevices().Count} detected",
-        BackendTab.VllmCuda12 or BackendTab.VllmXpu or BackendTab.Sglang => $"{pythonDeviceRoutes.Count(route => route.Backends.Contains(activeBackend))} available",
-        BackendTab.DotLlm => "1 supported",
+        BackendTab.VllmCuda12 or BackendTab.VllmXpu => $"{pythonDeviceRoutes.Count(route => route.Backends.Contains(activeBackend))} available",
         _ => "0 available"
     };
 
@@ -2276,7 +2195,7 @@ else if (activeBackend == BackendTab.OpenVino)
             SyncOpenVinoDevices();
             if (savedLlamaSettings is not null && !IsOpenVinoModelPath(savedLlamaSettings.ModelPath))
             {
-                var llamaRequest = JsonSerializer.Deserialize<LoadModelRequest>(savedLlamaSettings.ConfigurationJson)
+                var llamaRequest = JsonSerializer.Deserialize<LoadModelRequest>(savedLlamaSettings.ConfigurationJson, ConfigurationJsonOptions)
                     ?? throw new JsonException();
                 llamaState.ModelPath = savedLlamaSettings.ModelPath;
                 llamaState.Backend = llamaRequest.Backend;
@@ -2310,8 +2229,6 @@ else if (activeBackend == BackendTab.OpenVino)
             {
                 ConfigurationBackend.OpenVino => BackendTab.OpenVino,
                 ConfigurationBackend.Vllm => BackendTab.VllmCuda12,
-                ConfigurationBackend.Sglang => BackendTab.Sglang,
-                ConfigurationBackend.DotLlm => BackendTab.DotLlm,
                 ConfigurationBackend.Llama => BackendPageState.ResolveLlamaBackendName(llamaState.Backend),
                 _ => savedOpenVinoPath ? BackendTab.OpenVino : BackendTab.LlamaVulkan
             };
@@ -2511,7 +2428,7 @@ else if (activeBackend == BackendTab.OpenVino)
             return;
         }
 
-        if (IsPythonBackendTab(activeBackend) || activeBackend == BackendTab.DotLlm)
+        if (IsPythonBackendTab(activeBackend))
         {
             await DataService.ModelSettings_UpdateAsync(new ModelSettings(
                 CurrentModelPath,
@@ -2546,6 +2463,17 @@ else if (activeBackend == BackendTab.OpenVino)
         await PersistCurrentProfileSettingsAsync();
     }
 
+    private Task SavePythonProfileSettingsAsync(ModelConfiguration profile) =>
+        DataService.ModelSettings_UpdateAsync(new ModelSettings(
+            profile.ModelPath,
+            profile.Backend,
+            profile.ConfigurationJson,
+            profile.Id,
+            profile.BackendVariantId)
+        {
+            Devices = GetCurrentRoutingDevices()
+        });
+
     private async Task SelectProfileAsync(ChangeEventArgs args)
     {
         if (!Guid.TryParse(args.Value?.ToString(), out var profileId))
@@ -2567,6 +2495,13 @@ else if (activeBackend == BackendTab.OpenVino)
         selectedProfileIds[activeBackend] = profile.Id;
         statusMessage = $"Selected: {profile.Name}";
         await PersistSelectedProfileAsync(profile.ModelPath, profile.Id);
+        if (IsPythonBackendTab(activeBackend))
+        {
+            await SavePythonProfileSettingsAsync(profile);
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
         await SaveSettingsAsync();
     }
 
@@ -2799,8 +2734,7 @@ else if (activeBackend == BackendTab.OpenVino)
     {
         BackendTab.LlamaVulkan or BackendTab.LlamaCuda12 or BackendTab.LlamaSycl => CreateBackendTabData(llamaState),
         BackendTab.OpenVino => CreateBackendTabData(openVinoState),
-        BackendTab.VllmCuda12 or BackendTab.VllmXpu or BackendTab.Sglang => CreateBackendTabData(pythonForm),
-        BackendTab.DotLlm => CreateBackendTabData(dotLlmForm),
+        BackendTab.VllmCuda12 or BackendTab.VllmXpu => CreateBackendTabData(pythonForm),
         _ => CreateBackendTabData(llamaState)
     };
 
@@ -2823,7 +2757,7 @@ else if (activeBackend == BackendTab.OpenVino)
             configurationData,
             new BackendTabModelConfigurationData(CurrentBackendModels, backendProfiles, selectedProfileId),
             configurationData,
-            new BackendTabRuntimeTelemetryData(loadStatus, isLoading, isOpenVinoLoading, isPythonLoading, isDotLlmLoading));
+            new BackendTabRuntimeTelemetryData(loadStatus, isLoading, isOpenVinoLoading, isPythonLoading));
     }
 
     private static string GetBackendLabel(ConfigurationBackend backend) => backend switch
@@ -2831,8 +2765,6 @@ else if (activeBackend == BackendTab.OpenVino)
         ConfigurationBackend.Llama => "LLama",
         ConfigurationBackend.OpenVino => "OpenVINO",
         ConfigurationBackend.Vllm => "vLLM",
-        ConfigurationBackend.Sglang => "SGLang",
-        ConfigurationBackend.DotLlm => "dotLLM",
         _ => backend.ToString()
     };
 
@@ -2915,12 +2847,17 @@ else if (activeBackend == BackendTab.OpenVino)
                 .Where(route => route.Backends.Contains(activeBackend))
                 .Select(route => route.Value)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            pythonForm.Devices.Clear();
-            pythonForm.Devices.AddRange(settings.Devices
+            var selectedRoutes = settings.Devices
                 .OrderBy(device => device.Priority)
                 .Where(device => device.Priority > 0)
                 .Where(device => availableRoutes.Contains(device.Route))
-                .Select(device => device.Route));
+                .Select(device => device.Route)
+                .ToArray();
+            if (selectedRoutes.Length == 0)
+                return;
+
+            pythonForm.Devices.Clear();
+            pythonForm.Devices.AddRange(selectedRoutes);
             pythonForm.Device = pythonForm.Devices.FirstOrDefault() ?? string.Empty;
         }
     }
@@ -2940,7 +2877,7 @@ else if (activeBackend == BackendTab.OpenVino)
 
     private static bool IsLlamaBackendTab(BackendTab backend) => backend is BackendTab.LlamaVulkan or BackendTab.LlamaCuda12 or BackendTab.LlamaSycl;
     private static bool IsVllmBackendTab(BackendTab backend) => backend is BackendTab.VllmCuda12 or BackendTab.VllmXpu;
-    private static bool IsPythonBackendTab(BackendTab backend) => IsVllmBackendTab(backend) || backend == BackendTab.Sglang;
+    private static bool IsPythonBackendTab(BackendTab backend) => IsVllmBackendTab(backend);
 
     private static string GetLlamaBackendName(BackendTab backend) => backend switch
     {
@@ -2956,16 +2893,8 @@ else if (activeBackend == BackendTab.OpenVino)
         _ => BackendTab.LlamaVulkan
     };
 
-    private string GetRuntimeVariantId(BackendTab backend)
-    {
-        var option = BackendTabOptions.Single(item => item.Backend == backend);
-        if (backend != BackendTab.Sglang)
-            return option.RuntimeVariantId;
-
-        var xpuSelected = pythonForm.Devices.Any(device => device.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase)) ||
-            (pythonForm.Devices.Count == 0 && pythonForm.Device.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase));
-        return xpuSelected ? "sglang.xpu" : option.RuntimeVariantId;
-    }
+    private static string GetRuntimeVariantId(BackendTab backend) =>
+        BackendTabOptions.Single(item => item.Backend == backend).RuntimeVariantId;
 
     private bool IsProfileForBackendVariant(ModelConfiguration profile, BackendTab backend) =>
         string.Equals(profile.BackendVariantId, GetRuntimeVariantId(backend), StringComparison.OrdinalIgnoreCase);
@@ -3019,7 +2948,10 @@ else if (activeBackend == BackendTab.OpenVino)
 
         var profile = GetPreferredProfile(modelPath, CurrentProfileBackend);
         if (profile is not null)
-            TryApplyProfile(profile);
+        {
+            if (!TryApplyProfile(profile))
+                return;
+        }
         else
         {
             selectedProfileId = null;
@@ -3027,6 +2959,13 @@ else if (activeBackend == BackendTab.OpenVino)
         }
 
         await PersistSelectedProfileAsync(modelPath, selectedProfileId);
+        if (profile is not null && IsPythonBackendTab(activeBackend))
+        {
+            await SavePythonProfileSettingsAsync(profile);
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
         await SaveSettingsAsync();
         await InvokeAsync(StateHasChanged);
     }
@@ -3042,9 +2981,6 @@ else if (activeBackend == BackendTab.OpenVino)
                 break;
             case BackendTab.OpenVino:
                 openVinoState.ModelPath = modelPath;
-                break;
-            case BackendTab.DotLlm:
-                dotLlmForm.ModelPath = modelPath;
                 break;
             default:
                 pythonForm.ModelPath = modelPath;
@@ -3069,12 +3005,6 @@ else if (activeBackend == BackendTab.OpenVino)
                 pythonForm.Reset();
                 ConfigureVllmBackend(activeBackend);
                 break;
-            case BackendTab.Sglang:
-                pythonForm.Reset();
-                break;
-            case BackendTab.DotLlm:
-                dotLlmForm.Reset();
-                break;
         }
     }
 
@@ -3096,14 +3026,13 @@ else if (activeBackend == BackendTab.OpenVino)
                     EnsureOpenVinoDeviceRoute();
                     break;
                 case ConfigurationBackend.Vllm:
-                case ConfigurationBackend.Sglang:
-                    pythonForm.Load(JsonSerializer.Deserialize<PythonInferenceLoadRequest>(profile.ConfigurationJson) ?? throw new JsonException());
-                    break;
-                case ConfigurationBackend.DotLlm:
-                    dotLlmForm.Load(JsonSerializer.Deserialize<DotLlmLoadRequest>(profile.ConfigurationJson) ?? throw new JsonException());
+                    pythonForm.Load(
+                        JsonSerializer.Deserialize<PythonInferenceLoadRequest>(profile.ConfigurationJson, ConfigurationJsonOptions) ?? throw new JsonException(),
+                        profile.BackendVariantId,
+                        profile.ConfigurationJson);
                     break;
                 default:
-                    ApplySettings(JsonSerializer.Deserialize<LoadModelRequest>(profile.ConfigurationJson) ?? throw new JsonException());
+                    ApplySettings(JsonSerializer.Deserialize<LoadModelRequest>(profile.ConfigurationJson, ConfigurationJsonOptions) ?? throw new JsonException());
                     break;
             }
             SetModelPath(activeBackend, profile.ModelPath);
@@ -3116,6 +3045,12 @@ else if (activeBackend == BackendTab.OpenVino)
                 openVinoStatus = "The selected OpenVINO configuration set is invalid.";
             else
                 statusMessage = "The selected configuration set is invalid.";
+            return false;
+        }
+        catch (ArgumentException exception)
+        {
+            selectedProfileId = null;
+            statusMessage = exception.Message;
             return false;
         }
         finally
@@ -3242,9 +3177,7 @@ else if (activeBackend == BackendTab.OpenVino)
             GetSelectedDeviceNames()))
         : activeBackend == BackendTab.OpenVino
             ? openVinoState.ToSettings().ConfigurationJson
-            : activeBackend == BackendTab.DotLlm
-                ? JsonSerializer.Serialize(dotLlmForm.ToRequest())
-                : JsonSerializer.Serialize(pythonForm.ToRequest(CurrentProfileBackend));
+            : JsonSerializer.Serialize(pythonForm.ToRequest(CurrentProfileBackend));
 
     private InferenceTimeoutSettings? CreateProfileTimeoutSettings() => profileTimeoutEnabled
         ? new InferenceTimeoutSettings(
@@ -3438,21 +3371,6 @@ else if (activeBackend == BackendTab.OpenVino)
                 device.Vendor ?? string.Empty,
                 device.Driver ?? string.Empty,
                 [device.Route.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase) ? BackendTab.VllmXpu : BackendTab.VllmCuda12]))
-            .ToArray();
-
-        pythonForm.Devices.RemoveAll(device => !pythonDeviceRoutes.Any(route => string.Equals(route.Value, device, StringComparison.OrdinalIgnoreCase)));
-        pythonForm.Device = pythonForm.Devices.FirstOrDefault() ?? string.Empty;
-    }
-
-    private void SyncPythonDevices(IReadOnlyList<BackendAcceleratorDevice> devices)
-    {
-        pythonDeviceRoutes = devices
-            .Select(device => new PythonDeviceRoute(
-                device.Route,
-                device.Label,
-                device.Vendor,
-                device.Driver,
-                [BackendTab.Sglang]))
             .ToArray();
 
         pythonForm.Devices.RemoveAll(device => !pythonDeviceRoutes.Any(route => string.Equals(route.Value, device, StringComparison.OrdinalIgnoreCase)));

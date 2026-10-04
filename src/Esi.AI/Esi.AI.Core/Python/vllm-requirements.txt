@@ -1,2 +1,9 @@
 -r requirements.txt
-vllm==0.28.0
+--index-url https://download.pytorch.org/whl/cu129
+--extra-index-url https://pypi.org/simple
+--find-links https://github.com/vllm-project/vllm/releases/expanded_assets/v0.28.0
+vllm==0.28.0+cu129
+torch==2.13.0+cu129
+torchaudio==2.11.0+cu129
+torchvision==0.28.0+cu129
+torchcodec==0.16.0+cu129

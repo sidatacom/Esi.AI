@@ -19,7 +19,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Worker", "Es
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Llama.Vulkan", "Esi.AI\Esi.AI.Backend.Llama.Vulkan\Esi.AI.Backend.Llama.Vulkan.csproj", "{F6102D11-F327-46D5-A0E3-47EF69E6B61B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Llama.Vulkan.Tests", "Esi.AI\Esi.AI.Backend.Llama.Vulkan.Tests\Esi.AI.Backend.Llama.Vulkan.Tests.csproj", "{A66DA041-4E8B-4A69-8C56-A3DADAC72BC4}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Llama.Vulkan.Tests", "..\tests\Esi.AI.Backend.Llama.Vulkan.Tests\Esi.AI.Backend.Llama.Vulkan.Tests.csproj", "{A66DA041-4E8B-4A69-8C56-A3DADAC72BC4}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

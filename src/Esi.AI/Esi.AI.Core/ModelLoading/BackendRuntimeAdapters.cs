@@ -109,7 +109,7 @@ public sealed class OpenVinoRuntimeAdapter(OpenVinoModelLoader loader) : IBacken
     public void Dispose() => loader.Dispose();
 }
 
-/// <summary>Adapts the vLLM and SGLang Python bridge.</summary>
+/// <summary>Adapts the vLLM Python bridge.</summary>
 public sealed class PythonRuntimeAdapter(PythonInferenceServer server) : IBackendRuntimeAdapter<PythonInferenceLoadRequest>
 {
     public ConfigurationBackend Backend => ConfigurationBackend.Vllm;
@@ -131,28 +131,6 @@ public sealed class PythonRuntimeAdapter(PythonInferenceServer server) : IBacken
     public void Dispose() => server.Dispose();
 }
 
-/// <summary>Adapts the in-process dotLLM runtime.</summary>
-public sealed class DotLlmRuntimeAdapter(DotLlmInProcessRuntime runtime) : IBackendRuntimeAdapter<DotLlmLoadRequest>
-{
-    public ConfigurationBackend Backend => ConfigurationBackend.DotLlm;
-
-    public string RuntimeName => "dotLLM / In-Process";
-
-    public ModelLoadStatus GetStatus() => runtime.GetStatus();
-
-    public bool SupportsImageInput(string? modelPath) => false;
-
-    public Task LoadAsync(DotLlmLoadRequest request, CancellationToken cancellationToken = default) => runtime.LoadAsync(request, cancellationToken);
-
-    public DotLlmInProcessChatSession CreateChatSession() => runtime.CreateChatSession();
-
-    public Task StopAsync(CancellationToken cancellationToken = default) => runtime.StopAsync(cancellationToken);
-
-    public Task UnloadAsync(string modelPath, CancellationToken cancellationToken = default) => runtime.StopAsync(cancellationToken);
-
-    public void Dispose() => runtime.Dispose();
-}
-
 /// <summary>Resolves normalized backend aliases to runtime adapters.</summary>
 public sealed class BackendRuntimeRegistry : IDisposable
 {
@@ -167,9 +145,7 @@ public sealed class BackendRuntimeRegistry : IDisposable
     public IBackendRuntimeAdapter Resolve(ConfigurationBackend backend) =>
         adapters.TryGetValue(backend, out var adapter)
             ? adapter
-            : backend == ConfigurationBackend.Sglang && adapters.TryGetValue(ConfigurationBackend.Vllm, out var pythonAdapter)
-                ? pythonAdapter
-                : throw new ArgumentException($"No runtime adapter is registered for '{backend}'.", nameof(backend));
+            : throw new ArgumentException($"No runtime adapter is registered for '{backend}'.", nameof(backend));
 
     public IBackendRuntimeAdapter Resolve(string backend) => Resolve(Normalize(backend));
 
@@ -177,8 +153,6 @@ public sealed class BackendRuntimeRegistry : IDisposable
     {
         "OPENVINO" => ConfigurationBackend.OpenVino,
         "VLLM" => ConfigurationBackend.Vllm,
-        "SGLANG" => ConfigurationBackend.Sglang,
-        "DOTLLM" => ConfigurationBackend.DotLlm,
         "VULKAN" or "CUDA" or "SYCL" or "CPU" => ConfigurationBackend.Llama,
         _ => throw new ArgumentException($"Unsupported backend '{backend}'.", nameof(backend))
     };

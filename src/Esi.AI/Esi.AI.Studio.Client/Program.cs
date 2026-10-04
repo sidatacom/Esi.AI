@@ -1,10 +1,12 @@
 using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using Microsoft.FluentUI.AspNetCore.Components;
+using Elsa.Studio.Workflows.Designer.Extensions;
 using Esi.AI.Workflow;
 using Esi.AI.Studio.Contracts;
 using Esi.AI.Studio.Client.Services;
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
+builder.RootComponents.RegisterCustomElsaStudioElements();
 
 builder.Services.AddScoped(sp => new HttpClient
 {
