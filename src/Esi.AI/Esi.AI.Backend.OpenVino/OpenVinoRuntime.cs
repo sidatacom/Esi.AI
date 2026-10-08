@@ -26,6 +26,7 @@ public sealed class OpenVinoRuntime : IBackendRuntime
     private VLMPipeline? vlmPipeline;
     private string? loadedModelPath;
     private string? loadedDevice;
+    private ulong loadedModelSize;
     private int disposed;
 
     /// <summary>Creates a runtime and connects OpenVINO native log output to its status log.</summary>
@@ -46,7 +47,7 @@ public sealed class OpenVinoRuntime : IBackendRuntime
     public ModelLoadStatus GetStatus()
     {
         var isLoaded = loadedModelPath is not null && (llmPipeline is not null || vlmPipeline is not null);
-        var modelSize = isLoaded ? GetModelSize(loadedModelPath!) : 0;
+        var modelSize = isLoaded ? loadedModelSize : 0;
         var log = string.Join(Environment.NewLine, loadLog);
         var loadedModels = isLoaded
             ? new[]
@@ -114,9 +115,11 @@ public sealed class OpenVinoRuntime : IBackendRuntime
 
         if (string.IsNullOrWhiteSpace(configuration.Device))
             throw new ArgumentException("An OpenVINO device is required.", nameof(request));
-        var isNpu = configuration.Device.Equals("NPU", StringComparison.OrdinalIgnoreCase);
-        var isGpu = configuration.Device.StartsWith("GPU", StringComparison.OrdinalIgnoreCase) ||
-            configuration.Device.StartsWith("MULTI:GPU", StringComparison.OrdinalIgnoreCase);
+        var requestedDevice = configuration.Device.Trim();
+        var device = ResolveDeviceRoute(requestedDevice);
+        var isNpu = device.Equals("NPU", StringComparison.OrdinalIgnoreCase);
+        var isGpu = device.StartsWith("GPU", StringComparison.OrdinalIgnoreCase) ||
+            device.StartsWith("MULTI:GPU", StringComparison.OrdinalIgnoreCase);
         if (!isNpu && !isGpu)
             throw new ArgumentException("OpenVINO loading requires a GPU, MULTI:GPU, or NPU device route.", nameof(request));
 
@@ -135,7 +138,9 @@ public sealed class OpenVinoRuntime : IBackendRuntime
             ClearLoadLog();
             DisposePipelines();
             ClearLoadedModelState();
-            AppendLoadLog($"Starting OpenVINO model load on {configuration.Device}.");
+            if (!string.Equals(requestedDevice, device, StringComparison.OrdinalIgnoreCase))
+                AppendLoadLog($"Resolved generic OpenVINO route '{requestedDevice}' to preferred device '{device}'.");
+            AppendLoadLog($"Starting OpenVINO model load on {device}.");
             cancellationToken.ThrowIfCancellationRequested();
 
             if (isVisionLanguageModel)
@@ -154,8 +159,13 @@ public sealed class OpenVinoRuntime : IBackendRuntime
                 properties["CACHE_DIR"] = Path.GetFullPath(configuration.CacheDirectory.Trim());
             if (TryGetDynamicQuantizationGroupSize(modelPath) is int groupSize)
                 properties["DYNAMIC_QUANTIZATION_GROUP_SIZE"] = groupSize.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            if (isVisionLanguageModel && IsQwen35Model(modelPath))
-                properties["ATTENTION_BACKEND"] = "SDPA";
+            if (isVisionLanguageModel && isGpu && IsQwen35Model(modelPath))
+            {
+                properties["KV_CACHE_PRECISION"] = "u4";
+                properties["GPU_ENABLE_LARGE_ALLOCATIONS"] = "YES";
+            }
+            if (isVisionLanguageModel && isGpu && IsQwen35Model(modelPath))
+                properties["ATTENTION_BACKEND"] = "PA";
             if (isNpu)
             {
                 properties["MAX_PROMPT_LEN"] = npu.MaxPromptLength.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -167,7 +177,7 @@ public sealed class OpenVinoRuntime : IBackendRuntime
             if (isVisionLanguageModel)
             {
                 operation = "VLMPipeline.Create";
-                VLMPipeline? pipeline = new VLMPipeline(modelPath, configuration.Device, properties);
+                VLMPipeline? pipeline = new VLMPipeline(modelPath, device, properties);
                 try
                 {
                     using var generationConfig = pipeline.GetGenerationConfig();
@@ -185,7 +195,7 @@ public sealed class OpenVinoRuntime : IBackendRuntime
             else
             {
                 operation = "LLMPipeline.Create";
-                LLMPipeline? pipeline = new LLMPipeline(modelPath, configuration.Device, properties);
+                LLMPipeline? pipeline = new LLMPipeline(modelPath, device, properties);
                 try
                 {
                     using var generationConfig = pipeline.GetGenerationConfig();
@@ -201,8 +211,9 @@ public sealed class OpenVinoRuntime : IBackendRuntime
                 }
             }
 
+            loadedModelSize = GetModelSize(modelPath);
             loadedModelPath = modelPath;
-            loadedDevice = configuration.Device;
+            loadedDevice = device;
         }
         catch (OperationCanceledException)
         {
@@ -215,7 +226,7 @@ public sealed class OpenVinoRuntime : IBackendRuntime
             DisposePipelines();
             ClearLoadedModelState();
             throw new InvalidOperationException(
-                $"Failed during '{operation}' while loading OpenVINO model '{modelPath}' on '{configuration.Device}': {exception.Message}",
+                $"Failed during '{operation}' while loading OpenVINO model '{modelPath}' on '{device}': {exception.Message}",
                 exception);
         }
         finally
@@ -275,6 +286,7 @@ public sealed class OpenVinoRuntime : IBackendRuntime
         }
 
         var images = Array.Empty<Tensor>();
+        var generationLockOwned = true;
         try
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -309,31 +321,41 @@ public sealed class OpenVinoRuntime : IBackendRuntime
                 request.Options.StopSequences,
                 request.Options.ReasoningEffort);
             var channel = Channel.CreateUnbounded<string>(new UnboundedChannelOptions { SingleReader = true, SingleWriter = true });
-            var generationTask = Task.Run(() =>
+            var generationTask = Task.Factory.StartNew(() =>
             {
                 try
                 {
-                    return chatSession.Generate(chatMessages, tools, text => channel.Writer.TryWrite(text), options, images);
+                    return chatSession.Generate(chatMessages, tools, text => channel.Writer.TryWrite(text), options, images, cancellationToken);
                 }
                 finally
                 {
                     channel.Writer.TryComplete();
                 }
-            }, CancellationToken.None);
+            }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
 
             Exception? callbackException = null;
-            await foreach (var token in channel.Reader.ReadAllAsync().ConfigureAwait(false))
+            try
             {
-                if (onToken is null || cancellationToken.IsCancellationRequested || callbackException is not null)
-                    continue;
-                try
+                await foreach (var token in channel.Reader.ReadAllAsync(cancellationToken).ConfigureAwait(false))
                 {
-                    await onToken(token).ConfigureAwait(false);
+                    if (onToken is null || cancellationToken.IsCancellationRequested || callbackException is not null)
+                        continue;
+                    try
+                    {
+                        await onToken(token).ConfigureAwait(false);
+                    }
+                    catch (Exception exception)
+                    {
+                        callbackException = exception;
+                    }
                 }
-                catch (Exception exception)
-                {
-                    callbackException = exception;
-                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                generationLockOwned = false;
+                _ = ReleaseGenerationResourcesAsync(generationTask, images);
+                images = [];
+                throw;
             }
 
             var result = await generationTask.ConfigureAwait(false);
@@ -356,9 +378,42 @@ public sealed class OpenVinoRuntime : IBackendRuntime
         }
         finally
         {
-            foreach (var image in images)
-                image.Dispose();
-            generationLock.Release();
+            if (generationLockOwned)
+            {
+                try
+                {
+                    foreach (var image in images)
+                        image.Dispose();
+                }
+                finally
+                {
+                    generationLock.Release();
+                }
+            }
+        }
+    }
+
+    private async Task ReleaseGenerationResourcesAsync(Task generationTask, Tensor[] images)
+    {
+        try
+        {
+            await generationTask.ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            AppendLoadLog($"OpenVINO generation ended after the request stopped: {exception.GetType().Name}: {exception.Message}");
+        }
+        finally
+        {
+            try
+            {
+                foreach (var image in images)
+                    image.Dispose();
+            }
+            finally
+            {
+                generationLock.Release();
+            }
         }
     }
 
@@ -438,25 +493,43 @@ public sealed class OpenVinoRuntime : IBackendRuntime
         return runtimeDirectory;
     }
 
-    /// <summary>Returns the full name of the preferred available OpenVINO GPU.</summary>
-    public static string? GetGpuDeviceName()
+    /// <summary>Returns the available OpenVINO GPU routes, with the preferred discrete GPU first.</summary>
+    public static IReadOnlyList<(string Id, string Name)> GetGpuDevices()
     {
         InitializeRuntime();
         using var core = new Core();
-        var gpuNames = core.GetAvailableDevices()
+        var availableDevices = core.GetAvailableDevices()
             .Where(deviceName => deviceName.Equals("GPU", StringComparison.OrdinalIgnoreCase)
                 || deviceName.StartsWith("GPU.", StringComparison.OrdinalIgnoreCase))
-            .Select(deviceName => core.GetProperty(deviceName, "FULL_DEVICE_NAME"))
-            .Where(deviceName => !string.IsNullOrWhiteSpace(deviceName))
+            .Select(deviceName => (Id: deviceName, Name: core.GetProperty(deviceName, "FULL_DEVICE_NAME")))
+            .Where(device => !string.IsNullOrWhiteSpace(device.Name))
+            .Where(device => device.Name.Contains("Intel", StringComparison.OrdinalIgnoreCase))
             .ToArray();
 
-        return gpuNames.FirstOrDefault(deviceName =>
-                deviceName.Contains("Battlemage", StringComparison.OrdinalIgnoreCase)
-            || deviceName.Contains("B580", StringComparison.OrdinalIgnoreCase)
-            || deviceName.Contains("0xe223", StringComparison.OrdinalIgnoreCase))
-            ?? gpuNames.FirstOrDefault(deviceName => deviceName.Contains("Arc", StringComparison.OrdinalIgnoreCase))
-            ?? gpuNames.FirstOrDefault();
+        var explicitRoutes = availableDevices
+            .Where(device => device.Id.StartsWith("GPU.", StringComparison.OrdinalIgnoreCase))
+            .ToArray();
+        var devices = explicitRoutes.Length > 0 ? explicitRoutes : availableDevices;
+        return devices
+            .OrderByDescending(device => IsPreferredDiscreteGpu(device.Name))
+            .ThenByDescending(device => device.Name.Contains("Arc", StringComparison.OrdinalIgnoreCase))
+            .ThenBy(device => device.Id, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
+
+    private static string ResolveDeviceRoute(string requestedDevice)
+    {
+        if (!requestedDevice.Equals("GPU", StringComparison.OrdinalIgnoreCase))
+            return requestedDevice;
+
+        var preferredDevice = GetGpuDevices().FirstOrDefault();
+        return string.IsNullOrWhiteSpace(preferredDevice.Id) ? requestedDevice : preferredDevice.Id;
+    }
+
+    private static bool IsPreferredDiscreteGpu(string name) =>
+        name.Contains("Battlemage", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("B580", StringComparison.OrdinalIgnoreCase)
+        || name.Contains("0xe223", StringComparison.OrdinalIgnoreCase);
 
     private static string ResolveOpenVinoRuntimeDirectory()
     {
@@ -640,6 +713,7 @@ public sealed class OpenVinoRuntime : IBackendRuntime
     {
         loadedModelPath = null;
         loadedDevice = null;
+        loadedModelSize = 0;
     }
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);

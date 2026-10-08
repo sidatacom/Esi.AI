@@ -174,17 +174,14 @@ public sealed class OpenAiCompatibleBackendMiddleware(
             try
             {
                 using var session = modelRuntime.CreateOpenVinoChatSession();
-                Action<string> streamer = delta =>
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        onDelta?.Invoke(delta).GetAwaiter().GetResult();
-                    };
+                Action<string> streamer = delta => onDelta?.Invoke(delta).GetAwaiter().GetResult();
                 var result = session.GenerateWithStats(
                     request.StructuredMessages,
                     ResolveOpenVinoTools(request.Tools, request.Options.ToolChoice),
                     streamer,
                     ToOpenVinoOptions(request.Options),
-                    imageTensors.Length == 0 ? null : imageTensors);
+                    imageTensors.Length == 0 ? null : imageTensors,
+                    cancellationToken);
                 return new GenerationResult(result.Text, result.TokenCount, TimeSpan.Zero, result.TokensPerSecond, result.PromptTokenCount, result.FinishReason, result.ToolCalls, result.TimeToFirstTokenMs, result.PrefillDurationMs, result.DecodeDurationMs);
             }
             finally

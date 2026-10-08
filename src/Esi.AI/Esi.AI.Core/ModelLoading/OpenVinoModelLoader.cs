@@ -156,8 +156,13 @@ public sealed class OpenVinoModelLoader : IDisposable
                 properties["CACHE_DIR"] = Path.GetFullPath(cacheDirectory.Trim());
             if (TryGetDynamicQuantizationGroupSize(fullModelPath) is int dynamicQuantizationGroupSize)
                 properties["DYNAMIC_QUANTIZATION_GROUP_SIZE"] = dynamicQuantizationGroupSize.ToString(System.Globalization.CultureInfo.InvariantCulture);
-            if (isVisionLanguageModel && IsQwen35Model(fullModelPath))
-                properties["ATTENTION_BACKEND"] = "SDPA";
+            if (isVisionLanguageModel && isGpu && IsQwen35Model(fullModelPath))
+            {
+                properties["KV_CACHE_PRECISION"] = "u4";
+                properties["GPU_ENABLE_LARGE_ALLOCATIONS"] = "YES";
+            }
+            if (isVisionLanguageModel && isGpu && IsQwen35Model(fullModelPath))
+                properties["ATTENTION_BACKEND"] = "PA";
             if (isNpu)
             {
                 properties["MAX_PROMPT_LEN"] = npu.MaxPromptLength.ToString(System.Globalization.CultureInfo.InvariantCulture);
@@ -845,15 +850,24 @@ public sealed class OpenVinoChatSession : IDisposable
         this.generationLock = generationLock;
     }
 
-    public string Generate(string prompt, Action<string>? streamer = null, OpenVinoGenerationOptions? generationOptions = null) => GenerateWithStats(prompt, streamer, generationOptions).Text;
+    public string Generate(
+        string prompt,
+        Action<string>? streamer = null,
+        OpenVinoGenerationOptions? generationOptions = null,
+        CancellationToken cancellationToken = default) => GenerateWithStats(prompt, streamer, generationOptions, cancellationToken).Text;
 
-    public OpenVinoGenerationResult GenerateWithStats(string prompt, Action<string>? streamer = null, OpenVinoGenerationOptions? generationOptions = null)
+    public OpenVinoGenerationResult GenerateWithStats(
+        string prompt,
+        Action<string>? streamer = null,
+        OpenVinoGenerationOptions? generationOptions = null,
+        CancellationToken cancellationToken = default)
     {
         return GenerateWithStats(
             [new OpenAiChatMessage("user", prompt)],
             null,
             streamer,
-            generationOptions);
+            generationOptions,
+            cancellationToken: cancellationToken);
     }
 
     public OpenVinoGenerationResult GenerateWithStats(
@@ -861,10 +875,11 @@ public sealed class OpenVinoChatSession : IDisposable
         IReadOnlyList<OpenAiToolDefinition>? tools = null,
         Action<string>? streamer = null,
         OpenVinoGenerationOptions? generationOptions = null,
-        Tensor[]? images = null)
+        Tensor[]? images = null,
+        CancellationToken cancellationToken = default)
     {
         var openAiMessages = messages.Select(message => new OpenAiChatMessage(message.Role, message.Content)).ToArray();
-        return GenerateWithStats(openAiMessages, tools, streamer, generationOptions, images);
+        return GenerateWithStats(openAiMessages, tools, streamer, generationOptions, images, cancellationToken);
     }
 
     public OpenVinoGenerationResult GenerateWithStats(
@@ -872,42 +887,39 @@ public sealed class OpenVinoChatSession : IDisposable
         IReadOnlyList<OpenAiToolDefinition>? tools = null,
         Action<string>? streamer = null,
         OpenVinoGenerationOptions? generationOptions = null,
-        Tensor[]? images = null)
+        Tensor[]? images = null,
+        CancellationToken cancellationToken = default)
     {
         if (messages is null || messages.Count == 0)
             throw new ArgumentException("At least one chat message is required.", nameof(messages));
 
-        generationLock.Wait();
+        cancellationToken.ThrowIfCancellationRequested();
+        generationLock.Wait(cancellationToken);
         try
         {
+            var streamingCallback = CreateStreamingCallback(streamer, cancellationToken);
             using var generationConfig = GetGenerationConfig(generationOptions);
             if (llmPipeline is not null)
             {
                 using var history = CreateChatHistory(messages, tools, generationOptions?.ReasoningEffort, images is { Length: > 0 });
-                using var results = streamer is null
+                using var results = streamingCallback is null
                     ? llmPipeline.GenerateWithHistory(history, generationConfig)
-                    : llmPipeline.GenerateWithHistory(history, generationConfig, text =>
-                    {
-                        streamer(text);
-                        return StreamingStatus.Running;
-                    });
+                    : llmPipeline.GenerateWithHistory(history, generationConfig, streamingCallback);
+                cancellationToken.ThrowIfCancellationRequested();
                 return CreateGenerationResult(results.GetText(), results.GetPerformanceMetrics());
             }
 
             if (vlmPipeline is not null)
             {
                 using var history = CreateChatHistory(messages, tools, generationOptions?.ReasoningEffort, images is { Length: > 0 });
-                if (streamer is null)
+                if (streamingCallback is null)
                 {
                     using var nonStreamingResults = vlmPipeline.GenerateWithHistory(history, images, generationConfig);
                     return CreateGenerationResult(nonStreamingResults.GetText(), nonStreamingResults.GetPerformanceMetrics());
                 }
 
-                using var streamedResults = vlmPipeline.GenerateWithHistory(history, images, generationConfig, text =>
-                {
-                    streamer(text);
-                    return StreamingStatus.Running;
-                });
+                using var streamedResults = vlmPipeline.GenerateWithHistory(history, images, generationConfig, streamingCallback);
+                cancellationToken.ThrowIfCancellationRequested();
                 return CreateGenerationResult(streamedResults.GetText(), streamedResults.GetPerformanceMetrics());
             }
 
@@ -917,6 +929,23 @@ public sealed class OpenVinoChatSession : IDisposable
         {
             generationLock.Release();
         }
+    }
+
+    private static Func<string, StreamingStatus>? CreateStreamingCallback(
+        Action<string>? streamer,
+        CancellationToken cancellationToken)
+    {
+        if (streamer is null && !cancellationToken.CanBeCanceled)
+            return null;
+
+        return text =>
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return StreamingStatus.Cancel;
+
+            streamer?.Invoke(text);
+            return cancellationToken.IsCancellationRequested ? StreamingStatus.Cancel : StreamingStatus.Running;
+        };
     }
 
     private static ChatHistory CreateChatHistory(

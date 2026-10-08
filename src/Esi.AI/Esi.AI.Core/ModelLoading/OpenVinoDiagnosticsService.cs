@@ -12,7 +12,7 @@ public sealed class OpenVinoDiagnosticsService
         this.loadGate = loadGate ?? new OpenVinoLoadGate();
     }
 
-    public OpenVinoDiagnostics Diagnose(Func<string?>? nativeGpuNameProbe = null)
+    public OpenVinoDiagnostics Diagnose(Func<IReadOnlyList<(string Id, string Name)>>? nativeGpuDevicesProbe = null)
     {
         if (loadGate.IsEntered)
         {
@@ -31,15 +31,15 @@ public sealed class OpenVinoDiagnosticsService
 
         var checks = new List<OpenVinoDiagnosticCheck>();
         var intelGpuName = AddLinuxDriverChecks(checks);
-        string? nativeGpuName = null;
+        IReadOnlyList<(string Id, string Name)> nativeGpuDevices = [];
         string? nativeGpuProbeError = null;
-        if (nativeGpuNameProbe is not null)
+        if (nativeGpuDevicesProbe is not null)
         {
             try
             {
-                nativeGpuName = nativeGpuNameProbe()?.Trim();
-                if (string.IsNullOrWhiteSpace(nativeGpuName))
-                    nativeGpuName = null;
+                nativeGpuDevices = nativeGpuDevicesProbe()
+                    .Where(device => !string.IsNullOrWhiteSpace(device.Id) && !string.IsNullOrWhiteSpace(device.Name))
+                    .ToArray();
             }
             catch (Exception exception)
             {
@@ -51,19 +51,26 @@ public sealed class OpenVinoDiagnosticsService
             Directory.Exists("/dev/dri") && Directory.EnumerateFileSystemEntries("/dev/dri", "renderD*").Any();
         var hasNpuDevice = OperatingSystem.IsLinux() &&
             Directory.Exists("/dev/accel") && Directory.EnumerateFileSystemEntries("/dev/accel", "accel*").Any();
-        IReadOnlyList<OpenVinoDeviceStatus> gpuDevices = hasRenderDevice
-            ? new[] { new OpenVinoDeviceStatus(
-                "GPU",
-                nativeGpuName ?? intelGpuName ?? "OpenVINO GPU (native probe deferred until load)",
+        var canUseNativeRoutes = nativeGpuDevicesProbe is not null && nativeGpuDevices.Count > 0;
+        var canUseDeferredRoute = nativeGpuDevicesProbe is null && hasRenderDevice;
+        var gpuDevices = canUseNativeRoutes
+            ? nativeGpuDevices.Select(device => new OpenVinoDeviceStatus(
+                device.Id,
+                device.Name,
                 true,
                 "Intel",
-                "OS render device",
-                nativeGpuName is not null
-                    ? "Device name is reported by OpenVINO FULL_DEVICE_NAME."
-                    : nativeGpuProbeError is not null
-                        ? $"Native OpenVINO name probing failed; using the OS hardware name. {nativeGpuProbeError}"
-                        : "GPU route is available from OS device checks; native OpenVINO probing is deferred until model load.") }
-            : Array.Empty<OpenVinoDeviceStatus>();
+                "OpenVINO GPU plugin",
+                "Device route and name are reported by OpenVINO.")).ToArray()
+            : canUseDeferredRoute
+                ? [new OpenVinoDeviceStatus(
+                    "GPU",
+                    intelGpuName ?? "OpenVINO GPU (native probe deferred until load)",
+                    true,
+                    "Intel",
+                    "OS render device",
+                    "GPU route is available from OS device checks; native OpenVINO probing is deferred until model load.")]
+                : Array.Empty<OpenVinoDeviceStatus>();
+        var hasOpenVinoGpuRoute = hasRenderDevice && (canUseNativeRoutes || canUseDeferredRoute);
         var devices = hasNpuDevice
             ? gpuDevices.Append(new OpenVinoDeviceStatus(
                 "NPU",
@@ -76,12 +83,14 @@ public sealed class OpenVinoDiagnosticsService
         checks.Add(new OpenVinoDiagnosticCheck(
             "openvino-gpu-plugin",
             "OpenVINO GPU route",
-            hasRenderDevice,
-            hasRenderDevice
-                ? nativeGpuName is not null
-                    ? $"OpenVINO reports GPU device {nativeGpuName}."
+            hasOpenVinoGpuRoute,
+            hasOpenVinoGpuRoute
+                ? canUseNativeRoutes
+                    ? $"OpenVINO reports GPU routes {string.Join(", ", nativeGpuDevices.Select(device => $"{device.Id} ({device.Name})"))}."
                     : "A render device is available. Native OpenVINO probing is deferred until model load."
-                : "No DRM render device was found under /dev/dri.",
+                : nativeGpuProbeError is not null
+                    ? $"Native OpenVINO GPU route discovery failed: {nativeGpuProbeError}"
+                    : "No OpenVINO GPU route was reported.",
             false));
         checks.Add(new OpenVinoDiagnosticCheck(
             "openvino-npu-plugin",
@@ -92,7 +101,7 @@ public sealed class OpenVinoDiagnosticsService
                 : "No accelerator device was found under /dev/accel.",
             false));
 
-        return Cache(new OpenVinoDiagnostics(hasRenderDevice, hasNpuDevice, devices, checks, null));
+        return Cache(new OpenVinoDiagnostics(hasOpenVinoGpuRoute, hasNpuDevice, devices, checks, null));
     }
 
     private OpenVinoDiagnostics Cache(OpenVinoDiagnostics diagnostics)
