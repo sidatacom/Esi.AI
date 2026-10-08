@@ -914,6 +914,51 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
+    public async Task ModelConfiguration_CreateAsync_AllowsSameNameAcrossVariants_RejectsDuplicateWithinVariant()
+    {
+        await using var context = await TestContext.CreateAsync();
+        var now = DateTime.UtcNow;
+        var llamaSycl = new ModelConfiguration(
+            Guid.Empty, "Benchmark", null, context.ModelPath, false, 1, "{\"Backend\":\"SYCL\"}", now, now,
+            ConfigurationBackend.Llama, BackendVariantId: "llama.sycl");
+        var llamaCuda = llamaSycl with
+        {
+            ConfigurationJson = "{\"Backend\":\"CUDA\"}",
+            BackendVariantId = "llama.cuda12"
+        };
+
+        var savedSycl = await context.DataService.ModelConfiguration_CreateAsync(llamaSycl);
+        var savedCuda = await context.DataService.ModelConfiguration_CreateAsync(llamaCuda);
+        var duplicateSycl = await Assert.ThrowsExceptionAsync<InvalidOperationException>(
+            () => context.DataService.ModelConfiguration_CreateAsync(llamaSycl));
+
+        Assert.AreEqual("llama.sycl", savedSycl.BackendVariantId);
+        Assert.AreEqual("llama.cuda12", savedCuda.BackendVariantId);
+        Assert.Contains("llama.sycl", duplicateSycl.Message);
+    }
+
+    [TestMethod]
+    public async Task ModelConfiguration_CreateAsync_ExplicitCudaRouteOverridesXpuGraphFlag()
+    {
+        await using var context = await TestContext.CreateAsync();
+        var now = DateTime.UtcNow;
+        var xpu = new ModelConfiguration(
+            Guid.Empty, "Benchmark", null, context.ModelPath, false, 1,
+            "{\"Device\":\"xpu:0\",\"Devices\":[\"xpu:0\"],\"EnableXpuGraph\":true}", now, now,
+            ConfigurationBackend.Vllm);
+        var cuda = xpu with
+        {
+            ConfigurationJson = "{\"Device\":\"cuda:0\",\"Devices\":[\"cuda:0\"],\"EnableXpuGraph\":true}"
+        };
+
+        var savedXpu = await context.DataService.ModelConfiguration_CreateAsync(xpu);
+        var savedCuda = await context.DataService.ModelConfiguration_CreateAsync(cuda);
+
+        Assert.AreEqual("vllm.xpu", savedXpu.BackendVariantId);
+        Assert.AreEqual("vllm.cuda12", savedCuda.BackendVariantId);
+    }
+
+    [TestMethod]
     public async Task ModelConfiguration_ReadAsync_LegacyConfigurations_ReturnCatalogEntries()
     {
         await using var context = await TestContext.CreateAsync();

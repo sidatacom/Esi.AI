@@ -31,6 +31,19 @@ public sealed class OpenAiCompatibleControllerTests
     }
 
     [TestMethod]
+    public async Task ListModels_WhenRequestIsCanceled_ReturnsEmptyResult()
+    {
+        using var runtime = new ModelRuntime();
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        var controller = CreateController(runtime, new CanceledLocalModelCatalog());
+
+        var result = await controller.ListModels(cancellation.Token);
+
+        Assert.IsInstanceOfType<EmptyResult>(result);
+    }
+
+    [TestMethod]
     public void GetApplicationModels_WhenNoModelLoaded_ReturnsModelLoadStatus()
     {
         using var runtime = new ModelRuntime();
@@ -654,6 +667,12 @@ public sealed class OpenAiCompatibleControllerTests
     {
         public Task<IReadOnlyList<LocalModelInfo>> ScanLocalModelsAsync(CancellationToken cancellationToken = default) =>
             Task.FromResult(models);
+    }
+
+    private sealed class CanceledLocalModelCatalog : ILocalModelCatalog
+    {
+        public Task<IReadOnlyList<LocalModelInfo>> ScanLocalModelsAsync(CancellationToken cancellationToken = default) =>
+            Task.FromCanceled<IReadOnlyList<LocalModelInfo>>(cancellationToken);
     }
 
     private sealed class TestDbContextFactory(DbContextOptions<ApplicationDbContext> options) : IDbContextFactory<ApplicationDbContext>

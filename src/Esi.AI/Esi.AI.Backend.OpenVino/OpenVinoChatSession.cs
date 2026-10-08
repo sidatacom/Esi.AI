@@ -27,38 +27,50 @@ internal sealed class OpenVinoChatSession
         IReadOnlyList<OpenAiToolDefinition>? tools,
         Action<string>? streamer,
         OpenVinoGenerationOptions options,
-        Tensor[] images)
+        Tensor[] images,
+        CancellationToken cancellationToken = default)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (messages.Count == 0)
             throw new ArgumentException("At least one chat message is required.", nameof(messages));
 
+        var streamingCallback = CreateStreamingCallback(streamer, cancellationToken);
         using var generationConfig = GetGenerationConfig(options);
         using var history = CreateChatHistory(messages, tools, options.ReasoningEffort, images.Length > 0);
         if (llmPipeline is not null)
         {
-            using var results = streamer is null
+            using var results = streamingCallback is null
                 ? llmPipeline.GenerateWithHistory(history, generationConfig)
-                : llmPipeline.GenerateWithHistory(history, generationConfig, text =>
-                {
-                    streamer(text);
-                    return StreamingStatus.Running;
-                });
+                : llmPipeline.GenerateWithHistory(history, generationConfig, streamingCallback);
             return CreateGenerationResult(results.GetText(), results.GetPerformanceMetrics());
         }
 
         if (vlmPipeline is not null)
         {
-            using var results = streamer is null
+            using var results = streamingCallback is null
                 ? vlmPipeline.GenerateWithHistory(history, images, generationConfig)
-                : vlmPipeline.GenerateWithHistory(history, images, generationConfig, text =>
-                {
-                    streamer(text);
-                    return StreamingStatus.Running;
-                });
+                : vlmPipeline.GenerateWithHistory(history, images, generationConfig, streamingCallback);
             return CreateGenerationResult(results.GetText(), results.GetPerformanceMetrics());
         }
 
         throw new InvalidOperationException("No OpenVINO pipeline is available for this chat session.");
+    }
+
+    private static Func<string, StreamingStatus>? CreateStreamingCallback(
+        Action<string>? streamer,
+        CancellationToken cancellationToken)
+    {
+        if (streamer is null && !cancellationToken.CanBeCanceled)
+            return null;
+
+        return text =>
+        {
+            if (cancellationToken.IsCancellationRequested)
+                return StreamingStatus.Cancel;
+
+            streamer?.Invoke(text);
+            return cancellationToken.IsCancellationRequested ? StreamingStatus.Cancel : StreamingStatus.Running;
+        };
     }
 
     internal static string SerializeChatMessageForHistory(OpenAiChatMessage message)

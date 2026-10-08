@@ -128,11 +128,11 @@ public sealed class InferenceService(
                 var imageTensors = OpenVinoImageTensorFactory.Create(messages);
                 try
                 {
-                    var openVinoGeneration = openVinoSession.GenerateWithStats(messages, streamer: delta =>
-                    {
-                        cancellationToken.ThrowIfCancellationRequested();
-                        onDelta?.Invoke(delta).GetAwaiter().GetResult();
-                    }, images: imageTensors.Length == 0 ? null : imageTensors);
+                    var openVinoGeneration = openVinoSession.GenerateWithStats(
+                        messages,
+                        streamer: delta => onDelta?.Invoke(delta).GetAwaiter().GetResult(),
+                        images: imageTensors.Length == 0 ? null : imageTensors,
+                        cancellationToken: cancellationToken);
                     return new GenerationResult(openVinoGeneration.Text, openVinoGeneration.TokenCount, TimeSpan.Zero, openVinoGeneration.TokensPerSecond, openVinoGeneration.PromptTokenCount, "stop", null, openVinoGeneration.TimeToFirstTokenMs, openVinoGeneration.PrefillDurationMs, openVinoGeneration.DecodeDurationMs);
                 }
                 finally

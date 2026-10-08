@@ -2573,6 +2573,7 @@ else if (activeBackend == BackendTab.OpenVino)
         var name = baseName;
         var suffix = 2;
         while (profiles.Any(profile => profile.Backend == CurrentProfileBackend &&
+            string.Equals(profile.BackendVariantId, CurrentBackendVariantId, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(profile.Name, name, StringComparison.OrdinalIgnoreCase)))
             name = $"{baseName} ({suffix++})";
         return name;
@@ -2644,7 +2645,7 @@ else if (activeBackend == BackendTab.OpenVino)
         {
             var saved = await DataService.ModelConfiguration_CreateAsync(new ModelConfiguration(
                 Guid.Empty, newProfileName.Trim(), null, CurrentModelPath.Trim(), false, 1, SerializeCurrentSettings(), default, default, CurrentProfileBackend,
-                CreateProfileTimeoutSettings(), true));
+                CreateProfileTimeoutSettings(), true, CurrentBackendVariantId));
             profiles = profiles.Append(saved).OrderByDescending(profile => profile.IsDefault).ThenBy(profile => profile.Name).ToArray();
             selectedProfileId = saved.Id;
             selectedProfileName = saved.Name;
@@ -2834,8 +2835,23 @@ else if (activeBackend == BackendTab.OpenVino)
 
         if (activeBackend == BackendTab.OpenVino)
         {
+            var availableRoutes = (openVinoDiagnostics?.Devices ?? [])
+                .Where(device => device.IsCompatible && !IsExcludedDevice(device.Name))
+                .Select(device => device.Id)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var selectedDevices = settings.Devices
+                .OrderBy(device => device.Priority)
+                .Where(device => availableRoutes.Contains(device.Route))
+                .ToArray();
+            if (selectedDevices.Length == 0)
+            {
+                SyncOpenVinoDevices();
+                EnsureOpenVinoDeviceRoute();
+                return;
+            }
+
             openVinoState.Devices.Clear();
-            foreach (var device in settings.Devices.OrderBy(device => device.Priority))
+            foreach (var device in selectedDevices)
                 openVinoState.Devices[device.Route] = new OpenVinoDeviceSetting(device.Priority > 0, (float)device.Priority);
             UpdateOpenVinoDeviceRoute();
             return;
@@ -3023,6 +3039,7 @@ else if (activeBackend == BackendTab.OpenVino)
             {
                 case ConfigurationBackend.OpenVino:
                     openVinoState.Load(new ModelSettings(profile.ModelPath, profile.Backend, profile.ConfigurationJson));
+                    SyncOpenVinoDevices();
                     EnsureOpenVinoDeviceRoute();
                     break;
                 case ConfigurationBackend.Vllm:

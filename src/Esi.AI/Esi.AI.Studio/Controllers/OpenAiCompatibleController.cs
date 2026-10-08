@@ -23,6 +23,18 @@ public sealed class OpenAiCompatibleController(
     [HttpGet("models")]
     public async Task<IActionResult> ListModels(CancellationToken cancellationToken)
     {
+        try
+        {
+            return await ListModelsCoreAsync(cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return new EmptyResult();
+        }
+    }
+
+    private async Task<IActionResult> ListModelsCoreAsync(CancellationToken cancellationToken)
+    {
         var created = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         if (dataService is not null)
         {
@@ -277,6 +289,7 @@ public sealed class OpenAiCompatibleController(
         await WriteSseAsync(CreateChunk(completionId, request.Model ?? string.Empty, new OpenAiChatCompletionDelta("assistant"), null), cancellationToken).ConfigureAwait(false);
 
         var backendRequest = await PrepareBackendRequestAsync(request, requestId, completionId, cancellationToken).ConfigureAwait(false);
+        using var generationCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
 
         var structuredToolOutput = request.Tools is { Count: > 0 };
         var deltas = Channel.CreateUnbounded<string>();
@@ -289,9 +302,10 @@ public sealed class OpenAiCompatibleController(
                     deltas.Writer.TryWrite(delta);
                     return Task.CompletedTask;
                 },
-            cancellationToken);
+            generationCancellation.Token);
         _ = CompleteChannelAsync(generationTask, deltas.Writer);
 
+        var generationCompleted = false;
         try
         {
             var readTask = deltas.Reader.WaitToReadAsync(cancellationToken).AsTask();
@@ -318,10 +332,16 @@ public sealed class OpenAiCompatibleController(
                 readTask = deltas.Reader.WaitToReadAsync(cancellationToken).AsTask();
             }
             await generationTask.ConfigureAwait(false);
+            generationCompleted = true;
         }
         catch (ChannelClosedException exception) when (exception.InnerException is not null)
         {
             throw exception.InnerException;
+        }
+        finally
+        {
+            if (!generationCompleted)
+                generationCancellation.Cancel();
         }
 
         var generationResult = await generationTask.ConfigureAwait(false);

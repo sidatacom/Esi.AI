@@ -72,7 +72,7 @@ internal static class Program
         try
         {
             Console.SetOut(Console.Error);
-            return new OpenVinoDiagnosticsService().Diagnose(OpenVinoRuntime.GetGpuDeviceName);
+            return new OpenVinoDiagnosticsService().Diagnose(OpenVinoRuntime.GetGpuDevices);
         }
         finally
         {

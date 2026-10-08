@@ -1,4 +1,5 @@
 {
     "cmake.sourceDirectory": "/home/llm/Git/Esi.AI/origins/Niko1221/Strata",
-    "cmake.autoDetectSourceDirectory": false
+    "cmake.autoDetectSourceDirectory": false,
+    "esiAiStudio.maxInputTokens": 131072
 }

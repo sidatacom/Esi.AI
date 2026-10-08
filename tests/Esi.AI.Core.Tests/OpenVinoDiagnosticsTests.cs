@@ -35,11 +35,14 @@ public sealed class OpenVinoDiagnosticsTests
     }
 
     [TestMethod]
-    public void Diagnose_WhenNativeGpuNameIsAvailable_UsesOpenVinoDeviceName()
+    public void Diagnose_WhenNativeGpuRouteIsAvailable_PreservesExplicitRouteId()
     {
-        var diagnostics = new OpenVinoDiagnosticsService().Diagnose(() => "Intel(R) Arc(TM) B580 Graphics");
+        var diagnostics = new OpenVinoDiagnosticsService().Diagnose(
+            () => [("GPU.1", "Intel(R) Arc(TM) B580 Graphics")]);
 
-        Assert.AreEqual("Intel(R) Arc(TM) B580 Graphics", diagnostics.Devices.Single(device => device.Id == "GPU").Name);
+        var device = diagnostics.Devices.Single();
+        Assert.AreEqual("GPU.1", device.Id);
+        Assert.AreEqual("Intel(R) Arc(TM) B580 Graphics", device.Name);
     }
 
     [TestMethod]

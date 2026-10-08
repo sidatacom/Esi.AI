@@ -34,3 +34,8 @@ Run `00-run-all.prompt.md` for the complete plan. Individual prompts are intenti
 - The reference model is one logical model family, not one physical file: GGUF, OpenVINO IR, and Transformers/Safetensors are required packaging variants.
 - SGLang and dotLLM remain `DEFERRED` until their dedicated prompts are added.
 - Redact secrets and clean up disposable artifacts after every run.
+
+## Focused stability and benchmark runs
+
+- [Qwen3.8 Uncensored OpenVINO 128k](02e-qwen38-openvino-128k.prompt.md) uses the dedicated `test-openvino-qwen38-128k` agent to check the Studio provider path and run bounded long-context probes.
+- [Qwen3.8 backend benchmark](02h-qwen38-benchmark.prompt.md) runs the standardized short benchmark or an explicitly selected single 128k probe against one already-loaded, saved Studio profile. It is intentionally excluded from `00-run-all.prompt.md` because it performs real model inference and can consume substantial resources.

@@ -1100,11 +1100,25 @@ public sealed class DataService(
     private async Task<ModelConfiguration> ModelConfiguration_SaveAsync(ModelConfiguration configuration, CancellationToken cancellationToken = default)
     {
         ValidateConfiguration(configuration);
+        var backendVariantId = ResolveAndValidateBackendVariantId(
+            configuration.Backend, configuration.ConfigurationJson, configuration.BackendVariantId,
+            nameof(configuration.BackendVariantId));
         await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var duplicateName = await db.ModelConfigurations.AnyAsync(item =>
-            item.Name == configuration.Name && item.Backend == configuration.Backend && item.Id != configuration.Id, cancellationToken);
+        var existingConfigurations = await db.ModelConfigurations.AsNoTracking()
+            .Where(item => item.Backend == configuration.Backend && item.Id != configuration.Id)
+            .Select(item => new { item.Name, item.BackendVariantId, item.ConfigurationJson })
+            .ToArrayAsync(cancellationToken);
+        var duplicateName = existingConfigurations.Any(item =>
+            string.Equals(item.Name, configuration.Name.Trim(), StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(
+                string.IsNullOrWhiteSpace(item.BackendVariantId)
+                    ? ResolveBackendVariantId(configuration.Backend, item.ConfigurationJson)
+                    : item.BackendVariantId,
+                backendVariantId,
+                StringComparison.OrdinalIgnoreCase));
         if (duplicateName)
-            throw new InvalidOperationException($"A model configuration named '{configuration.Name}' already exists.");
+            throw new InvalidOperationException(
+                $"A model configuration named '{configuration.Name.Trim()}' already exists for backend variant '{backendVariantId}'.");
 
         var now = DateTime.UtcNow;
         var entity = configuration.Id == Guid.Empty
@@ -1115,9 +1129,7 @@ public sealed class DataService(
         entity.Description = string.IsNullOrWhiteSpace(configuration.Description) ? null : configuration.Description.Trim();
         entity.ModelPath = configuration.ModelPath.Trim();
         entity.Backend = configuration.Backend;
-        entity.BackendVariantId = ResolveAndValidateBackendVariantId(
-            configuration.Backend, configuration.ConfigurationJson, configuration.BackendVariantId,
-            nameof(configuration.BackendVariantId));
+        entity.BackendVariantId = backendVariantId;
         entity.IsDefault = configuration.IsDefault;
         entity.AutoLaunch = configuration.AutoLaunch;
         entity.SchemaVersion = configuration.SchemaVersion < 1 ? 1 : configuration.SchemaVersion;
@@ -1261,7 +1273,7 @@ public sealed class DataService(
             throw new ArgumentException("LLama loading requires a .gguf model path.", nameof(request));
 
         await modelRuntime.LoadAsync(request, cancellationToken);
-        return modelRuntime.LoadedLlamaModel_Read();
+        return modelRuntime.LoadedModel_Read();
     }
 
     public async Task<ModelLoadStatus> LoadPythonModelAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default)
@@ -1790,15 +1802,25 @@ public sealed class DataService(
         return null;
     }
 
-    private static bool IsXpuConfiguration(JsonElement root) =>
-        TryGetProperty(root, "EnableXpuGraph", out var xpuGraph) && xpuGraph.ValueKind == JsonValueKind.True ||
-        IsXpuDeviceConfiguration(root);
+    private static bool IsXpuConfiguration(JsonElement root)
+    {
+        var device = GetStringProperty(root, "Device");
+        if (IsVllmDeviceRoute(device))
+            return device!.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase);
 
-    private static bool IsXpuDeviceConfiguration(JsonElement root) =>
-        GetStringProperty(root, "Device")?.Contains("xpu", StringComparison.OrdinalIgnoreCase) == true ||
-        TryGetProperty(root, "Devices", out var devices) && devices.ValueKind == JsonValueKind.Array &&
-        devices.EnumerateArray().Any(device => device.ValueKind == JsonValueKind.String &&
-            device.GetString()?.Contains("xpu", StringComparison.OrdinalIgnoreCase) == true);
+        if (TryGetProperty(root, "Devices", out var devices) && devices.ValueKind == JsonValueKind.Array)
+        {
+            var routes = devices.EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString())
+                .Where(IsVllmDeviceRoute)
+                .ToArray();
+            if (routes.Length > 0)
+                return routes.Any(route => route!.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase));
+        }
+
+        return TryGetProperty(root, "EnableXpuGraph", out var xpuGraph) && xpuGraph.ValueKind == JsonValueKind.True;
+    }
 
     private static bool TryGetProperty(JsonElement root, string propertyName, out JsonElement value)
     {
