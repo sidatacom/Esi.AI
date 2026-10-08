@@ -67,6 +67,39 @@ public sealed class LlamaModelLoaderTests
     }
 
     [TestMethod]
+    public void ParseGpuDeviceStatuses_WhenSyclOffloadSummaryHasOneSelectedDevice_ReportsLayerAndBufferUsage()
+    {
+        const string nativeLog = "llm_load_tensors: offloaded 41/43 layers to GPU\nllm_load_tensors: SYCL0 model buffer size = 1234.50 MiB";
+
+        var device = LlamaModelLoader.ParseGpuDeviceStatuses(nativeLog, "SYCL", ["SYCL0"]).Single();
+
+        Assert.AreEqual("SYCL0", device.DeviceId);
+        Assert.AreEqual(41, device.AssignedLayerCount);
+        Assert.AreEqual(1234.5, device.ModelBufferMiB);
+    }
+
+    [TestMethod]
+    public void ParseGpuDeviceStatuses_WhenNativeLogReportsPerDeviceAssignments_UsesThoseCounts()
+    {
+        const string nativeLog = "llama_model_load: layer 1 assigned to device SYCL0\nllama_model_load: layer 2 assigned to device SYCL1\nllm_load_tensors: offloaded 41/43 layers to GPU";
+
+        var devices = LlamaModelLoader.ParseGpuDeviceStatuses(nativeLog, "SYCL", ["SYCL0", "SYCL1"]);
+
+        Assert.AreEqual(1, devices.Single(device => device.DeviceId == "SYCL0").AssignedLayerCount);
+        Assert.AreEqual(1, devices.Single(device => device.DeviceId == "SYCL1").AssignedLayerCount);
+    }
+
+    [TestMethod]
+    public void ParseGpuDeviceStatuses_WhenMultipleDevicesHaveOnlyAggregateCount_DoesNotGuessDistribution()
+    {
+        const string nativeLog = "llm_load_tensors: offloaded 41/43 layers to GPU";
+
+        var devices = LlamaModelLoader.ParseGpuDeviceStatuses(nativeLog, "SYCL", ["SYCL0", "SYCL1"]);
+
+        Assert.IsEmpty(devices);
+    }
+
+    [TestMethod]
     public void BuildMultimodalContent_WhenImageIsBetweenTextParts_PreservesImagePosition()
     {
         var message = new ChatMessage(

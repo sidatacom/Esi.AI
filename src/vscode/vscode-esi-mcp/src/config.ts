@@ -1,9 +1,9 @@
-export const DEFAULT_SERVER_PORT = 3002;
+export const DEFAULT_SERVER_PORT = 0;
 export const DEFAULT_BIND_HOSTS = ["127.0.0.1", "::1"] as const;
 
 export function normalizePort(value: unknown, fallback = DEFAULT_SERVER_PORT): number {
   const port = typeof value === "number" ? value : Number(value);
-  return Number.isInteger(port) && port >= 1 && port <= 65535 ? port : fallback;
+  return Number.isInteger(port) && port >= 0 && port <= 65535 ? port : fallback;
 }
 
 export function getServerPort(environment: NodeJS.ProcessEnv = process.env): number {

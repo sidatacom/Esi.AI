@@ -29,6 +29,7 @@ export interface McpHttpServerOptions {
 
 export interface McpHttpServer {
   readonly servers: http.Server[];
+  readonly port: number;
   close(): Promise<void>;
 }
 
@@ -45,7 +46,7 @@ async function readBody(request: http.IncomingMessage): Promise<unknown> {
 }
 
 function createMcpSdkServer(requestHandler: RequestHandler): Server {
-  const server = new Server({ name: "EsiMCP", version: "2.0.17" }, { capabilities: { tools: {}, resources: {}, prompts: {} } });
+  const server = new Server({ name: "EsiMCP", version: "2.0.19" }, { capabilities: { tools: {}, resources: {}, prompts: {} } });
   server.setRequestHandler(InitializeRequestSchema, (request) => requestHandler("initialize", request.params) as never);
   server.setRequestHandler(ListToolsRequestSchema, () => requestHandler("tools/list") as never);
   server.setRequestHandler(CallToolRequestSchema, (request) => requestHandler("tools/call", request.params) as never);
@@ -112,16 +113,33 @@ export async function startMcpHttpServer(options: McpHttpServerOptions = {}): Pr
     server.timeout = 0;
     return server;
   });
-  await Promise.all(servers.map((server, index) => new Promise<void>((resolve, reject) => {
-    const onError = (error: Error) => { server.off("listening", onListening); reject(error); };
-    const onListening = () => { server.off("error", onError); resolve(); };
-    server.once("error", onError);
-    server.once("listening", onListening);
-    server.listen(port, hosts[index]);
-  })));
+  let boundPort = port;
+  try {
+    for (const [index, server] of servers.entries()) {
+      await new Promise<void>((resolve, reject) => {
+        const onError = (error: Error) => { server.off("listening", onListening); reject(error); };
+        const onListening = () => { server.off("error", onError); resolve(); };
+        server.once("error", onError);
+        server.once("listening", onListening);
+        server.listen(index === 0 ? port : boundPort, hosts[index]);
+      });
+      if (index === 0 && port === 0) {
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Could not determine the assigned EsiMCP HTTP port");
+        boundPort = address.port;
+      }
+    }
+  } catch (error) {
+    await Promise.all(servers.map((server) => new Promise<void>((resolve) => {
+      if (!server.listening) { resolve(); return; }
+      server.close(() => resolve());
+    })));
+    throw error;
+  }
   let closePromise: Promise<void> | undefined;
   return {
     servers,
+    port: boundPort,
     close: () => closePromise ??= (async () => {
       await Promise.all([...sessions.values()].map(async (session) => {
         if (!session.closePromise) {

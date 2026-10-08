@@ -20,22 +20,35 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   msAccessClient = new MsAccessClient();
   sessionManager.attachDebugManager(debugManager);
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  statusBarItem.text = "$(terminal) EsiMCP: 0 sessions";
-  statusBarItem.tooltip = "EsiMCP terminal and debug controls";
+  statusBarItem.text = "$(plug) EsiMCP: Starting";
+  statusBarItem.tooltip = "Starting the workspace-local EsiMCP server.";
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
-  sessionManager.onSessionsChanged(() => { if (statusBarItem && sessionManager) statusBarItem.text = `$(terminal) EsiMCP: ${sessionManager.getActiveSessionCount()} sessions`; });
 
   const config = vscode.workspace.getConfiguration("esimcp");
-  const port = normalizePort(config.get("serverPort", 3002));
+  const port = normalizePort(config.get("serverPort", 0));
   mcpHttpServer = await startMcpHttpServer({
     port,
     bindHost: normalizeBindHosts(config.get("bindHost", ["127.0.0.1", "::1"])),
     timeoutInSeconds: config.get<number>("timeoutInSeconds", 30),
     requestHandler: createConfiguredMcpRequestHandler(sessionManager, debugManager, msAccessClient),
   });
+  const workspaceName = vscode.workspace.name ?? vscode.workspace.workspaceFolders?.[0]?.name ?? "Workspace";
+  statusBarItem.text = `$(plug) EsiMCP: ${workspaceName}`;
+  statusBarItem.tooltip = `EsiMCP server for workspace "${workspaceName}" is listening on port ${mcpHttpServer.port}.`;
+  context.subscriptions.push(vscode.lm.registerMcpServerDefinitionProvider("vscode-esi-mcp.server", {
+    provideMcpServerDefinitions: () => {
+      if (!mcpHttpServer) return [];
+      return [new vscode.McpHttpServerDefinition(
+        "EsiMCP",
+        vscode.Uri.parse(`http://127.0.0.1:${mcpHttpServer.port}/mcp`),
+        {},
+        context.extension.packageJSON.version,
+      )];
+    },
+  }));
   context.subscriptions.push({ dispose: () => { void deactivate(); } });
-  log(`EsiMCP direct HTTP server listening on port ${port}`);
+  log(`EsiMCP direct HTTP server listening on port ${mcpHttpServer.port}`);
 }
 
 export async function deactivate(): Promise<void> {

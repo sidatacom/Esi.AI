@@ -67,4 +67,32 @@ describe("direct MCP HTTP server", () => {
       await Promise.all(servers.map((server) => server.close()));
     }
   });
+
+  it("assigns a distinct OS-selected port to each server instance", async () => {
+    const requestHandler = async (method: string) => {
+      if (method === "initialize") return { protocolVersion: "2025-03-26", capabilities: { tools: {} }, serverInfo: { name: "test", version: "1" } };
+      throw new Error("Unexpected method: " + method);
+    };
+    const servers = await Promise.all([
+      startMcpHttpServer({ port: 0, bindHost: ["127.0.0.1", "::1"], requestHandler }),
+      startMcpHttpServer({ port: 0, bindHost: ["127.0.0.1", "::1"], requestHandler }),
+    ]);
+    try {
+      expect(servers[0].port).toBeGreaterThan(0);
+      expect(servers[1].port).toBeGreaterThan(0);
+      expect(servers[0].port).not.toBe(servers[1].port);
+      for (const server of servers) {
+        expect(server.servers.map((listener) => (listener.address() as import("node:net").AddressInfo).port)).toEqual([server.port, server.port]);
+        const response = await request(server.port, "POST", {
+          jsonrpc: "2.0",
+          id: 1,
+          method: "initialize",
+          params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1" } },
+        });
+        expect(response.status).toBe(200);
+      }
+    } finally {
+      await Promise.all(servers.map((server) => server.close()));
+    }
+  });
 });

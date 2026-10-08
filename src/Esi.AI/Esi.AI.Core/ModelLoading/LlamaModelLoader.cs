@@ -209,7 +209,7 @@ public sealed class LlamaModelLoader : IDisposable
             }
             catch
             {
-                Status = CreateStatus(parameters.ModelPath, backend, parameters.GpuLayerCount, parameters.ContextSize ?? contextSize, 0, deviceWeights, false);
+                Status = CreateStatus(parameters.ModelPath, backend, parameters.GpuLayerCount, parameters.ContextSize ?? contextSize, 0, deviceWeights, advanced.Devices, false);
                 throw;
             }
 
@@ -232,7 +232,7 @@ public sealed class LlamaModelLoader : IDisposable
             if (loadedModels.Remove(parameters.ModelPath, out var previousModel))
                 previousModel.Dispose();
 
-            var loadedModel = new LoadedModel(loadedWeights, loadedMmproj, CreateStatus(parameters.ModelPath, backend, parameters.GpuLayerCount, parameters.ContextSize ?? contextSize, loadedWeights.SizeInBytes, deviceWeights, true));
+            var loadedModel = new LoadedModel(loadedWeights, loadedMmproj, CreateStatus(parameters.ModelPath, backend, parameters.GpuLayerCount, parameters.ContextSize ?? contextSize, loadedWeights.SizeInBytes, deviceWeights, advanced.Devices, true));
             loadedModels[parameters.ModelPath] = loadedModel;
             weights = loadedWeights;
             LoadedModelPath = parameters.ModelPath;
@@ -323,13 +323,25 @@ public sealed class LlamaModelLoader : IDisposable
             nameof(ModelParams.Devices));
     }
 
-    private ModelLoadStatus CreateStatus(string modelPath, string backend, int gpuLayerCount, uint contextSize, ulong modelSize, IReadOnlyDictionary<string, float> deviceWeights, bool isModelLoaded)
+    private ModelLoadStatus CreateStatus(string modelPath, string backend, int gpuLayerCount, uint contextSize, ulong modelSize, IReadOnlyDictionary<string, float> deviceWeights, IReadOnlyList<string>? requestedDevices, bool isModelLoaded)
     {
         var nativeLog = string.Join(Environment.NewLine, loadLog);
         var normalizedBackend = backend.Trim().ToUpperInvariant();
-        var devices = normalizedBackend == "VULKAN"
-            ? MergeDevices(ParseVulkanDevices(nativeLog), CreateDiscoveryStatus(normalizedBackend).Devices)
-            : CreateBackendDeviceStatuses(normalizedBackend);
+        IReadOnlyList<DeviceStatus> discoveredDevices = normalizedBackend switch
+        {
+            "VULKAN" => CreateDiscoveryStatus(normalizedBackend).Devices,
+            "CUDA" or "SYCL" => CreateBackendDeviceStatuses(normalizedBackend),
+            _ => []
+        };
+        IReadOnlyList<DeviceStatus> loadedDevices = normalizedBackend switch
+        {
+            "VULKAN" => ParseVulkanDevices(nativeLog),
+            "CUDA" or "SYCL" => ParseGpuDeviceStatuses(nativeLog, normalizedBackend, requestedDevices),
+            _ => []
+        };
+        IReadOnlyList<DeviceStatus> devices = normalizedBackend is "VULKAN" or "CUDA" or "SYCL"
+            ? MergeDevices(loadedDevices, discoveredDevices)
+            : [];
         var cpuBufferMiB = ParseCpuBufferMiB(nativeLog);
         return new ModelLoadStatus(
             modelPath,
@@ -411,6 +423,59 @@ public sealed class LlamaModelLoader : IDisposable
         }
 
         return devices;
+    }
+
+    internal static IReadOnlyList<DeviceStatus> ParseGpuDeviceStatuses(
+        string nativeLog,
+        string backend,
+        IReadOnlyList<string>? requestedDevices)
+    {
+        var prefix = backend.Trim().ToUpperInvariant();
+        if (prefix is not ("CUDA" or "SYCL"))
+            return [];
+
+        var devicePattern = $"{Regex.Escape(prefix)}\\d+";
+        var assignedLayers = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in Regex.Matches(
+            nativeLog,
+            $@"layer\s+\d+\s+assigned to device (?<device>{devicePattern})",
+            RegexOptions.IgnoreCase))
+        {
+            var device = match.Groups["device"].Value;
+            assignedLayers[device] = assignedLayers.GetValueOrDefault(device) + 1;
+        }
+
+        var modelBuffers = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in Regex.Matches(
+            nativeLog,
+            $@"(?<device>{devicePattern}) model buffer size\s*=\s*(?<size>[0-9.]+)\s*MiB",
+            RegexOptions.IgnoreCase))
+        {
+            if (double.TryParse(match.Groups["size"].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var size))
+                modelBuffers[match.Groups["device"].Value] = size;
+        }
+
+        if (assignedLayers.Count == 0 && requestedDevices is { Count: 1 } &&
+            requestedDevices[0].StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            var offloadMatch = Regex.Match(
+                nativeLog,
+                @"offloaded\s+(?<layers>\d+)\s*/\s*\d+\s+layers to GPU",
+                RegexOptions.IgnoreCase);
+            if (int.TryParse(offloadMatch.Groups["layers"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var layerCount))
+                assignedLayers[requestedDevices[0]] = layerCount;
+        }
+
+        return assignedLayers.Keys.Concat(modelBuffers.Keys)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(device => new DeviceStatus(
+                device,
+                null,
+                assignedLayers.GetValueOrDefault(device),
+                modelBuffers.TryGetValue(device, out var size) ? size : null,
+                prefix == "CUDA" ? "NVIDIA" : "Intel",
+                $"{prefix} native runtime"))
+            .ToArray();
     }
 
     private static IReadOnlyList<DeviceStatus> ParseVulkanDevices(string nativeLog)

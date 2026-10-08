@@ -2,15 +2,15 @@
 
 ## Direct HTTP Extension Model
 
-EsiMCP runs entirely in the VS Code extension host. On activation, `extension.ts` reads `esimcp.serverPort` and starts a loopback HTTP server for the current workspace. The server exposes the MCP endpoint at `/mcp` and invokes the terminal and debug handlers directly, so those handlers retain access to the VS Code APIs.
+EsiMCP runs entirely in the VS Code extension host. On activation, `extension.ts` starts a loopback HTTP server for the current workspace. The server exposes the MCP endpoint at `/mcp` and invokes the terminal and debug handlers directly, so those handlers retain access to the VS Code APIs.
 
-External MCP clients connect directly to the configured loopback URL:
+The extension contributes a VS Code MCP server definition provider. It returns the active endpoint URL for that extension host:
 
 ```text
-http://127.0.0.1:<configured esimcp.serverPort>/mcp
+http://127.0.0.1:<assigned-port>/mcp
 ```
 
-The default port is `3002`; the extension also binds the IPv6 loopback host when configured. Separate VS Code workspaces must use distinct ports. An optional bearer token is checked through the `ESIMCP_SECRET` environment variable.
+By default, the OS assigns a distinct port to each VS Code window/workspace. The extension also binds the IPv6 loopback host on the same port. `esimcp.serverPort` can specify a fixed port when needed. An optional bearer token is checked through the `ESIMCP_SECRET` environment variable.
 
 ## Streamable HTTP Session Model
 
@@ -24,7 +24,7 @@ The server uses the MCP SDK `StreamableHTTPServerTransport`:
 
 ## Client Configuration
 
-Configure the VS Code/Copilot client with the direct HTTP URL and the port selected in the VS Code workspace settings. The configuration is stored in `.vscode/mcp.json`.
+VS Code discovers EsiMCP dynamically through the contributed definition provider. Do not add a static EsiMCP URL to `.vscode/mcp.json`; it would not track OS-assigned ports and could connect a window to another workspace's server.
 
 ## Existing MCP Servers in the Environment
 1. **desktop-commander** (v0.2.38) - Command execution, files

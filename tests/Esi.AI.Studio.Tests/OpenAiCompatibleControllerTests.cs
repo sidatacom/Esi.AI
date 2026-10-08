@@ -44,6 +44,15 @@ public sealed class OpenAiCompatibleControllerTests
     }
 
     [TestMethod]
+    public async Task ListModels_WhenOperationIsCanceledWithoutCallerCancellation_Propagates()
+    {
+        using var runtime = new ModelRuntime();
+        var controller = CreateController(runtime, new UnexpectedlyCanceledLocalModelCatalog());
+
+        await Assert.ThrowsExactlyAsync<OperationCanceledException>(() => controller.ListModels(CancellationToken.None));
+    }
+
+    [TestMethod]
     public void GetApplicationModels_WhenNoModelLoaded_ReturnsModelLoadStatus()
     {
         using var runtime = new ModelRuntime();
@@ -673,6 +682,12 @@ public sealed class OpenAiCompatibleControllerTests
     {
         public Task<IReadOnlyList<LocalModelInfo>> ScanLocalModelsAsync(CancellationToken cancellationToken = default) =>
             Task.FromCanceled<IReadOnlyList<LocalModelInfo>>(cancellationToken);
+    }
+
+    private sealed class UnexpectedlyCanceledLocalModelCatalog : ILocalModelCatalog
+    {
+        public Task<IReadOnlyList<LocalModelInfo>> ScanLocalModelsAsync(CancellationToken cancellationToken = default) =>
+            Task.FromException<IReadOnlyList<LocalModelInfo>>(new OperationCanceledException());
     }
 
     private sealed class TestDbContextFactory(DbContextOptions<ApplicationDbContext> options) : IDbContextFactory<ApplicationDbContext>

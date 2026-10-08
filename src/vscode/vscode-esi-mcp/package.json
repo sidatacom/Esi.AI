@@ -2,7 +2,7 @@
   "name": "vscode-esi-mcp",
   "displayName": "EsiMCP",
   "description": "Direct local HTTP MCP server for VS Code terminals, debugging, and Microsoft Access MCP operations.",
-  "version": "2.0.17",
+  "version": "2.0.19",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
@@ -40,7 +40,9 @@
     "taskDefinitions": [
       {
         "type": "esiMcpDotnetWatch",
-        "required": ["projectFile"],
+        "required": [
+          "projectFile"
+        ],
         "properties": {
           "projectFile": {
             "type": "string",
@@ -57,14 +59,20 @@
         }
       }
     ],
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "vscode-esi-mcp.server",
+        "label": "EsiMCP"
+      }
+    ],
     "configuration": {
       "title": "EsiMCP",
       "properties": {
         "esimcp.serverPort": {
           "type": "number",
-          "default": 3002,
-          "description": "MCP HTTP server port",
-          "minimum": 1
+          "default": 0,
+          "description": "MCP HTTP server port (0 assigns a unique port for this VS Code workspace)",
+          "minimum": 0
         },
         "esimcp.timeoutInSeconds": {
           "type": "number",
@@ -187,7 +195,9 @@
         },
         "esimcp.msAccessServerArguments": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "Arguments for the Microsoft Access MCP server; empty uses the bundled submodule project"
         },

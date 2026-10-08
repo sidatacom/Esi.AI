@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.19] - 2026-10-08
+
+### Changed
+- Show the connected workspace name in the status bar instead of an unrelated terminal-session count.
+
+## [2.0.18] - 2026-10-08
+
+### Fixed
+- Register each workspace's EsiMCP endpoint through VS Code's MCP server definition provider and use an OS-assigned port by default, preventing invalid URL substitution and cross-workspace port collisions.
+
 ## [2.0.17] - 2026-09-29
 
 ### Fixed

@@ -12,25 +12,11 @@ A local HTTP MCP server hosted by the VS Code extension. It exposes visible term
 
 The Studio lifecycle is covered in [EsiMCP Debug Lifecycle](../../../docs/projects/Esi.AI/development/esimcp-debug-lifecycle.md). The native debug facade and its current scenarios are described in [EsiMCP VS Code Debug](../../../docs/projects/Esi.AI/development/esimcp-vscode-debug.md).
 
-## Configure MCP
+## Configure MCP (provided by extension)
 
-Add EsiMCP to `.vscode/mcp.json`:
+EsiMCP registers its workspace-local HTTP endpoint with VS Code through the MCP server definition provider API. It does not need an entry in `.vscode/mcp.json`.
 
-```json
-{
-  "servers": {
-    "EsiMCP": {
-      "type": "http",
-      "url": "http://127.0.0.1:3002/mcp",
-      "headers": {
-        "Authorization": "Bearer ${env:ESIMCP_SECRET}"
-      }
-    }
-  }
-}
-```
-
-The default port is `3002`; the actual endpoint uses the configured `esimcp.serverPort`. When `ESIMCP_SECRET` is configured, clients must send its bearer token.
+By default, each VS Code window gets a distinct OS-assigned port; set `esimcp.serverPort` only when that workspace needs a fixed port. When `ESIMCP_SECRET` is configured, clients must send its bearer token.
 
 ## Tool Families
 
@@ -68,7 +54,7 @@ The `esimcp.msAccess*` settings below are EsiMCP-owned configuration for its int
 
 | Setting                                   |                  Default | Description                                                     |
 | ----------------------------------------- | -----------------------: | --------------------------------------------------------------- |
-| `esimcp.serverPort`                       |                   `3002` | Local MCP HTTP port.                                            |
+| `esimcp.serverPort`                       |                      `0` | Local MCP HTTP port; `0` assigns a unique port for this VS Code workspace. |
 | `esimcp.bindHost`                         |       `127.0.0.1`, `::1` | Bind addresses; loopback is recommended.                        |
 | `esimcp.blockedCommands`                  | destructive-pattern list | Commands rejected by the terminal wrapper.                      |
 | `esimcp.allowedDirectories`               |                     `[]` | Optional working-directory allowlist; empty means unrestricted. |

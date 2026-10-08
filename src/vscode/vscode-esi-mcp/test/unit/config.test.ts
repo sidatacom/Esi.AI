@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { normalizeBindHosts, normalizePort } from "../../src/config.js";
 
 describe("configuration normalization", () => {
-  it("normalizes valid ports and falls back for invalid values", () => {
+  it("supports OS-assigned ports and falls back for invalid values", () => {
     expect(normalizePort("4321")).toBe(4321);
-    expect(normalizePort(0)).toBe(3002);
-    expect(normalizePort(70000)).toBe(3002);
-    expect(normalizePort("invalid")).toBe(3002);
+    expect(normalizePort(0)).toBe(0);
+    expect(normalizePort(70000)).toBe(0);
+    expect(normalizePort("invalid")).toBe(0);
   });
 
   it("keeps only supported loopback bind hosts", () => {
