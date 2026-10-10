@@ -228,6 +228,7 @@ export class DebugManager {
     workspaceFolder?: string;
     targetFramework?: string;
     configuration?: string;
+    launchProfile?: string;
   }): Promise<Record<string, unknown>> {
     const folder = this.resolveWorkspaceFolder(input.workspaceFolder);
     if (!folder) throw new Error("A workspace folder is required to launch a project");
@@ -270,6 +271,7 @@ export class DebugManager {
     }
 
     const debugLogPath = createDebugLogPath("debug");
+    // References: https://code.visualstudio.com/docs/csharp/debugger-settings
     const debugConfiguration: vscode.DebugConfiguration = {
       name: `EsiMCP: ${basename(projectFile, ".csproj")}`,
       type: "coreclr",
@@ -277,6 +279,7 @@ export class DebugManager {
       console: "internalConsole",
       program: targetPath,
       cwd: dirname(projectFile),
+      ...(input.launchProfile ? { launchSettingsProfile: input.launchProfile } : {}),
     };
     try {
       const result = await this.startDebugging({ workspaceFolder: folder?.uri.fsPath, configuration: debugConfiguration });

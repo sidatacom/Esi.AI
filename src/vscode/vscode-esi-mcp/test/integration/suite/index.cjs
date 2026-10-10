@@ -107,7 +107,7 @@ async function run() {
     }
     assert.equal([...toolNames].some((name) => name.startsWith("csharp_devkit_")), false);
     const debugCatalog = parseToolResult(await callTool("vscode_debug_list_commands"));
-    assert.ok(debugCatalog.commands.some((command) => command.command === "debug.start"));
+    assert.equal(debugCatalog.commands.some((command) => command.command === "debug.start"), false);
     assert.ok(debugCatalog.commands.some((command) => command.command === "debug.restart"));
     assert.ok(debugCatalog.commands.some((command) => command.command === "debug.launchProject"));
     assert.ok(debugCatalog.commands.some((command) => command.command === "debug.launchFile"));
@@ -127,26 +127,14 @@ async function run() {
     assert.ok(readinessAddress && typeof readinessAddress !== "string");
     await vscode.workspace.getConfiguration("esimcp").update("debugHostReadinessUrl", `http://127.0.0.1:${readinessAddress.port}/`, vscode.ConfigurationTarget.Workspace);
 
-    const projectLaunch = await debug("debug.start", {
-      workspaceFolder: workspacePath,
-      configuration: {
-        name: "EsiMCP Integration",
-        type: "node",
-        request: "launch",
-        program: targetPath,
-        cwd: workspacePath,
-        console: "internalConsole",
-      },
-    });
-    assert.equal(projectLaunch.started, true);
-    assert.equal(typeof projectLaunch.sessionId, "string");
-    await waitFor(() => vscode.debug.activeDebugSession?.id === projectLaunch.sessionId, "the real project-launch debug session");
-    assert.equal(await debug("debug.active.session"), projectLaunch.sessionId);
-    assert.deepEqual(await debug("debug.start", {
-      workspaceFolder: workspacePath,
+    const configurationLaunch = await debug("debug.launchFile", {
       configurationName: "EsiMCP Integration",
-    }), { started: false, sessionId: null }, "EsiMCP must not start a second session over an active one");
-
+      workspaceFolder: workspacePath,
+    });
+    assert.equal(configurationLaunch.started, true);
+    assert.equal(typeof configurationLaunch.sessionId, "string");
+    await waitFor(() => vscode.debug.activeDebugSession?.id === configurationLaunch.sessionId, "the selected launch.json debug session");
+    assert.equal(await debug("debug.active.session"), configurationLaunch.sessionId);
     await waitFor(() => Boolean(vscode.debug.activeStackItem), "the Node debugger to pause at its debugger statement");
     const pausedEvent = await debug("debug.wait.for.event", { timeoutMs: 5000, type: "paused" });
     assert.equal(pausedEvent.type, "paused");
@@ -182,7 +170,7 @@ async function run() {
     assert.equal((await debug("debug.wait.for.event", { timeoutMs: 5000, type: "paused" })).type, "paused");
     assert.deepEqual(await debug("debug.check.host.readyness"), { ready: true });
 
-    const oldSessionId = projectLaunch.sessionId;
+    const oldSessionId = configurationLaunch.sessionId;
     assert.deepEqual(await debug("debug.restart", { rebuildTaskName: "integration-build" }), { restarted: true });
     const restartedSessionId = await debug("debug.active.session");
     assert.equal(typeof restartedSessionId, "string");
@@ -190,20 +178,13 @@ async function run() {
     assert.deepEqual(await debug("debug.stop"), { stopped: true });
     assert.equal(await debug("debug.active.session"), null);
 
-    const namedLaunch = await debug("debug.start", {
-      workspaceFolder: workspacePath,
-      configurationName: "EsiMCP Integration",
-    });
-    assert.equal(namedLaunch.started, true);
-    assert.equal(typeof namedLaunch.sessionId, "string");
-
     const fileLaunch = await debug("debug.launchFile", {
       configurationName: "EsiMCP Integration",
       workspaceFolder: workspacePath,
     });
     assert.equal(fileLaunch.success, true);
     assert.equal(typeof fileLaunch.sessionId, "string");
-    assert.notEqual(fileLaunch.sessionId, namedLaunch.sessionId);
+    assert.notEqual(fileLaunch.sessionId, configurationLaunch.sessionId);
     assert.equal(typeof fileLaunch.buildLogPath, "string");
     await require("node:fs/promises").access(fileLaunch.buildLogPath);
 

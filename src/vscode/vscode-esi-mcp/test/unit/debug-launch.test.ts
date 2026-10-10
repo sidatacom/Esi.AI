@@ -1,6 +1,6 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockState = vi.hoisted(() => ({
@@ -191,6 +191,22 @@ describe("DebugManager launch contracts", () => {
     expect(result).toMatchObject({ success: true, started: true, sessionId: "session-new" });
   });
 
+  it("uses the project launchSettings profile from the project directory", async () => {
+    mockState.commandResults.push(
+      { exitCode: 0, stdout: "Build succeeded", stderr: "" },
+      { exitCode: 0, stdout: '{"Properties":{"TargetPath":"/workspace/src/App/bin/Debug/App.dll"}}', stderr: "" },
+    );
+
+    const result = await new DebugManager().launchProject({ projectFile: "src/App/App.csproj", launchProfile: "Esi.Web" });
+
+    expect(result).toMatchObject({ success: true, started: true, sessionId: "session-new" });
+    expect(vscode.debug.startDebugging).toHaveBeenCalledWith(mockState.workspaceFolder, expect.objectContaining({
+      program: "/workspace/src/App/bin/Debug/App.dll",
+      cwd: resolve("/workspace", "src", "App"),
+      launchSettingsProfile: "Esi.Web",
+    }));
+  });
+
   it("returns a build result code and logfile path without starting the debugger", async () => {
     mockState.commandResults.push({ exitCode: 9, stdout: "", stderr: "compile error" });
 
@@ -285,7 +301,7 @@ describe("DebugManager launch contracts", () => {
       success: true,
       started: true,
       mode: "watch",
-      projectFile: "/workspace/App.csproj",
+      projectFile: resolve("/workspace", "App.csproj"),
       initialBuildOccurs: true,
       hotReloadRequested: true,
       restartOnUnsupportedEdits: true,
@@ -296,8 +312,8 @@ describe("DebugManager launch contracts", () => {
     expect(task.definition.type).toBe("esiMcpDotnetWatch");
     expect(task.execution).toMatchObject({
       process: "dotnet",
-      args: ["watch", "--non-interactive", "run", "--project", "/workspace/App.csproj", "--configuration", "Debug", "--framework", "net10.0"],
-      options: { cwd: "/workspace", env: { DOTNET_WATCH_SUPPRESS_LAUNCH_BROWSER: "1" } },
+      args: ["watch", "--non-interactive", "run", "--project", resolve("/workspace", "App.csproj"), "--configuration", "Debug", "--framework", "net10.0"],
+      options: { cwd: resolve("/workspace"), env: { DOTNET_WATCH_SUPPRESS_LAUNCH_BROWSER: "1" } },
     });
     expect(task).toHaveProperty("presentationOptions.reveal", 1);
     expect(vscode.debug.startDebugging).not.toHaveBeenCalled();

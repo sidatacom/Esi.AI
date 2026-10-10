@@ -118,23 +118,12 @@ export const terminalSendInputSchema = z.object({
 const debugScopeSchema = z.enum(["local", "global", "all"]).default("local");
 const variableNameSchema = z.string().min(1).max(128).refine((name) => !name.includes("*") && name.toLowerCase() !== "all", { message: "Wildcard and all-variable requests are not allowed" });
 export const debugEmptySchema = z.object({}).strict();
-const debugConfigurationSchema = z.object({
-  name: z.string().min(1),
-  type: z.string().min(1),
-  request: z.enum(["launch", "attach"]),
-}).passthrough();
-export const debugStartSchema = z.object({
-  workspaceFolder: z.string().min(1).optional().describe("Absolute path to the workspace folder for this debug session; required when the workspace has multiple folders"),
-  configurationName: z.string().min(1).optional().describe("Name of an existing VS Code launch configuration"),
-  configuration: debugConfigurationSchema.optional().describe("Explicit VS Code DebugConfiguration passed to vscode.debug.startDebugging"),
-}).strict().refine((input) => Boolean(input.configurationName) !== Boolean(input.configuration), {
-  message: "Provide exactly one of configurationName or configuration",
-});
 export const debugLaunchProjectSchema = z.object({
   projectFile: z.string().min(1).describe("Absolute or workspace-relative path to a .NET project file"),
   workspaceFolder: z.string().min(1).optional().describe("Workspace folder containing the project; required in a multi-root workspace"),
   targetFramework: z.string().min(1).optional().describe("Target framework to build for multi-target projects"),
   configuration: z.string().min(1).optional().default("Debug").describe("MSBuild configuration (default: Debug)"),
+  launchProfile: z.string().min(1).optional().describe("Optional launchSettings.json Project profile; defaults to the first Project profile"),
 }).strict();
 export const debugLaunchFileSchema = z.object({
   configurationName: z.string().min(1).describe("Name of an existing VS Code launch.json configuration"),

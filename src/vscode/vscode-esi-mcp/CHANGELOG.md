@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.20] - 2026-10-10
+
+### Changed
+- Use the selected `Properties/launchSettings.json` profile for `debug.launchProject`, with an optional `launchProfile` selector.
+- Remove the public `debug.start` command; retain `debug.launchFile` for named VS Code launch configurations.
+
 ## [2.0.19] - 2026-10-08
 
 ### Changed

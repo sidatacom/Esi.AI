@@ -9,7 +9,7 @@
 - Das gilt auch dann, wenn der Benutzer nur indirekt von Starten, Testen, Browserprüfung, Port `7010`, Debugging oder Hot Reload spricht.
 - Vor dem ersten Lifecycle-Toolaufruf muss `.github/skills/vscode-debug/SKILL.md` gelesen werden. Für EsiMCP-Lifecycle-Aktionen sind ausschließlich `vscode_debug_list_commands` und `vscode_debug_execute_command` sowie `vscode_terminal_list_commands` und `vscode_terminal_execute_command` zu verwenden.
 - C# Dev Kit ist keine Abhängigkeit und darf in EsiMCP weder integriert noch über MCP-Tools, Command-IDs, Broker, UI oder dynamische Projektkonfigurationen verwendet werden. Die MIT-lizenzierte Standalone-Erweiterung `ms-dotnettools.csharp` darf als Debug-Adapter verwendet werden; EsiMCP startet Sessions ausschließlich über öffentliche VS Code APIs.
-- Debug-Projektstarts laufen über EsiMCP `debug.launchProject` (Projektpfad) oder `debug.launchFile` (Name aus `.vscode/launch.json`). Beide stoppen aktive Debugsessions vor dem Build und starten anschließend über öffentliche VS-Code-APIs. Für Live-Updates ohne C# Dev Kit `debug.hotReload` mit `mode: "watch"` und einem `.csproj` verwenden: `dotnet watch` wendet unterstützte Edits live an und startet nur bei nicht unterstützten Änderungen neu. Diese Watch-Session ist nicht an den VS-Code-Debugger angehängt. `mode: "rebuild"` bleibt der ausdrückliche vollständige Build mit Debugger-Neustart.
+- Der Standard-Projektstart über EsiMCP ist `debug.launchProject` mit dem `.csproj`; URL und Umgebung stammen aus dem ausgewählten `Properties/launchSettings.json`-Profil, das optional über `launchProfile` gewählt wird. `debug.launchFile` bleibt ausschließlich ein ausdrücklicher Kompatibilitätsweg für eine benötigte, Studio-spezifische benannte VS-Code-Konfiguration und ist kein allgemeiner Projektstart. Beide Wege stoppen aktive Debugsessions vor dem Build und starten anschließend über öffentliche VS-Code-APIs. Für Live-Updates ohne C# Dev Kit `debug.hotReload` mit `mode: "watch"` und einem `.csproj` verwenden: `dotnet watch` wendet unterstützte Edits live an und startet nur bei nicht unterstützten Änderungen neu. Diese Watch-Session ist nicht an den VS-Code-Debugger angehängt. `mode: "rebuild"` bleibt der ausdrückliche vollständige Build mit Debugger-Neustart.
 - Bei Konflikten zwischen einer allgemeinen Vorgehensweise und `vscode-debug` hat `vscode-debug` für Debug-, Start-, Restart-, Hot-Reload- und Browser-Lifecycle Vorrang.
 
 ## Root-Cause-Regel
@@ -23,7 +23,7 @@
 
 ## Esi.AI Studio Startregel
 
-- Starte das Studio über `debug.launchProject` mit dem Projektpfad oder `debug.launchFile` mit dem Namen der expliziten VS-Code-Debugkonfiguration. Beide warten auf den passenden `onDidStartDebugSession`-Event; verwende keine implizite Auswahl im Debug-UI.
+- Starte das Studio standardmäßig über `debug.launchProject` mit dem Projektpfad und dem ausgewählten Projektprofil. Verwende `debug.launchFile` nur, wenn das Studio ausdrücklich eine benannte benutzerdefinierte VS-Code-Debugkonfiguration benötigt. Beide Wege warten auf den passenden `onDidStartDebugSession`-Event; verwende keine implizite Auswahl im Debug-UI.
 - Build- und Debugstartfehler müssen einen Result-Code und den Pfad zum jeweiligen Logfile liefern. Ein MCP-Aufruf allein ist kein Startnachweis.
 - Ein akzeptierter MCP-Aufruf ist kein Startnachweis. Prüfe danach die aktive Session über `debug.active.session`, warte auf den passenden `onDidStartDebugSession`-Event und prüfe anschließend Host-Readiness.
 - Die Standalone-Erweiterung `ms-dotnettools.csharp` darf den `coreclr`-Debug-Adapter bereitstellen. C#-Projektauflösung und Startkonfiguration besitzt EsiMCP; sie dürfen nicht an Dev-Kit-Projektmodelle delegiert werden.
@@ -36,7 +36,7 @@
 ## Esi.AI Studio Hot Reload
 
 - `debug.hotReload` mit `mode: "watch"` startet den ausgewählten `.csproj` unter `dotnet watch`; der SDK-eigene Hot-Reload-Mechanismus wendet unterstützte Edits live an und startet die App nur bei nicht unterstützten Änderungen neu. `mode: "stopWatch"` beendet den von EsiMCP gestarteten Task.
-- Watch beendet aktive Debugsessions, startet aber keine Debugsession für den Watch-Prozess. Für einen angehängten Debugger ist ein expliziter `debug.launchProject`-/`debug.launchFile`-Start erforderlich.
+- Watch beendet aktive Debugsessions, startet aber keine Debugsession für den Watch-Prozess. Für einen angehängten Debugger ist ein expliziter Start über `debug.launchProject` erforderlich; `debug.launchFile` nur, wenn dafür eine benannte Studio-Konfiguration benötigt wird.
 - Für `mode: "rebuild"` muss genau ein `projectFile` oder `configurationName` angegeben werden. EsiMCP beendet zuerst Watcher und Debugsessions und startet nur nach erfolgreichem Build erneut.
 - Nach erfolgreichem Neustart Host-Readiness und die betroffene Browserroute prüfen.
 

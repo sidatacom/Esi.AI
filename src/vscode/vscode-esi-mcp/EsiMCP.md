@@ -11,9 +11,8 @@ The only EsiMCP tool families are terminal, native VS Code debug, and Microsoft 
 ## Debug Test Scenarios
 
 - No active session and active-session ID lookup.
-- Explicit launch configuration and named configuration; reject overlapping starts and handle VS Code launch refusal.
-- Project launch: stop all active sessions before build, resolve MSBuild `TargetPath`, launch with `coreclr`, and return build/debug result codes plus logfile paths on failure.
-- Named `launch.json` configuration: parse JSONC, require a unique `launch` request, build through `projectFile` or a capturable process task, and prevent a second pre-launch build.
+- Project launch through `debug.launchProject`: stop all active sessions before build, resolve MSBuild `TargetPath`, launch with `coreclr`, and return build/debug result codes plus logfile paths on failure. Use the project's `Properties/launchSettings.json`; `launchProfile` selects a named `commandName: "Project"` profile, otherwise the first such profile is used.
+- Named `.vscode/launch.json` launch through `debug.launchFile`: parse JSONC, require a unique `launch` request, build through `projectFile` or a capturable process task, reject overlapping starts, and handle VS Code launch refusal. There is no public generic `debug.start` operation.
 - Live code updates use a tracked `dotnet watch` task; supported edits apply without restarting, while unsupported edits are restarted by the .NET SDK. Explicit full rebuild stops before building and does not relaunch after failure.
 - Match the actual `onDidStartDebugSession` event to the requested configuration; clean up on cancellation, mismatch, and timeout.
 - Stop a running or paused session and verify termination.

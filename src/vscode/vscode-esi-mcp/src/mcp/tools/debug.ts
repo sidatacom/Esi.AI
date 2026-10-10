@@ -6,7 +6,7 @@ import type { SessionManager } from "../../terminal/session-manager.js";
 import {
   debugBreakpointSchema, debugEmptySchema, debugEvaluateSchema, debugLogpointSchema,
   debugSettingsSchema, debugVariableValuesSchema, debugVariablesSchema, debugWaitForEventSchema,
-  debugCheckHostReadinessSchema, debugRestartSchema, debugStartSchema,
+  debugCheckHostReadinessSchema, debugRestartSchema,
   debugLaunchProjectSchema, debugLaunchFileSchema, debugHotReloadSchema,
 } from "./schemas.js";
 
@@ -41,12 +41,6 @@ const launchWithReadiness = async <T extends DebugLaunchOutcome>(
 };
 
 export const handleActiveDebugSession = async (_: unknown, manager: DebugManager): Promise<McpToolResponse> => text(manager.getActiveSessionId());
-export const handleStartDebugSession = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
-  const input = debugStartSchema.parse(params ?? {});
-  const result = await launchWithReadiness(sessionManager, () => manager.startDebugging(input));
-  if (!result.started || !result.session) return text({ started: false, sessionId: null });
-  return text({ started: true, sessionId: result.sessionId });
-};
 export const handleDebugHostReadiness = async (params: unknown, manager: DebugManager, sessionManager: SessionManager): Promise<McpToolResponse> => {
   const input = debugCheckHostReadinessSchema.parse(params ?? {});
   const sessionId = input.sessionId ?? manager.getActiveSessionId() ?? undefined;
@@ -101,8 +95,7 @@ export const handleHotReload = async (params: unknown, manager: DebugManager, se
 export const DEBUG_TOOLS: DebugToolDefinition[] = [
   { name: "debug.active.session", description: "EsiMCP Debug: return the ID of the active VS Code debug session", schema: empty, handler: handleActiveDebugSession },
   { name: "debug.settings", description: "EsiMCP Debug: read a setting from the active VS Code workspace configuration", schema: debugSettingsSchema, handler: async (params, manager) => { const input = debugSettingsSchema.parse(params); return text(manager.getSetting(input.setting)); } },
-  { name: "debug.start", description: "EsiMCP Debug: start an explicit VS Code debug configuration through vscode.debug.startDebugging", schema: debugStartSchema, handler: handleStartDebugSession },
-  { name: "debug.launchProject", description: "EsiMCP Debug: stop active sessions, stream .NET build output to the EsiMCP Debug output channel, and launch the project with the coreclr debugger", schema: debugLaunchProjectSchema, handler: handleLaunchProject },
+  { name: "debug.launchProject", description: "EsiMCP Debug: build and launch a .NET project with its Properties/launchSettings.json profile through the coreclr debugger", schema: debugLaunchProjectSchema, handler: handleLaunchProject },
   { name: "debug.launchFile", description: "EsiMCP Debug: stop sessions, stream build output to the EsiMCP Debug output channel, and launch a named VS Code launch.json configuration", schema: debugLaunchFileSchema, handler: handleLaunchConfiguration },
   { name: "debug.hotReload", description: "EsiMCP: start or stop a visible dotnet watch task for live code updates, or explicitly rebuild and relaunch a debug target", schema: debugHotReloadSchema, handler: handleHotReload },
   { name: "debug.check.host.readyness", description: "EsiMCP Debug: check the configured readiness string in active dotnet: terminals and abort if the debug session raises an exception", schema: debugCheckHostReadinessSchema, handler: handleDebugHostReadiness },

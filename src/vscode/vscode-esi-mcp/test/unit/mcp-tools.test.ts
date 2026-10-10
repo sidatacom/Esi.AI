@@ -53,6 +53,7 @@ describe("EsiMCP tool catalog", () => {
     expect(payload.commands.map((command) => command.command)).toContain("debug.launchProject");
     expect(payload.commands.map((command) => command.command)).toContain("debug.launchFile");
     expect(payload.commands.map((command) => command.command)).toContain("debug.hotReload");
+    expect(payload.commands.map((command) => command.command)).not.toContain("debug.start");
   });
 
   it("returns structured build failures from project launch", async () => {
@@ -75,39 +76,11 @@ describe("EsiMCP tool catalog", () => {
     expect(launchProject).toHaveBeenCalledWith({ projectFile: "App.csproj", configuration: "Debug" });
   });
 
-  it("starts an explicit VS Code configuration and binds readiness to its session", async () => {
-    const session = { id: "session-started", name: "Esi.AI Studio" };
-    const startDebugging = vi.fn().mockResolvedValue({ started: true, sessionId: session.id, session });
-    const prepareDebugHostReadiness = vi.fn();
-    const bindDebugHostReadiness = vi.fn();
-    const sessionManager = { prepareDebugHostReadiness, bindDebugHostReadiness } as unknown as SessionManager;
-    const handler = createMcpRequestHandler(sessionManager, { startDebugging } as unknown as DebugManager);
-    const configuration = { name: "Esi.AI Studio", type: "coreclr", request: "launch", program: "/workspace/bin/Esi.AI.Studio.dll" };
-
-    const result = await handler("tools/call", {
-      name: "vscode_debug_execute_command",
-      arguments: { commandId: "debug.start", arguments: { workspaceFolder: "/workspace", configuration } },
-    }) as { content: Array<{ text: string }>; isError?: boolean };
-
-    expect(result.isError).toBeUndefined();
-    expect(JSON.parse(result.content[0].text)).toEqual({ started: true, sessionId: "session-started" });
-    expect(prepareDebugHostReadiness).toHaveBeenCalledOnce();
-    expect(bindDebugHostReadiness).toHaveBeenCalledWith(session);
-    expect(startDebugging).toHaveBeenCalledWith({ workspaceFolder: "/workspace", configuration });
-  });
-
   it.each([
-    {
-      commandId: "debug.start",
-      method: "startDebugging",
-      args: { workspaceFolder: "/workspace", configuration: { name: "Esi.AI Studio", type: "coreclr", request: "launch" } },
-      result: { started: true, sessionId: "session-started" },
-      expected: { started: true, sessionId: "session-started" },
-    },
     {
       commandId: "debug.launchProject",
       method: "launchProject",
-      args: { projectFile: "App.csproj" },
+      args: { projectFile: "App.csproj", launchProfile: "Development" },
       result: { success: true, started: true, sessionId: "session-started", buildLogPath: "/tmp/build.log" },
       expected: { success: true, started: true, sessionId: "session-started", buildLogPath: "/tmp/build.log" },
     },
@@ -138,6 +111,7 @@ describe("EsiMCP tool catalog", () => {
 
     expect(response.isError).toBeUndefined();
     expect(JSON.parse(response.content[0].text)).toEqual(expected);
+    expect(operation).toHaveBeenCalledWith(commandId === "debug.launchProject" ? { ...args, configuration: "Debug" } : args);
     expect(prepareDebugHostReadiness).toHaveBeenCalledOnce();
     expect(bindDebugHostReadiness).toHaveBeenCalledWith(session);
     expect(cancelPendingDebugHostReadiness).not.toHaveBeenCalled();

@@ -49,7 +49,7 @@ describe("EsiMCP extension status bar", () => {
 
     await activate({
       subscriptions,
-      extension: { packageJSON: { version: "2.0.19" } },
+      extension: { packageJSON: { version: "2.0.20" } },
     } as never);
 
     expect(state.statusBarItem?.text).toBe("$(plug) EsiMCP: Test Workspace");

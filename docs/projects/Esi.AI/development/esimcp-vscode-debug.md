@@ -166,7 +166,7 @@ Schlaegt der Task fehl, wurde die vorherige Debug-Session bereits gestoppt; der 
 | Objektargumente werden gegen `DEBUG_TOOLS` validiert. | Kein C# Dev Kit und keine internen Commands oder APIs erforderlich. |
 | Apply-Hot-Reload nur, wenn ein oeffentlicher Adapterrequest vorhanden ist; derzeit explizit nicht verfuegbar. | Laufzeit-/Adapterfaehigkeiten bestimmen, ob Hot Reload moeglich ist. |
 
-`vscode_debug` ist der einzige native EsiMCP-Debugpfad. `debug.start` bleibt fuer explizite DebugConfiguration-Aufrufe verfuegbar; projekt- und dateibasierte Starts sollten die strukturierten Launch-Operationen verwenden.
+`vscode_debug` ist der einzige native EsiMCP-Debugpfad. `debug.launchProject` ist der Standard fuer Projektstarts und uebernimmt das ausgewaehlte Profil aus `Properties/launchSettings.json`; `debug.launchFile` bleibt fuer ausdruecklich benoetigte benannte Konfigurationen in `.vscode/launch.json` verfuegbar. Ein separates oeffentliches `debug.start`-Werkzeug gibt es nicht.
 
 ## Weiterfuehrende Dokumente
 

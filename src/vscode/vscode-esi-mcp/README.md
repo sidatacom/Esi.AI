@@ -32,7 +32,7 @@ For every family, list its command catalog before invoking an unfamiliar command
 
 ## Debug Lifecycle
 
-Use `debug.launchProject` with a `.csproj` path to stop active sessions, build, resolve the output, and start it with `coreclr`. Use `debug.launchFile` with a named `.vscode/launch.json` configuration when custom launch settings are required; configure `projectFile` or a process-based `preLaunchTask` so EsiMCP can capture the build output. Build and debug startup failures return a result code and logfile path.
+Use `debug.launchProject` with a `.csproj` path to stop active sessions, build, resolve the output, and start it with `coreclr`. It uses the project's `Properties/launchSettings.json` profile for application URLs and environment variables; set `launchProfile` to select a named profile, or omit it to use the first `commandName: "Project"` profile. Use `debug.launchFile` only when a named `.vscode/launch.json` configuration is explicitly required; configure `projectFile` or a process-based `preLaunchTask` so EsiMCP can capture the build output. The public debug catalog has no generic `debug.start` command. Build and debug startup failures return a result code and logfile path.
 
 Use `debug.hotReload` with `mode: "watch"` and a `.csproj` path for live .NET Hot Reload. It stops active debug sessions and starts a visible `dotnet watch` task; the initial build happens once, supported edits are applied live, and unsupported edits trigger an SDK-managed restart. Use `mode: "stopWatch"` to end it. This workflow runs the app under `dotnet watch`, not under the VS Code debugger. `mode: "rebuild"` remains an explicit full build plus debugger relaunch when a code change requires it.
 
