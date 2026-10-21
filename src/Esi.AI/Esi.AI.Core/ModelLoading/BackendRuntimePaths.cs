@@ -1,8 +1,13 @@
+using System.Runtime.InteropServices;
+
 namespace Esi.AI.Core.ModelLoading;
 
 /// <summary>Resolves the isolated runtime directory assigned to each backend.</summary>
 public static class BackendRuntimePaths
 {
+    private static readonly object NativeLibraryLock = new();
+    private static readonly Dictionary<string, IntPtr> PreloadedNativeLibraries = new(StringComparer.Ordinal);
+
     /// <summary>Returns the native LLama directory for a backend route.</summary>
     public static string GetLlamaDirectory(string backend, string applicationDirectory)
     {
@@ -32,6 +37,54 @@ public static class BackendRuntimePaths
         return Path.Combine(
             string.IsNullOrWhiteSpace(userProfile) ? AppContext.BaseDirectory : userProfile,
             ".venvs");
+    }
+
+    /// <summary>Returns CUDA library directories from the managed vLLM CUDA environment.</summary>
+    public static IReadOnlyList<string> GetCudaLibraryDirectories()
+    {
+        var environmentPath = PythonBackendProvisioner.GetDefaultEnvironmentPath(Esi.AI.Models.ConfigurationBackend.Vllm);
+        var libraryRoot = Path.Combine(environmentPath, "lib");
+        if (!Directory.Exists(libraryRoot))
+            return [];
+
+        return Directory.EnumerateDirectories(libraryRoot, "python*", SearchOption.TopDirectoryOnly)
+            .Select(pythonDirectory => Path.Combine(pythonDirectory, "site-packages", "nvidia"))
+            .Where(Directory.Exists)
+            .SelectMany(nvidiaDirectory => Directory.EnumerateDirectories(nvidiaDirectory))
+            .Select(packageDirectory => Path.Combine(packageDirectory, "lib"))
+            .Where(Directory.Exists)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    /// <summary>Loads the CUDA 12 dependencies required by the packaged LLama runtime.</summary>
+    public static void PreloadCuda12RuntimeDependencies()
+    {
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        var directories = GetCudaLibraryDirectories();
+        foreach (var libraryName in new[] { "libcudart.so.12", "libcublas.so.12" })
+        {
+            var libraryPath = directories
+                .Select(directory => Path.Combine(directory, libraryName))
+                .FirstOrDefault(File.Exists)
+                ?? throw new DllNotFoundException(
+                    $"Could not find '{libraryName}' in the managed CUDA library directories: {string.Join(Path.PathSeparator, directories)}");
+
+            lock (NativeLibraryLock)
+            {
+                if (!PreloadedNativeLibraries.ContainsKey(libraryPath))
+                    PreloadedNativeLibraries.Add(libraryPath, NativeLibrary.Load(libraryPath));
+            }
+        }
+    }
+
+    /// <summary>Adds the managed CUDA library directories to the current process search path.</summary>
+    public static void PrependCudaLibraryPaths()
+    {
+        foreach (var directory in GetCudaLibraryDirectories())
+            PrependLibraryPath(directory);
     }
 
     /// <summary>Returns the application-local OpenVINO directory when it contains a runtime.</summary>

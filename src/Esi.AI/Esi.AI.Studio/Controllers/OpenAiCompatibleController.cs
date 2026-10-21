@@ -187,13 +187,13 @@ public sealed class OpenAiCompatibleController(
         CancellationToken cancellationToken)
     {
         var requestId = $"req-{Guid.NewGuid():N}";
+        Response.Headers["X-Esi-Inference-Id"] = requestId;
         await TraceAsync(
             requestId,
             "API",
             "in",
             "Request empfangen",
-            "POST /v1/chat/completions",
-            SerializeTracePayload(request)).ConfigureAwait(false);
+            $"POST /v1/chat/completions · messages={request?.Messages?.Count ?? 0} · tools={request?.Tools?.Count ?? 0} · stream={request?.Stream ?? false}").ConfigureAwait(false);
         var validationError = ValidateRequest(request, allowToolCalls: true);
         if (validationError is not null)
             return BadRequest(validationError);
@@ -212,7 +212,12 @@ public sealed class OpenAiCompatibleController(
             }
 
             var backendRequest = await PrepareBackendRequestAsync(request!, requestId, null, cancellationToken).ConfigureAwait(false);
-            var result = await backendMiddleware.GenerateAsync(backendRequest, null, cancellationToken).ConfigureAwait(false);
+            var result = await backendMiddleware.GenerateAsync(
+                backendRequest,
+                null,
+                cancellationToken,
+                requestId,
+                request.Stream).ConfigureAwait(false);
             await TraceGenerationResultAsync(requestId, result).ConfigureAwait(false);
             await TraceAsync(requestId, "API", "out", "Antwort an Client", $"HTTP 200 · finish_reason={result.FinishReason}").ConfigureAwait(false);
             return Ok(CreateCompletion(result, backendRequest.Model, result.FinishReason));
@@ -302,7 +307,9 @@ public sealed class OpenAiCompatibleController(
                     deltas.Writer.TryWrite(delta);
                     return Task.CompletedTask;
                 },
-            generationCancellation.Token);
+            generationCancellation.Token,
+            requestId,
+            isStreaming: true);
         _ = CompleteChannelAsync(generationTask, deltas.Writer);
 
         var generationCompleted = false;
@@ -404,6 +411,7 @@ public sealed class OpenAiCompatibleController(
                 FlowVersion = flowRoute?.Version,
                 FlowRoute = flowRoute?.RouteTarget,
                 MessageCount = backendRequest.Messages.Count,
+                ImageCount = backendRequest.Messages.Sum(message => message.Images?.Count ?? 0),
                 ToolCount = backendRequest.Tools?.Count ?? 0,
                 backendRequest.InferenceTimeout
             })).ConfigureAwait(false);
@@ -412,8 +420,7 @@ public sealed class OpenAiCompatibleController(
             "Backend",
             "out",
             "Request an Backend",
-            $"{backendRequest.Backend} verarbeitet die Anfrage",
-            SerializeTracePayload(backendRequest)).ConfigureAwait(false);
+            $"{backendRequest.Backend} verarbeitet {backendRequest.Messages.Count} Nachrichten mit {backendRequest.Messages.Sum(message => message.Images?.Count ?? 0)} Bildern und {backendRequest.Tools?.Count ?? 0} Tools").ConfigureAwait(false);
 
         return backendRequest;
     }
@@ -659,8 +666,8 @@ public sealed class OpenAiCompatibleController(
             $"{result.TokenCount} Tokens · {result.TokensPerSecond:0.##} tok/s · finish_reason={result.FinishReason}",
             SerializeTracePayload(new
             {
-                result.Text,
                 result.TokenCount,
+                GeneratedCharacterCount = result.Text.Length,
                 DurationMilliseconds = result.Duration.TotalMilliseconds,
                 result.TokensPerSecond,
                 result.PromptTokenCount,
@@ -668,7 +675,7 @@ public sealed class OpenAiCompatibleController(
                 result.PrefillDurationMs,
                 result.DecodeDurationMs,
                 result.FinishReason,
-                result.ToolCalls
+                ToolCallCount = result.ToolCalls?.Count ?? 0
             })).ConfigureAwait(false);
     }
 

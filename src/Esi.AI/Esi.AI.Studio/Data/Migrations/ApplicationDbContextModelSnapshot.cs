@@ -229,6 +229,133 @@ namespace Esi.AI.Studio.Migrations
                     b.ToTable("FlowDefinitions");
                 });
 
+            modelBuilder.Entity("Esi.AI.Studio.Data.BenchmarkRunEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Backend")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("BackendVariantId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CompletedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MeasurementsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ModelPath")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ProfileId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ProfileSnapshotJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("State")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SettingsJson")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ModelPath", "CreatedAtUtc");
+
+                    b.HasIndex("ProfileId", "CreatedAtUtc");
+
+                    b.ToTable("BenchmarkRuns");
+                });
+
+            modelBuilder.Entity("Esi.AI.Studio.Data.InferenceLogEntity", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Backend")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BackendVariantId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset?>("CompletedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long?>("DurationMilliseconds")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("ErrorMessage")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ErrorType")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("EstimatedPrefillTokens")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("FinishReason")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("ImageCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("InferenceId")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("MessageCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Model")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("OutputTokenCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Path")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTimeOffset>("StartedAtUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ToolCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("Streaming")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InferenceId")
+                        .IsUnique();
+
+                    b.HasIndex("StartedAtUtc");
+
+                    b.ToTable("InferenceLogs");
+                });
+
             modelBuilder.Entity("Esi.AI.Studio.Data.ModelConfigurationEntity", b =>
                 {
                     b.Property<Guid>("Id")

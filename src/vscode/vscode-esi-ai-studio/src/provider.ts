@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { summarizeOpenAiRequest } from "./requestTrace.js";
 
 const apiKeySecret = "esiAiStudio.apiKey";
 const defaultTraceFilePath = join(tmpdir(), "esi-ai-studio-provider.jsonl");
@@ -31,12 +32,14 @@ interface OpenAiStreamChunk {
       content?: unknown;
       tool_calls?: OpenAiToolCallDelta[];
     };
+    finish_reason?: unknown;
   }>;
 }
 
 interface OpenAiCompletionResponse {
   usage?: OpenAiUsage;
   choices?: Array<{
+    finish_reason?: unknown;
     message?: {
       content?: unknown;
       tool_calls?: OpenAiToolCall[];
@@ -100,16 +103,21 @@ interface OpenAiContentPart {
   image_url?: { url: string };
 }
 
-export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<EsiModel>, vscode.Disposable {
+export class EsiAiStudioProvider
+  implements vscode.LanguageModelChatProvider<EsiModel>, vscode.Disposable
+{
   private readonly changeEmitter = new vscode.EventEmitter<void>();
-  private readonly output = vscode.window.createOutputChannel("Esi.AI Studio Models");
+  private readonly output = vscode.window.createOutputChannel(
+    "Esi.AI Studio Models",
+  );
   private models: EsiModel[] = [];
   private backendModelIds = new Map<string, string>();
   private refreshPromise?: Promise<number>;
   private retryTimer?: ReturnType<typeof setInterval>;
   private traceSequence = 0;
 
-  public readonly onDidChangeLanguageModelChatInformation = this.changeEmitter.event;
+  public readonly onDidChangeLanguageModelChatInformation =
+    this.changeEmitter.event;
 
   public constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -118,13 +126,17 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     token: vscode.CancellationToken,
   ): Thenable<EsiModel[]> {
     if (this.models.length > 0) {
-      this.output.appendLine(`Provider requested ${this.models.length} cached models (silent=${_options.silent}).`);
+      this.output.appendLine(
+        `Provider requested ${this.models.length} cached models (silent=${_options.silent}).`,
+      );
       return Promise.resolve(this.models);
     }
 
     return this.refresh(token)
       .then(() => {
-        this.output.appendLine(`Provider returned ${this.models.length} models (silent=${_options.silent}).`);
+        this.output.appendLine(
+          `Provider returned ${this.models.length} models (silent=${_options.silent}).`,
+        );
         return this.models;
       })
       .catch(() => this.models);
@@ -138,51 +150,78 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     token: vscode.CancellationToken,
   ): Promise<void> {
     let requestModel = model;
-    if (this.containsImageData(messages) && model.capabilities.imageInput !== true) {
+    if (
+      this.containsImageData(messages) &&
+      model.capabilities.imageInput !== true
+    ) {
       try {
         await this.refresh(token);
-        requestModel = this.models.find(candidate => candidate.id === model.id) ?? model;
+        requestModel =
+          this.models.find((candidate) => candidate.id === model.id) ?? model;
       } catch {
         requestModel = model;
       }
     }
 
     const supportsImages = requestModel.capabilities.imageInput === true;
-    const supportsTools = requestModel.capabilities.toolCalling === true || typeof requestModel.capabilities.toolCalling === "number";
+    const supportsTools =
+      requestModel.capabilities.toolCalling === true ||
+      typeof requestModel.capabilities.toolCalling === "number";
     if (!supportsTools && options.tools && options.tools.length > 0) {
-      throw new Error("The selected Esi.AI Studio model does not support tool calling.");
+      throw new Error(
+        "The selected Esi.AI Studio model does not support tool calling.",
+      );
     }
     const toolOptimizationResponse = this.getToolOptimizationResponse(messages);
     if (toolOptimizationResponse !== undefined) {
-      progress.report(new vscode.LanguageModelTextPart(toolOptimizationResponse));
+      progress.report(
+        new vscode.LanguageModelTextPart(toolOptimizationResponse),
+      );
       return;
     }
-    const maxTokens = this.isToolOptimizationRequest(messages) ? 512 : requestModel.maxOutputTokens;
-    const reasoningEffort = getReasoningEffort(options.modelOptions) ?? getConfiguredReasoningEffort();
-    const openAiMessages = messages.map((message) => this.toOpenAiMessage(message, supportsImages));
+    const maxTokens = this.isToolOptimizationRequest(messages)
+      ? 512
+      : requestModel.maxOutputTokens;
+    const reasoningEffort =
+      getReasoningEffort(options.modelOptions) ??
+      getConfiguredReasoningEffort();
+    const openAiMessages = messages.map((message) =>
+      this.toOpenAiMessage(message, supportsImages),
+    );
     const requestBody = {
       model: this.backendModelIds.get(requestModel.id) ?? requestModel.id,
       messages: openAiMessages,
       max_tokens: maxTokens,
       reasoning_effort: reasoningEffort,
       top_p: 0.9,
-      tools: supportsTools ? options.tools?.map((tool) => ({
-        type: "function",
-        function: {
-          name: tool.name,
-          description: tool.description,
-          parameters: tool.inputSchema ?? {},
-        },
-      })) : undefined,
-      tool_choice: supportsTools && options.tools && options.tools.length > 0
-        ? options.toolMode === vscode.LanguageModelChatToolMode.Required ? "required" : "auto"
+      tools: supportsTools
+        ? options.tools?.map((tool) => ({
+            type: "function",
+            function: {
+              name: tool.name,
+              description: tool.description,
+              parameters: tool.inputSchema ?? {},
+            },
+          }))
         : undefined,
+      tool_choice:
+        supportsTools && options.tools && options.tools.length > 0
+          ? options.toolMode === vscode.LanguageModelChatToolMode.Required
+            ? "required"
+            : "auto"
+          : undefined,
       stream_options: { include_usage: true },
       stream: true,
     };
+    let requestId = ++this.traceSequence;
     let response: Response;
     try {
-      response = await this.request("/chat/completions", requestBody, token);
+      response = await this.request(
+        "/chat/completions",
+        requestBody,
+        token,
+        requestId,
+      );
     } catch (error) {
       if (!isModelNotLoadedError(error)) {
         throw error;
@@ -194,17 +233,43 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
         throw error;
       }
 
-      response = await this.request("/chat/completions", { ...requestBody, model: activeModelId }, token);
+      requestId = ++this.traceSequence;
+      response = await this.request(
+        "/chat/completions",
+        { ...requestBody, model: activeModelId },
+        token,
+        requestId,
+      );
     }
 
+    const inferenceId = response.headers.get("x-esi-inference-id") ?? undefined;
     if (!response.body) {
+      this.trace("error", {
+        requestId,
+        inferenceId,
+        stage: "response",
+        errorType: "EmptyResponseBody",
+      });
       throw new Error("Esi.AI Studio returned an empty response body.");
     }
 
     if (!response.headers.get("content-type")?.includes("text/event-stream")) {
       const completion = (await response.json()) as OpenAiCompletionResponse;
-      this.trace("completion", { mode: "json", payload: completion });
-      const content = completion.choices?.[0]?.message?.content;
+      const completionMessage = completion.choices?.[0]?.message;
+      this.trace("completion", {
+        requestId,
+        inferenceId,
+        mode: "json",
+        choiceCount: completion.choices?.length ?? 0,
+        contentLength:
+          typeof completionMessage?.content === "string"
+            ? completionMessage.content.length
+            : 0,
+        toolCallCount: completionMessage?.tool_calls?.length ?? 0,
+        finishReason: completion.choices?.[0]?.finish_reason,
+        usage: this.summarizeUsage(completion.usage),
+      });
+      const content = completionMessage?.content;
       if (typeof content === "string" && content.length > 0) {
         const textFilter = new VisibleResponseTextFilter();
         const visibleContent = textFilter.push(content) + textFilter.finish();
@@ -212,7 +277,10 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
           progress.report(new vscode.LanguageModelTextPart(visibleContent));
         }
       }
-      this.reportToolCalls(completion.choices?.[0]?.message?.tool_calls, progress);
+      this.reportToolCalls(
+        completion.choices?.[0]?.message?.tool_calls,
+        progress,
+      );
       this.reportUsage(completion.usage, progress);
       return;
     }
@@ -223,15 +291,10 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     let loggedSseChunks = 0;
     try {
       for await (const data of readServerSentEvents(response.body, token)) {
-        if (loggedSseChunks < 200) {
-          const traceData = data.length > 4096 ? `${data.slice(0, 4096)}...[truncated]` : data;
-          this.trace("sse", { data: traceData });
-          loggedSseChunks++;
-        } else if (loggedSseChunks === 200) {
-          this.trace("sse", { data: "[further SSE chunks omitted]" });
-          loggedSseChunks++;
-        }
         if (data === "[DONE]") {
+          this.traceSse(requestId, inferenceId, loggedSseChunks++, {
+            eventType: "done",
+          });
           const finalText = textFilter.finish();
           if (finalText.length > 0) {
             progress.report(new vscode.LanguageModelTextPart(finalText));
@@ -242,11 +305,27 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
         }
 
         const chunk = JSON.parse(data) as OpenAiStreamChunk;
-        if (typeof chunk.error?.message === "string" && chunk.error.message.length > 0) {
-          throw new Error(`Esi.AI Studio request failed: ${chunk.error.message}`);
+        const delta = chunk.choices?.[0]?.delta;
+        this.traceSse(requestId, inferenceId, loggedSseChunks++, {
+          eventType: "chunk",
+          hasContent:
+            typeof delta?.content === "string" && delta.content.length > 0,
+          contentLength:
+            typeof delta?.content === "string" ? delta.content.length : 0,
+          toolCallDeltaCount: delta?.tool_calls?.length ?? 0,
+          finishReason: chunk.choices?.[0]?.finish_reason,
+          usage: this.summarizeUsage(chunk.usage),
+        });
+        if (
+          typeof chunk.error?.message === "string" &&
+          chunk.error.message.length > 0
+        ) {
+          throw new Error(
+            `Esi.AI Studio request failed: ${chunk.error.message}`,
+          );
         }
         usage = chunk.usage ?? usage;
-        const content = chunk.choices?.[0]?.delta?.content;
+        const content = delta?.content;
         if (typeof content === "string" && content.length > 0) {
           const visibleContent = textFilter.push(content);
           if (visibleContent.length > 0) {
@@ -260,38 +339,84 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
             id: toolCall.id ?? existing.id,
             type: toolCall.type ?? existing.type,
             function: {
-              name: appendValue(existing.function?.name, toolCall.function?.name),
-              arguments: appendValue(existing.function?.arguments, toolCall.function?.arguments),
+              name: appendValue(
+                existing.function?.name,
+                toolCall.function?.name,
+              ),
+              arguments: appendValue(
+                existing.function?.arguments,
+                toolCall.function?.arguments,
+              ),
             },
           });
         }
       }
     } catch (error) {
       if (token.isCancellationRequested) {
+        this.trace("error", {
+          requestId,
+          inferenceId,
+          stage: "stream",
+          outcome: "canceled",
+        });
         throw new vscode.CancellationError();
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      this.output.appendLine(`SSE stream failed: ${message}`);
-      throw new Error(`Esi.AI Studio SSE stream terminated before completion: ${message}`, { cause: error });
+      this.trace("error", {
+        requestId,
+        inferenceId,
+        stage: "stream",
+        errorType: this.getErrorType(error),
+      });
+      this.output.appendLine(
+        `SSE stream failed (${this.getErrorType(error)}).`,
+      );
+      throw new Error(
+        `Esi.AI Studio SSE stream terminated before completion: ${message}`,
+        { cause: error },
+      );
     }
 
+    this.trace("error", {
+      requestId,
+      inferenceId,
+      stage: "stream",
+      errorType: "MissingDoneMarker",
+    });
     throw new Error("Esi.AI Studio SSE stream ended before the [DONE] marker.");
   }
 
-  private reportUsage(usage: OpenAiUsage | undefined, progress: vscode.Progress<vscode.LanguageModelResponsePart>): void {
+  private reportUsage(
+    usage: OpenAiUsage | undefined,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+  ): void {
     const promptTokens = toFiniteNumber(usage?.prompt_tokens);
     const completionTokens = toFiniteNumber(usage?.completion_tokens);
     const totalTokens = toFiniteNumber(usage?.total_tokens);
     const tokensPerSecond = toFiniteNumber(usage?.tokens_per_second);
-    if (promptTokens === undefined && completionTokens === undefined && totalTokens === undefined && tokensPerSecond === undefined) {
+    if (
+      promptTokens === undefined &&
+      completionTokens === undefined &&
+      totalTokens === undefined &&
+      tokensPerSecond === undefined
+    ) {
       return;
     }
 
-    const promptText = promptTokens === undefined ? "n/a" : String(Math.round(promptTokens));
-    const tokenText = completionTokens === undefined ? "n/a" : String(Math.round(completionTokens));
-    const throughputText = tokensPerSecond === undefined ? "n/a" : tokensPerSecond.toFixed(1);
-    progress.report(new vscode.LanguageModelTextPart(`\n\n---\n*Esi.AI Studio: ${promptText} prompt + ${tokenText} completion Tokens | ${throughputText} Tok/s*`));
+    const promptText =
+      promptTokens === undefined ? "n/a" : String(Math.round(promptTokens));
+    const tokenText =
+      completionTokens === undefined
+        ? "n/a"
+        : String(Math.round(completionTokens));
+    const throughputText =
+      tokensPerSecond === undefined ? "n/a" : tokensPerSecond.toFixed(1);
+    progress.report(
+      new vscode.LanguageModelTextPart(
+        `\n\n---\n*Esi.AI Studio: ${promptText} prompt + ${tokenText} completion Tokens | ${throughputText} Tok/s*`,
+      ),
+    );
   }
 
   public provideTokenCount(
@@ -336,15 +461,23 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
   private async loadModels(token?: vscode.CancellationToken): Promise<number> {
     try {
       const backendModelIds = new Map<string, string>();
-      const discoveredModels = await this.listModels(token ?? new vscode.CancellationTokenSource().token);
-      const loadedModels = discoveredModels.filter((model) => model.loaded === true);
-      const models = (loadedModels.length > 0 ? loadedModels : discoveredModels).map((model, index) =>
-        this.toModel(model, index, backendModelIds),
+      const discoveredModels = await this.listModels(
+        token ?? new vscode.CancellationTokenSource().token,
       );
-      const changed = models.length !== this.models.length || models.some((model, index) => !sameModel(model, this.models[index]));
+      const loadedModels = discoveredModels.filter(
+        (model) => model.loaded === true,
+      );
+      const models = (
+        loadedModels.length > 0 ? loadedModels : discoveredModels
+      ).map((model, index) => this.toModel(model, index, backendModelIds));
+      const changed =
+        models.length !== this.models.length ||
+        models.some((model, index) => !sameModel(model, this.models[index]));
       this.models = models;
       this.backendModelIds = backendModelIds;
-      this.output.appendLine(`Model refresh succeeded: ${models.length} models.`);
+      this.output.appendLine(
+        `Model refresh succeeded: ${models.length} models.`,
+      );
       if (changed) {
         this.changeEmitter.fire();
       }
@@ -357,13 +490,19 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
   }
 
   public async testConnection(): Promise<number> {
-    const models = await this.listModels(new vscode.CancellationTokenSource().token);
+    const models = await this.listModels(
+      new vscode.CancellationTokenSource().token,
+    );
     return models.length;
   }
 
   public async inspectRegisteredModels(): Promise<number> {
-    const models = await vscode.lm.selectChatModels({ vendor: "esi-ai-studio" });
-    this.output.appendLine(`VS Code registered ${models.length} Esi.AI Studio chat models.`);
+    const models = await vscode.lm.selectChatModels({
+      vendor: "esi-ai-studio",
+    });
+    this.output.appendLine(
+      `VS Code registered ${models.length} Esi.AI Studio chat models.`,
+    );
     return models.length;
   }
 
@@ -384,7 +523,9 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     }
 
     await this.context.secrets.store(apiKeySecret, apiKey.trim());
-    vscode.window.showInformationMessage("Esi.AI Studio API key stored securely.");
+    vscode.window.showInformationMessage(
+      "Esi.AI Studio API key stored securely.",
+    );
   }
 
   public dispose(): void {
@@ -398,15 +539,22 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
 
   public getLoggingEnabled(): boolean {
     const configuration = vscode.workspace.getConfiguration("esiAiStudio");
-    return configuration.inspect<boolean>(loggingEnabledStateKey) ? configuration.get<boolean>(loggingEnabledStateKey, true) : this.context.globalState.get(loggingEnabledStateKey, true);
+    return configuration.inspect<boolean>(loggingEnabledStateKey)
+      ? configuration.get<boolean>(loggingEnabledStateKey, true)
+      : this.context.globalState.get(loggingEnabledStateKey, true);
   }
 
   public getLoggingPath(): string {
     const configuration = vscode.workspace.getConfiguration("esiAiStudio");
-    return configuration.inspect<string>(loggingPathStateKey) ? configuration.get<string>(loggingPathStateKey, "") : this.context.globalState.get(loggingPathStateKey, "");
+    return configuration.inspect<string>(loggingPathStateKey)
+      ? configuration.get<string>(loggingPathStateKey, "")
+      : this.context.globalState.get(loggingPathStateKey, "");
   }
 
-  public async updateLoggingSetting(key: typeof loggingEnabledStateKey | typeof loggingPathStateKey, value: boolean | string): Promise<void> {
+  public async updateLoggingSetting(
+    key: typeof loggingEnabledStateKey | typeof loggingPathStateKey,
+    value: boolean | string,
+  ): Promise<void> {
     const configuration = vscode.workspace.getConfiguration("esiAiStudio");
     if (!configuration.inspect(key)) {
       await this.context.globalState.update(key, value);
@@ -416,26 +564,42 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     try {
       await configuration.update(key, value, vscode.ConfigurationTarget.Global);
     } catch (error) {
-      if (!(error instanceof Error) || !error.message.includes("is not a registered configuration")) {
+      if (
+        !(error instanceof Error) ||
+        !error.message.includes("is not a registered configuration")
+      ) {
         throw error;
       }
       await this.context.globalState.update(key, value);
     }
   }
 
-  private async listModels(token?: vscode.CancellationToken): Promise<OpenAiModel[]> {
+  private async listModels(
+    token?: vscode.CancellationToken,
+  ): Promise<OpenAiModel[]> {
     const response = await this.request("/models", undefined, token);
     const payload = (await response.json()) as OpenAiModelsResponse;
-    return Array.isArray(payload.data) ? payload.data.filter((model) => typeof model.id === "string") : [];
+    return Array.isArray(payload.data)
+      ? payload.data.filter((model) => typeof model.id === "string")
+      : [];
   }
 
   private getOnlyBackendModelId(): string | undefined {
-    return this.backendModelIds.size === 1 ? this.backendModelIds.values().next().value : undefined;
+    return this.backendModelIds.size === 1
+      ? this.backendModelIds.values().next().value
+      : undefined;
   }
 
-  private async request(path: string, body?: object, token?: vscode.CancellationToken): Promise<Response> {
+  private async request(
+    path: string,
+    body?: object,
+    token?: vscode.CancellationToken,
+    requestId = ++this.traceSequence,
+  ): Promise<Response> {
     const configuration = vscode.workspace.getConfiguration("esiAiStudio");
-    const baseUrl = normalizeBaseUrl(configuration.get<string>("baseUrl", "http://127.0.0.1:7010/v1"));
+    const baseUrl = normalizeBaseUrl(
+      configuration.get<string>("baseUrl", "http://127.0.0.1:7010/v1"),
+    );
     const controller = new AbortController();
     let timedOut = false;
     const timeout = setTimeout(
@@ -445,11 +609,15 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
       },
       configuration.get<number>("requestTimeoutMs", 120000),
     );
-    const cancellation = token?.onCancellationRequested(() => controller.abort());
-    const requestId = ++this.traceSequence;
+    const cancellation = token?.onCancellationRequested(() =>
+      controller.abort(),
+    );
+    let responseStatus: number | undefined;
 
     try {
-      const headers = new Headers({ Accept: body ? "text/event-stream" : "application/json" });
+      const headers = new Headers({
+        Accept: body ? "text/event-stream" : "application/json",
+      });
       if (body) {
         headers.set("Content-Type", "application/json");
       }
@@ -463,10 +631,13 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
       this.trace("request", {
         requestId,
         method: body ? "POST" : "GET",
-        url,
-        headers: ["Accept", ...(body ? ["Content-Type"] : []), ...(apiKey ? ["Authorization: Bearer <redacted>"] : [])],
-        body: body ?? null,
-        curl: body ? this.toCurlCommand(url, body, Boolean(apiKey)) : null,
+        path,
+        headers: [
+          "Accept",
+          ...(body ? ["Content-Type"] : []),
+          ...(apiKey ? ["Authorization: Bearer <redacted>"] : []),
+        ],
+        body: body ? summarizeOpenAiRequest(body) : null,
       });
       const response = await fetch(url, {
         method: body ? "POST" : "GET",
@@ -474,36 +645,59 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });
+      responseStatus = response.status;
       this.trace("response", {
         requestId,
         status: response.status,
         contentType: response.headers.get("content-type"),
+        inferenceId: response.headers.get("x-esi-inference-id") ?? undefined,
       });
       if (!response.ok) {
         const detail = await response.text();
-        this.trace("error", { requestId, status: response.status, detail });
-        throw new Error(`Esi.AI Studio returned HTTP ${response.status}: ${detail || response.statusText}`);
+        throw new Error(
+          `Esi.AI Studio returned HTTP ${response.status}: ${detail || response.statusText}`,
+        );
       }
 
       return response;
     } catch (error) {
+      this.trace("error", {
+        requestId,
+        path,
+        status: responseStatus,
+        outcome: token?.isCancellationRequested ? "canceled" : undefined,
+        errorType: this.getErrorType(error),
+      });
       if (token?.isCancellationRequested) {
         throw new vscode.CancellationError();
       }
 
       if (timedOut) {
-        throw new Error(`Zeitüberschreitung beim Verbinden mit Esi.AI Studio unter ${baseUrl}.`);
+        throw new Error(
+          `Zeitüberschreitung beim Verbinden mit Esi.AI Studio unter ${baseUrl}.`,
+        );
       }
 
       if (error instanceof Error && error.name === "AbortError") {
-        this.output.appendLine(`Request ${path} was aborted before completion.`);
-        throw new Error(`Die Anfrage an Esi.AI Studio wurde abgebrochen (${path}).`, { cause: error });
+        this.output.appendLine(
+          `Request ${path} was aborted before completion.`,
+        );
+        throw new Error(
+          `Die Anfrage an Esi.AI Studio wurde abgebrochen (${path}).`,
+          { cause: error },
+        );
       }
 
       if (error instanceof Error && error.name === "TypeError") {
-        const cause = error.cause instanceof Error ? `; Ursache: ${error.cause.message}` : "";
-        this.output.appendLine(`Fetch ${path} fehlgeschlagen (${error.name}): ${error.message}${cause}`);
-        throw new Error(`Esi.AI Studio konnte ${path} unter ${baseUrl} nicht erreichen: ${error.message}${cause}`, { cause: error });
+        const cause =
+          error.cause instanceof Error
+            ? `; Ursache: ${error.cause.message}`
+            : "";
+        this.output.appendLine(`Fetch ${path} fehlgeschlagen (${error.name}).`);
+        throw new Error(
+          `Esi.AI Studio konnte ${path} unter ${baseUrl} nicht erreichen: ${error.message}${cause}`,
+          { cause: error },
+        );
       }
 
       throw error;
@@ -520,7 +714,11 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
 
     const configuredPath = this.getLoggingPath().trim();
     const traceFilePath = configuredPath || defaultTraceFilePath;
-    const entry = JSON.stringify({ timestamp: new Date().toISOString(), event, ...details });
+    const entry = JSON.stringify({
+      timestamp: new Date().toISOString(),
+      event,
+      ...details,
+    });
     try {
       appendFileSync(traceFilePath, `${entry}\n`, "utf8");
     } catch {
@@ -529,13 +727,52 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     this.output.appendLine(`[trace] ${entry}`);
   }
 
+  private traceSse(
+    requestId: number,
+    inferenceId: string | undefined,
+    chunkIndex: number,
+    details: Record<string, unknown>,
+  ): void {
+    if (chunkIndex < 200) {
+      this.trace("sse", { requestId, inferenceId, chunkIndex, ...details });
+    } else if (chunkIndex === 200) {
+      this.trace("sse", { requestId, inferenceId, omitted: true });
+    }
+  }
+
+  private summarizeUsage(
+    usage: OpenAiUsage | undefined,
+  ): Record<string, number | undefined> | undefined {
+    if (!usage) {
+      return undefined;
+    }
+
+    return {
+      promptTokens: toFiniteNumber(usage.prompt_tokens),
+      completionTokens: toFiniteNumber(usage.completion_tokens),
+      totalTokens: toFiniteNumber(usage.total_tokens),
+    };
+  }
+
+  private getErrorType(error: unknown): string {
+    return error instanceof Error ? error.name : typeof error;
+  }
+
   private toCurlCommand(url: string, body: object, hasApiKey: boolean): string {
     const headers = [
       `-H ${shellQuote("Accept: text/event-stream")}`,
       `-H ${shellQuote("Content-Type: application/json")}`,
-      ...(hasApiKey ? [`-H ${shellQuote("Authorization: Bearer <redacted>")}`] : []),
+      ...(hasApiKey
+        ? [`-H ${shellQuote("Authorization: Bearer <redacted>")}`]
+        : []),
     ];
-    return ["curl -N", shellQuote(url), ...headers, "--data-raw", shellQuote(JSON.stringify(body))].join(" ");
+    return [
+      "curl -N",
+      shellQuote(url),
+      ...headers,
+      "--data-raw",
+      shellQuote(JSON.stringify(body)),
+    ].join(" ");
   }
 
   private async getApiKey(): Promise<string | undefined> {
@@ -543,9 +780,16 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     return storedKey || process.env.ESI_AI_STUDIO_API_KEY;
   }
 
-  private toModel(model: OpenAiModel, index: number, backendModelIds: Map<string, string>): EsiModel {
+  private toModel(
+    model: OpenAiModel,
+    index: number,
+    backendModelIds: Map<string, string>,
+  ): EsiModel {
     const backendId = String(model.id);
-    const baseId = typeof model.name === "string" && model.name.length > 0 ? model.name : `model-${index + 1}`;
+    const baseId =
+      typeof model.name === "string" && model.name.length > 0
+        ? model.name
+        : `model-${index + 1}`;
     let id = baseId;
     let suffix = 2;
     while (backendModelIds.has(id)) {
@@ -556,19 +800,34 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     const configuration = vscode.workspace.getConfiguration("esiAiStudio");
     return {
       id,
-      name: typeof model.name === "string" && model.name.length > 0 ? model.name : backendId,
+      name:
+        typeof model.name === "string" && model.name.length > 0
+          ? model.name
+          : backendId,
       tooltip: `Esi.AI Studio model ${backendId}`,
       detail: "Esi.AI Studio",
       family: "esi-ai-studio",
       version: "1",
-      maxInputTokens: configuration.get<number>("maxInputTokens", defaultMaxInputTokens),
-      maxOutputTokens: configuration.get<number>("maxOutputTokens", defaultMaxOutputTokens),
+      maxInputTokens: configuration.get<number>(
+        "maxInputTokens",
+        defaultMaxInputTokens,
+      ),
+      maxOutputTokens: configuration.get<number>(
+        "maxOutputTokens",
+        defaultMaxOutputTokens,
+      ),
       capabilities: toLanguageModelCapabilities(model.capabilities),
     };
   }
 
-  private toOpenAiMessage(message: vscode.LanguageModelChatRequestMessage, supportsImages: boolean): OpenAiMessage {
-    const toolResult = message.content.find((part): part is vscode.LanguageModelToolResultPart => part instanceof vscode.LanguageModelToolResultPart);
+  private toOpenAiMessage(
+    message: vscode.LanguageModelChatRequestMessage,
+    supportsImages: boolean,
+  ): OpenAiMessage {
+    const toolResult = message.content.find(
+      (part): part is vscode.LanguageModelToolResultPart =>
+        part instanceof vscode.LanguageModelToolResultPart,
+    );
     if (toolResult) {
       return {
         role: "tool",
@@ -578,27 +837,51 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
     }
 
     const toolCalls = message.content
-      .filter((part): part is vscode.LanguageModelToolCallPart => part instanceof vscode.LanguageModelToolCallPart)
+      .filter(
+        (part): part is vscode.LanguageModelToolCallPart =>
+          part instanceof vscode.LanguageModelToolCallPart,
+      )
       .map((toolCall) => ({
         id: toolCall.callId,
         type: "function" as const,
-        function: { name: toolCall.name, arguments: JSON.stringify(toolCall.input) },
+        function: {
+          name: toolCall.name,
+          arguments: JSON.stringify(toolCall.input),
+        },
       }));
-    const contentParts = message.content.filter((part) => !(part instanceof vscode.LanguageModelToolCallPart));
+    const contentParts = message.content.filter(
+      (part) => !(part instanceof vscode.LanguageModelToolCallPart),
+    );
     return {
-      role: message.role === vscode.LanguageModelChatMessageRole.Assistant || toolCalls.length > 0 ? "assistant" : "user",
-      content: contentParts.length > 0 ? this.toOpenAiContent(contentParts, supportsImages) : null,
+      role:
+        message.role === vscode.LanguageModelChatMessageRole.Assistant ||
+        toolCalls.length > 0
+          ? "assistant"
+          : "user",
+      content:
+        contentParts.length > 0
+          ? this.toOpenAiContent(contentParts, supportsImages)
+          : null,
       tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
     };
   }
 
-  private containsImageData(messages: readonly vscode.LanguageModelChatRequestMessage[]): boolean {
-    return messages.some(message => message.content.some(
-      part => part instanceof vscode.LanguageModelDataPart && part.mimeType.toLowerCase().startsWith("image/"),
-    ));
+  private containsImageData(
+    messages: readonly vscode.LanguageModelChatRequestMessage[],
+  ): boolean {
+    return messages.some((message) =>
+      message.content.some(
+        (part) =>
+          part instanceof vscode.LanguageModelDataPart &&
+          part.mimeType.toLowerCase().startsWith("image/"),
+      ),
+    );
   }
 
-  private toOpenAiContent(parts: readonly unknown[], supportsImages: boolean): string | OpenAiContentPart[] {
+  private toOpenAiContent(
+    parts: readonly unknown[],
+    supportsImages: boolean,
+  ): string | OpenAiContentPart[] {
     const content: OpenAiContentPart[] = [];
     for (const part of parts) {
       if (part instanceof vscode.LanguageModelTextPart) {
@@ -611,62 +894,105 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
           continue;
         }
         if (!supportsImages || !mimeType.startsWith("image/")) {
-          throw new Error(`The selected Esi.AI Studio model does not support input content type '${part.mimeType}'.`);
+          throw new Error(
+            `The selected Esi.AI Studio model does not support input content type '${part.mimeType}'.`,
+          );
         }
         content.push({
           type: "image_url",
-          image_url: { url: `data:${part.mimeType};base64,${Buffer.from(part.data).toString("base64")}` },
+          image_url: {
+            url: `data:${part.mimeType};base64,${Buffer.from(part.data).toString("base64")}`,
+          },
         });
         continue;
       }
-      throw new Error("The selected Esi.AI Studio model does not support this input content type.");
+      throw new Error(
+        "The selected Esi.AI Studio model does not support this input content type.",
+      );
     }
-    return content.length === 1 && content[0].type === "text" ? content[0].text ?? "" : content;
+    return content.length === 1 && content[0].type === "text"
+      ? (content[0].text ?? "")
+      : content;
   }
 
-  private reportToolCalls(toolCalls: Iterable<OpenAiToolCall | Partial<OpenAiToolCall>> | undefined, progress: vscode.Progress<vscode.LanguageModelResponsePart>): void {
+  private reportToolCalls(
+    toolCalls: Iterable<OpenAiToolCall | Partial<OpenAiToolCall>> | undefined,
+    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+  ): void {
     if (!toolCalls) {
       return;
     }
 
     for (const toolCall of toolCalls) {
       const id = typeof toolCall.id === "string" ? toolCall.id : undefined;
-      const name = typeof toolCall.function?.name === "string" ? toolCall.function.name : undefined;
+      const name =
+        typeof toolCall.function?.name === "string"
+          ? toolCall.function.name
+          : undefined;
       if (!id || !name) {
         continue;
       }
 
-      const argumentsText = typeof toolCall.function?.arguments === "string" ? toolCall.function.arguments : "{}";
-      progress.report(new vscode.LanguageModelToolCallPart(id, name, parseToolInput(argumentsText)));
+      const argumentsText =
+        typeof toolCall.function?.arguments === "string"
+          ? toolCall.function.arguments
+          : "{}";
+      progress.report(
+        new vscode.LanguageModelToolCallPart(
+          id,
+          name,
+          parseToolInput(argumentsText),
+        ),
+      );
     }
   }
 
   private messageText(message: vscode.LanguageModelChatRequestMessage): string {
     return message.content
-      .filter((part): part is vscode.LanguageModelTextPart => part instanceof vscode.LanguageModelTextPart)
+      .filter(
+        (part): part is vscode.LanguageModelTextPart =>
+          part instanceof vscode.LanguageModelTextPart,
+      )
       .map((part) => part.value)
       .join("");
   }
 
-  private isToolOptimizationRequest(messages: readonly vscode.LanguageModelChatRequestMessage[]): boolean {
-    const prompt = messages.map((message) => this.messageText(message)).join("\n");
-    return prompt.includes("You will be given ") && prompt.includes("groups of tools.") && prompt.includes("For each group, provide a name and summary");
+  private isToolOptimizationRequest(
+    messages: readonly vscode.LanguageModelChatRequestMessage[],
+  ): boolean {
+    const prompt = messages
+      .map((message) => this.messageText(message))
+      .join("\n");
+    return (
+      prompt.includes("You will be given ") &&
+      prompt.includes("groups of tools.") &&
+      prompt.includes("For each group, provide a name and summary")
+    );
   }
 
-  private getToolOptimizationResponse(messages: readonly vscode.LanguageModelChatRequestMessage[]): string | undefined {
-    const prompt = messages.map((message) => this.messageText(message)).join("\n");
+  private getToolOptimizationResponse(
+    messages: readonly vscode.LanguageModelChatRequestMessage[],
+  ): string | undefined {
+    const prompt = messages
+      .map((message) => this.messageText(message))
+      .join("\n");
     if (!this.isToolOptimizationRequest(messages)) {
       return undefined;
     }
 
-    const groups = [...prompt.matchAll(/<group index="(\d+)">([\s\S]*?)<\/group>/g)];
+    const groups = [
+      ...prompt.matchAll(/<group index="(\d+)">([\s\S]*?)<\/group>/g),
+    ];
     const response = groups.map((group) => {
       const groupIndex = Number(group[1]);
-      const toolNames = [...group[2].matchAll(/<tool name="([^"]+)">/g)].map((tool) => tool[1]);
+      const toolNames = [...group[2].matchAll(/<tool name="([^"]+)">/g)].map(
+        (tool) => tool[1],
+      );
       const groupName = `tool_group_${groupIndex}`;
-      const summary = toolNames.length > 0
-        ? `Related tools for ${toolNames.join(", ")}.`
-        : "Related tools grouped by capability.";
+      const summary =
+        toolNames.length > 0
+          ? `Related tools for ${toolNames.join(", ")}.`
+          : "Related tools grouped by capability.";
       return { groupIndex, groupName, summary };
     });
 
@@ -674,14 +1000,20 @@ export class EsiAiStudioProvider implements vscode.LanguageModelChatProvider<Esi
   }
 }
 
-function getReasoningEffort(modelOptions: Readonly<ModelOptions> | undefined): string | undefined {
+function getReasoningEffort(
+  modelOptions: Readonly<ModelOptions> | undefined,
+): string | undefined {
   const value = modelOptions?.reasoning_effort ?? modelOptions?.reasoningEffort;
   return normalizeReasoningEffort(value);
 }
 
 function getConfiguredReasoningEffort(): string {
   const configuration = vscode.workspace.getConfiguration("esiAiStudio");
-  return normalizeReasoningEffort(configuration.get<string>("reasoningEffort", "none")) ?? "none";
+  return (
+    normalizeReasoningEffort(
+      configuration.get<string>("reasoningEffort", "none"),
+    ) ?? "none"
+  );
 }
 
 function normalizeReasoningEffort(value: unknown): string | undefined {
@@ -690,7 +1022,9 @@ function normalizeReasoningEffort(value: unknown): string | undefined {
   }
 
   const normalized = value.trim().toLowerCase();
-  return ["none", "low", "medium", "high", "xhigh", "max"].includes(normalized) ? normalized : undefined;
+  return ["none", "low", "medium", "high", "xhigh", "max"].includes(normalized)
+    ? normalized
+    : undefined;
 }
 
 function sameModel(left: EsiModel, right: EsiModel | undefined): boolean {
@@ -715,17 +1049,26 @@ function normalizeBaseUrl(value: string): string {
 }
 
 function isModelNotLoadedError(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("HTTP 503") && error.message.includes("not loaded");
+  return (
+    error instanceof Error &&
+    error.message.includes("HTTP 503") &&
+    error.message.includes("not loaded")
+  );
 }
 
-function toLanguageModelCapabilities(value: unknown): vscode.LanguageModelChatCapabilities {
+function toLanguageModelCapabilities(
+  value: unknown,
+): vscode.LanguageModelChatCapabilities {
   if (!isRecord(value)) {
     return {};
   }
 
   return {
     imageInput: value.imageInput === true,
-    toolCalling: value.toolCalling === true || typeof value.toolCalling === "number" ? value.toolCalling : false,
+    toolCalling:
+      value.toolCalling === true || typeof value.toolCalling === "number"
+        ? value.toolCalling
+        : false,
   };
 }
 
@@ -734,7 +1077,9 @@ function appendValue(existing: unknown, next: unknown): string {
 }
 
 function toFiniteNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
 }
 
 function parseToolInput(value: string): object {
@@ -759,7 +1104,10 @@ class VisibleResponseTextFilter {
       if (this.inThinkingBlock) {
         const closingIndex = this.buffered.indexOf("</think>");
         if (closingIndex < 0) {
-          this.buffered = this.retainPossibleMarkerSuffix(this.buffered, "</think>");
+          this.buffered = this.retainPossibleMarkerSuffix(
+            this.buffered,
+            "</think>",
+          );
           break;
         }
 
@@ -782,9 +1130,13 @@ class VisibleResponseTextFilter {
         continue;
       }
 
-      const safeLength = this.buffered.length - Math.max(
-        ...VisibleResponseTextFilter.markers.map((marker) => this.possibleMarkerSuffixLength(this.buffered, marker)),
-      );
+      const safeLength =
+        this.buffered.length -
+        Math.max(
+          ...VisibleResponseTextFilter.markers.map((marker) =>
+            this.possibleMarkerSuffixLength(this.buffered, marker),
+          ),
+        );
       visible += this.buffered.slice(0, safeLength);
       this.buffered = this.buffered.slice(safeLength);
       break;

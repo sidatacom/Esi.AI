@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Esi.AI.Backend.Abstractions;
@@ -74,27 +73,35 @@ public sealed class VllmXpuBackendTests
     }
 
     [TestMethod]
-    public void ApplyDeviceEnvironment_WhenXpuRoutesAreSelected_SetsXpuBootstrapVariables()
+    public void BuildBootstrapArguments_WhenXpuSettingsAreProvided_ForwardsTypedSettingsAndServerArguments()
     {
-        var startInfo = new ProcessStartInfo();
+        var settings = new VllmXpuRuntimeSettings(CclZeIpcExchange: "disabled");
+        var configuration = new PythonInferenceLoadRequest(
+            "org/model",
+            ConfigurationBackend.Vllm,
+            Port: 8123,
+            Devices: ["xpu:1"],
+            EnableXpuGraph: true,
+            EnableBf16MtpDraft: true,
+            XpuRuntimeSettings: settings);
 
-        VllmXpuRuntime.ApplyDeviceEnvironment(startInfo, ["xpu:1", "xpu:3"], true, false);
+        var arguments = VllmXpuRuntime.BuildBootstrapArguments(
+            "/app/Python/vllm_xpu_bootstrap.py",
+            "/app/Python/inference_server.py",
+            configuration);
 
-        Assert.AreEqual("xpu", startInfo.Environment["VLLM_TARGET_DEVICE"]);
-        Assert.AreEqual("level_zero:gpu", startInfo.Environment["ONEAPI_DEVICE_SELECTOR"]);
-        Assert.AreEqual("1,3", startInfo.Environment["ZE_AFFINITY_MASK"]);
-        Assert.AreEqual("1", startInfo.Environment["VLLM_XPU_ENABLE_XPU_GRAPH"]);
-        Assert.AreEqual("spawn", startInfo.Environment["VLLM_WORKER_MULTIPROC_METHOD"]);
-        Assert.AreEqual(string.Empty, startInfo.Environment["CUDA_VISIBLE_DEVICES"]);
-    }
-
-    [TestMethod]
-    public void ApplyDeviceEnvironment_WhenCudaRouteIsSelected_RejectsBeforeStartingProcess()
-    {
-        var startInfo = new ProcessStartInfo();
-
-        Assert.ThrowsExactly<ArgumentException>(() =>
-            VllmXpuRuntime.ApplyDeviceEnvironment(startInfo, ["cuda:0"], false, false));
+        Assert.AreEqual("/app/Python/vllm_xpu_bootstrap.py", arguments[0]);
+        Assert.AreEqual("--esi-xpu-settings", arguments[1]);
+        using var settingsJson = JsonDocument.Parse(arguments[2]);
+        Assert.AreEqual("disabled", settingsJson.RootElement.GetProperty("cclZeIpcExchange").GetString());
+        CollectionAssert.AreEqual(new[]
+        {
+            "--esi-xpu-graph", "1",
+            "--esi-xpu-bf16-mtp-draft", "1",
+            "--", "/app/Python/inference_server.py",
+            "--host", "127.0.0.1",
+            "--grpc-port", "8123"
+        }, arguments.Skip(3).ToArray());
     }
 
     [TestMethod]

@@ -135,6 +135,8 @@ public sealed class LlamaCuda12Runtime : IBackendRuntime
         Cuda12RuntimeFiles.PrepareLibraryPath(runtimeDirectory);
         Cuda12RuntimeFiles.Validate(runtimeDirectory);
         ConfigureNativeBackend(applicationDirectory, runtimeDirectory);
+        if (EnumerateCudaDevices().Count == 0)
+            throw new InvalidOperationException("The CUDA 12 runtime did not discover any CUDA devices. The model was not loaded; verify CUDA runtime libraries and device visibility.");
 
         await runtimeLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -373,6 +375,7 @@ public sealed class LlamaCuda12Runtime : IBackendRuntime
                 .WithCuda(true)
                 .WithVulkan(false)
                 .WithSycl(false)
+                .WithAutoFallback(false)
                 .WithLogCallback((_, message) => NativeLog.Enqueue(message.TrimEnd()));
             nativeConfigured = true;
         }
@@ -559,6 +562,8 @@ internal static class Cuda12RuntimeFiles
     {
         if (!OperatingSystem.IsLinux() || !Directory.Exists(runtimeDirectory))
             return;
+
+        Environment.SetEnvironmentVariable("CUDA_VERSION", "12");
 
         var currentPath = Environment.GetEnvironmentVariable("LD_LIBRARY_PATH");
         if (currentPath?.Split(Path.PathSeparator).Contains(runtimeDirectory, StringComparer.Ordinal) == true)

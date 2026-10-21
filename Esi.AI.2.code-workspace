@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"dotnet.defaultSolution": "src/Esi.AI.All.sln",
+		"chat.tools.terminal.autoApprove": {
+			"printf": true
+		}
+	}
+}

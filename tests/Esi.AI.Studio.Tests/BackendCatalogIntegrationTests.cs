@@ -39,13 +39,95 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
+    [DataRow(ConfigurationBackend.Sglang)]
+    [DataRow(ConfigurationBackend.DotLlm)]
+    public async Task ModelSettings_UpdateAsync_WhenBackendWasRemoved_ThrowsNotSupportedException(ConfigurationBackend backend)
+    {
+        await using var context = await TestContext.CreateAsync();
+
+        var exception = await Assert.ThrowsExceptionAsync<NotSupportedException>(
+            () => context.DataService.ModelSettings_UpdateAsync(new ModelSettings(context.ModelPath, backend, "{}")));
+
+        Assert.Contains("no longer supported", exception.Message);
+    }
+
+    [TestMethod]
+    [DataRow(ConfigurationBackend.Sglang)]
+    [DataRow(ConfigurationBackend.DotLlm)]
+    public async Task BackendModel_ReadAsync_WhenBackendWasRemoved_ThrowsNotSupportedException(ConfigurationBackend backend)
+    {
+        await using var context = await TestContext.CreateAsync();
+
+        var exception = await Assert.ThrowsExceptionAsync<NotSupportedException>(
+            () => context.DataService.BackendModel_ReadAsync(backend));
+
+        Assert.Contains("no longer supported", exception.Message);
+    }
+
+    [TestMethod]
+    [DataRow(ConfigurationBackend.Sglang)]
+    [DataRow(ConfigurationBackend.DotLlm)]
+    public async Task ModelConfiguration_CreateAsync_WhenBackendWasRemoved_ThrowsNotSupportedException(ConfigurationBackend backend)
+    {
+        await using var context = await TestContext.CreateAsync();
+        var now = DateTime.UtcNow;
+        var configuration = new ModelConfiguration(
+            Guid.Empty, "Removed backend", null, context.ModelPath, false, 1, "{}", now, now, backend);
+
+        var exception = await Assert.ThrowsExceptionAsync<NotSupportedException>(
+            () => context.DataService.ModelConfiguration_CreateAsync(configuration));
+
+        Assert.Contains("no longer supported", exception.Message);
+    }
+
+    [TestMethod]
+    [DataRow(ConfigurationBackend.Sglang)]
+    [DataRow(ConfigurationBackend.DotLlm)]
+    public async Task LoadConfiguredModelAsync_WhenLegacyConfigurationIsSelected_ThrowsNotSupportedException(ConfigurationBackend backend)
+    {
+        await using var context = await TestContext.CreateAsync();
+        var now = DateTime.UtcNow;
+        var configurationId = Guid.NewGuid();
+        await context.AddPersistedConfigurationAsync(new ModelConfigurationEntity
+        {
+            Id = configurationId,
+            Name = "Legacy backend",
+            ModelPath = context.ModelPath,
+            Backend = backend,
+            ConfigurationJson = "{}",
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        });
+        var model = (await context.DataService.Model_UpdateAsync())
+            .Single(item => string.Equals(item.Path, context.ModelPath, StringComparison.OrdinalIgnoreCase));
+
+        var exception = await Assert.ThrowsExceptionAsync<NotSupportedException>(
+            () => context.DataService.LoadConfiguredModelAsync(new ApplicationModelLoadRequest(model.Id, configurationId)));
+
+        Assert.Contains("no longer supported", exception.Message);
+    }
+
+    [TestMethod]
+    [DataRow(ConfigurationBackend.Sglang)]
+    [DataRow(ConfigurationBackend.DotLlm)]
+    public async Task BackendPreparation_WhenBackendWasRemoved_ThrowsNotSupportedException(ConfigurationBackend backend)
+    {
+        await using var context = await TestContext.CreateAsync();
+
+        var exception = await Assert.ThrowsExceptionAsync<NotSupportedException>(
+            () => context.DataService.PrepareBackendAsync(backend));
+
+        Assert.Contains("no longer supported", exception.Message);
+    }
+
+    [TestMethod]
     public async Task ModelSettings_UpdateAsync_WhenBackendVariantsShareFamily_PersistsEachVariant()
     {
         await using var context = await TestContext.CreateAsync();
         await context.DataService.ModelSettings_UpdateAsync(new ModelSettings(
             "cuda-model",
             ConfigurationBackend.Vllm,
-            "{\"Device\":\"cuda:0\",\"Devices\":[\"cuda:0\"]}",
+            "{\"vllm.cuda12\":{\"Device\":\"cuda:0\",\"Devices\":[\"cuda:0\"]}}",
             BackendVariantId: "vllm.cuda12")
         {
             Devices =
@@ -57,7 +139,7 @@ public sealed class BackendCatalogIntegrationTests
         await context.DataService.ModelSettings_UpdateAsync(new ModelSettings(
             "xpu-model",
             ConfigurationBackend.Vllm,
-            "{\"Device\":\"xpu:1\",\"Devices\":[\"xpu:1\"]}",
+            "{\"vllm.xpu\":{\"Device\":\"xpu:1\",\"Devices\":[\"xpu:1\"]}}",
             BackendVariantId: "vllm.xpu")
         {
             Devices = [new Device("xpu:1", "Intel GPU", "Intel", "Level Zero", 1)]
@@ -65,7 +147,7 @@ public sealed class BackendCatalogIntegrationTests
         await context.DataService.ModelSettings_UpdateAsync(new ModelSettings(
             "updated-cuda-model",
             ConfigurationBackend.Vllm,
-            "{\"Device\":\"cuda:2\",\"Devices\":[\"cuda:2\"]}",
+            "{\"vllm.cuda12\":{\"Device\":\"cuda:2\",\"Devices\":[\"cuda:2\"]}}",
             BackendVariantId: "vllm.cuda12")
         {
             Devices =
@@ -94,7 +176,7 @@ public sealed class BackendCatalogIntegrationTests
     public async Task BackendVariant_WhenVllmDeviceRouteIsMissing_PreservesExplicitVariant()
     {
         await using var context = await TestContext.CreateAsync();
-        const string configurationJson = "{\"EnableXpuGraph\":false,\"Device\":\"\",\"Devices\":[]}";
+        const string configurationJson = "{\"vllm.xpu\":{\"EnableXpuGraph\":false,\"Device\":\"\",\"Devices\":[]}}";
 
         await context.DataService.ModelSettings_UpdateAsync(new ModelSettings(
             context.ModelPath,
@@ -124,6 +206,68 @@ public sealed class BackendCatalogIntegrationTests
         var loadedConfiguration = await context.DataService.ModelConfiguration_ReadAsync(configuration.Id);
         Assert.IsNotNull(loadedConfiguration);
         Assert.AreEqual("vllm.xpu", loadedConfiguration.BackendVariantId);
+        Assert.AreEqual(configurationJson, loadedConfiguration.ConfigurationJson);
+    }
+
+    [TestMethod]
+    public async Task ModelSettings_UpdateAsync_WhenConfigurationJsonIsFlat_RejectsIt()
+    {
+        await using var context = await TestContext.CreateAsync();
+        var settings = new ModelSettings(
+            context.ModelPath,
+            ConfigurationBackend.Vllm,
+            "{\"Device\":\"xpu:0\",\"Devices\":[\"xpu:0\"]}",
+            BackendVariantId: "vllm.xpu");
+
+        await Assert.ThrowsExceptionAsync<JsonException>(
+            () => context.DataService.ModelSettings_UpdateAsync(settings));
+    }
+
+    [TestMethod]
+    public async Task ModelSettings_UpdateAsync_WhenVariantIsNotRegistered_RejectsIt()
+    {
+        await using var context = await TestContext.CreateAsync();
+        var settings = new ModelSettings(
+            context.ModelPath,
+            ConfigurationBackend.Llama,
+            "{\"llama.cpu\":{}}",
+            BackendVariantId: "llama.cpu");
+
+        await Assert.ThrowsExceptionAsync<JsonException>(
+            () => context.DataService.ModelSettings_UpdateAsync(settings));
+    }
+
+    [TestMethod]
+    public async Task ProfileRead_WhenPersistedVariantDisagreesWithJsonWrapper_RejectsIt()
+    {
+        await using var context = await TestContext.CreateAsync();
+        var now = DateTime.UtcNow;
+        await using (var db = await context.dbContextFactory.CreateDbContextAsync())
+        {
+            db.ModelSettings.Add(new ModelSettingsEntity
+            {
+                ModelPath = context.ModelPath,
+                Backend = ConfigurationBackend.Vllm,
+                BackendVariantId = "vllm.cuda12",
+                ConfigurationJson = "{\"vllm.xpu\":{}}"
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await context.AddPersistedConfigurationAsync(new ModelConfigurationEntity
+        {
+            Id = Guid.NewGuid(),
+            Name = "Mismatched persisted profile",
+            ModelPath = context.ModelPath,
+            Backend = ConfigurationBackend.Vllm,
+            BackendVariantId = "vllm.cuda12",
+            ConfigurationJson = "{\"vllm.xpu\":{}}",
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        });
+
+        await Assert.ThrowsExceptionAsync<JsonException>(() => context.DataService.ModelSettings_ReadAsync());
+        await Assert.ThrowsExceptionAsync<JsonException>(() => context.DataService.ModelConfiguration_ReadAsync());
     }
 
     [TestMethod]
@@ -132,7 +276,7 @@ public sealed class BackendCatalogIntegrationTests
         var state = new PythonState();
         var request = new PythonInferenceLoadRequest("model", ConfigurationBackend.Vllm);
 
-        state.Load(request, "vllm.xpu", "{}");
+        state.Load(request, "vllm.xpu");
 
         Assert.AreEqual("xpu:0", state.Device);
         CollectionAssert.AreEqual(new[] { "xpu:0" }, state.SelectedDevices.ToArray());
@@ -149,7 +293,7 @@ public sealed class BackendCatalogIntegrationTests
             Device: "cuda:0",
             Devices: ["cuda:0"]);
 
-        state.Load(request, "vllm.xpu", "{\"Device\":\"cuda:0\",\"Devices\":[\"cuda:0\"]}");
+        state.Load(request, "vllm.xpu");
 
         Assert.AreEqual("cuda:0", state.Device);
         CollectionAssert.AreEqual(new[] { "cuda:0" }, state.SelectedDevices.ToArray());
@@ -841,6 +985,23 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
+    public async Task LocalModel_ReadAsync_ConcurrentScopes_ReturnsModelsWithoutDuplicateMetadata()
+    {
+        await using var context = await TestContext.CreateAsync();
+        var services = new[] { context.DataService, context.CreateAdditionalDataService() };
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 16)
+            .Select(index => services[index % services.Length].LocalModel_ReadAsync()));
+
+        Assert.AreEqual(16, results.Length);
+        foreach (var models in results)
+        {
+            Assert.AreEqual(1, models.Count);
+            Assert.AreEqual(context.ModelPath, models[0].Path);
+        }
+    }
+
+    [TestMethod]
     public async Task Chat_DeleteAsync_ExistingChat_RemovesChatAndMessages()
     {
         await using var context = await TestContext.CreateAsync();
@@ -899,8 +1060,12 @@ public sealed class BackendCatalogIntegrationTests
         await using var context = await TestContext.CreateAsync();
         var now = DateTime.UtcNow;
         var llamaConfiguration = new ModelConfiguration(
-            Guid.Empty, "Shared defaults", null, context.ModelPath, false, 1, "{}", now, now, ConfigurationBackend.Llama);
-        var pythonConfiguration = llamaConfiguration with { Backend = ConfigurationBackend.Vllm };
+            Guid.Empty, "Shared defaults", null, context.ModelPath, false, 1, "{\"llama.vulkan\":{}}", now, now, ConfigurationBackend.Llama);
+        var pythonConfiguration = llamaConfiguration with
+        {
+            Backend = ConfigurationBackend.Vllm,
+            ConfigurationJson = "{\"vllm.cuda12\":{}}"
+        };
 
         var savedLlama = await context.DataService.ModelConfiguration_CreateAsync(llamaConfiguration);
         var savedPython = await context.DataService.ModelConfiguration_CreateAsync(pythonConfiguration);
@@ -908,9 +1073,42 @@ public sealed class BackendCatalogIntegrationTests
 
         Assert.AreEqual(ConfigurationBackend.Llama, savedLlama.Backend);
         Assert.AreEqual(ConfigurationBackend.Vllm, savedPython.Backend);
-        Assert.AreEqual("llama.cpu", savedLlama.BackendVariantId);
+        Assert.AreEqual("llama.vulkan", savedLlama.BackendVariantId);
         Assert.AreEqual("vllm.cuda12", savedPython.BackendVariantId);
         Assert.AreEqual(2, configurations.Count(configuration => configuration.Name == "Shared defaults"));
+    }
+
+    [TestMethod]
+    public async Task ModelConfiguration_UpdateAsync_WhenModelChanges_TransfersModelAssignment()
+    {
+        await using var context = await TestContext.CreateAsync();
+        var targetModelPath = await context.CreateModelFileAsync("target.gguf");
+        var models = await context.DataService.Model_UpdateAsync();
+        var sourceModel = models.Single(model => string.Equals(model.Path, context.ModelPath, StringComparison.OrdinalIgnoreCase));
+        var targetModel = models.Single(model => string.Equals(model.Path, targetModelPath, StringComparison.OrdinalIgnoreCase));
+        var profile = await context.DataService.ModelConfiguration_CreateAsync(new ModelConfiguration(
+            Guid.Empty,
+            "Movable profile",
+            null,
+            context.ModelPath,
+            false,
+            1,
+            "{\"llama.vulkan\":{}}",
+            default,
+            default,
+            ConfigurationBackend.Llama,
+            BackendVariantId: "llama.vulkan"));
+        await context.DataService.SetModelConfigurationAsync(context.ModelPath, profile.Id);
+
+        var updated = await context.DataService.ModelConfiguration_UpdateAsync(profile with { ModelPath = targetModelPath });
+        var updatedModels = await context.DataService.Model_ReadAsync();
+        var updatedSourceModel = updatedModels.Single(model => model.Id == sourceModel.Id);
+        var updatedTargetModel = updatedModels.Single(model => model.Id == targetModel.Id);
+
+        Assert.AreEqual(profile.Id, updated.Id);
+        Assert.AreEqual(targetModelPath, updated.ModelPath);
+        Assert.IsNull(updatedSourceModel.ConfigurationId);
+        Assert.AreEqual(profile.Id, updatedTargetModel.ConfigurationId);
     }
 
     [TestMethod]
@@ -919,11 +1117,11 @@ public sealed class BackendCatalogIntegrationTests
         await using var context = await TestContext.CreateAsync();
         var now = DateTime.UtcNow;
         var llamaSycl = new ModelConfiguration(
-            Guid.Empty, "Benchmark", null, context.ModelPath, false, 1, "{\"Backend\":\"SYCL\"}", now, now,
+            Guid.Empty, "Benchmark", null, context.ModelPath, false, 1, "{\"llama.sycl\":{\"Backend\":\"SYCL\"}}", now, now,
             ConfigurationBackend.Llama, BackendVariantId: "llama.sycl");
         var llamaCuda = llamaSycl with
         {
-            ConfigurationJson = "{\"Backend\":\"CUDA\"}",
+            ConfigurationJson = "{\"llama.cuda12\":{\"Backend\":\"CUDA\"}}",
             BackendVariantId = "llama.cuda12"
         };
 
@@ -944,11 +1142,12 @@ public sealed class BackendCatalogIntegrationTests
         var now = DateTime.UtcNow;
         var xpu = new ModelConfiguration(
             Guid.Empty, "Benchmark", null, context.ModelPath, false, 1,
-            "{\"Device\":\"xpu:0\",\"Devices\":[\"xpu:0\"],\"EnableXpuGraph\":true}", now, now,
-            ConfigurationBackend.Vllm);
+            "{\"vllm.xpu\":{\"Device\":\"xpu:0\",\"Devices\":[\"xpu:0\"],\"EnableXpuGraph\":true}}", now, now,
+            ConfigurationBackend.Vllm, BackendVariantId: "vllm.xpu");
         var cuda = xpu with
         {
-            ConfigurationJson = "{\"Device\":\"cuda:0\",\"Devices\":[\"cuda:0\"],\"EnableXpuGraph\":true}"
+            ConfigurationJson = "{\"vllm.cuda12\":{\"Device\":\"cuda:0\",\"Devices\":[\"cuda:0\"],\"EnableXpuGraph\":true}}",
+            BackendVariantId = "vllm.cuda12"
         };
 
         var savedXpu = await context.DataService.ModelConfiguration_CreateAsync(xpu);
@@ -959,27 +1158,27 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
-    public async Task ModelConfiguration_ReadAsync_LegacyConfigurations_ReturnCatalogEntries()
+    public async Task ModelConfiguration_ReadAsync_RemovedBackendProfiles_ReturnCatalogEntries()
     {
         await using var context = await TestContext.CreateAsync();
         var now = DateTime.UtcNow;
         await context.AddPersistedConfigurationAsync(new ModelConfigurationEntity
         {
             Id = Guid.NewGuid(),
-            Name = "Legacy SGLang",
+            Name = "Removed SGLang",
             ModelPath = context.ModelPath,
             Backend = ConfigurationBackend.Sglang,
-            ConfigurationJson = "{\"Backend\":\"Sglang\",\"Device\":\"cuda:0\"}",
+            ConfigurationJson = "{\"sglang.cuda12\":{\"Backend\":\"Sglang\",\"Device\":\"cuda:0\"}}",
             CreatedAtUtc = now,
             UpdatedAtUtc = now
         });
         await context.AddPersistedConfigurationAsync(new ModelConfigurationEntity
         {
             Id = Guid.NewGuid(),
-            Name = "Legacy dotLLM",
+            Name = "Removed dotLLM",
             ModelPath = context.ModelPath,
             Backend = ConfigurationBackend.DotLlm,
-            ConfigurationJson = "{}",
+            ConfigurationJson = "{\"dotllm.cpu\":{}}",
             CreatedAtUtc = now,
             UpdatedAtUtc = now
         });
@@ -994,7 +1193,7 @@ public sealed class BackendCatalogIntegrationTests
     public async Task BackendVariantMismatch_InSettingsAndProfiles_ThrowsArgumentException()
     {
         await using var context = await TestContext.CreateAsync();
-        const string xpuConfiguration = "{\"Device\":\"xpu:0\",\"Devices\":[\"xpu:0\"]}";
+        const string xpuConfiguration = "{\"vllm.xpu\":{\"EnableXpuGraph\":false,\"Device\":\"\",\"Devices\":[]}}";
         var settings = new ModelSettings(
             context.ModelPath, ConfigurationBackend.Vllm, xpuConfiguration, BackendVariantId: "vllm.cuda12");
         var now = DateTime.UtcNow;
@@ -1013,7 +1212,7 @@ public sealed class BackendCatalogIntegrationTests
     {
         await using var context = await TestContext.CreateAsync();
         var configuration = new ModelConfiguration(
-            Guid.Empty, "Missing model", null, string.Empty, false, 1, "{}", default, default, ConfigurationBackend.Llama);
+            Guid.Empty, "Missing model", null, string.Empty, false, 1, "{\"llama.cpu\":{}}", default, default, ConfigurationBackend.Llama);
 
         await Assert.ThrowsExceptionAsync<ArgumentException>(() => context.DataService.ModelConfiguration_CreateAsync(configuration));
     }
@@ -1038,12 +1237,20 @@ public sealed class BackendCatalogIntegrationTests
         private readonly string directory;
         private readonly string databasePath;
         private readonly TestDbContextFactory dbContextFactory;
+        private readonly ModelLibraryService modelLibrary;
 
-        private TestContext(string directory, string databasePath, TestDbContextFactory dbContextFactory, DataService dataService, string modelPath)
+        private TestContext(
+            string directory,
+            string databasePath,
+            TestDbContextFactory dbContextFactory,
+            ModelLibraryService modelLibrary,
+            DataService dataService,
+            string modelPath)
         {
             this.directory = directory;
             this.databasePath = databasePath;
             this.dbContextFactory = dbContextFactory;
+            this.modelLibrary = modelLibrary;
             DataService = dataService;
             ModelPath = modelPath;
         }
@@ -1051,6 +1258,16 @@ public sealed class BackendCatalogIntegrationTests
         public DataService DataService { get; }
         public string ModelPath { get; }
         public string ModelDirectory => directory;
+
+        public DataService CreateAdditionalDataService() => new(
+            dbContextFactory,
+            modelLibrary,
+            modelLibrary,
+            modelLibrary,
+            modelLibrary,
+            new OpenVinoDiagnosticsService(),
+            new OpenVinoDriverInstaller(),
+            new ModelRuntime());
 
         public async Task<string> CreateModelFileAsync(string fileName)
         {
@@ -1168,7 +1385,7 @@ public sealed class BackendCatalogIntegrationTests
                 new OpenVinoDiagnosticsService(),
                 new OpenVinoDriverInstaller(),
                 new ModelRuntime());
-            return new TestContext(directory, databasePath, dbContextFactory, dataService, modelPath);
+            return new TestContext(directory, databasePath, dbContextFactory, modelLibrary, dataService, modelPath);
         }
 
         public ValueTask DisposeAsync()

@@ -34,8 +34,11 @@ public sealed class DataService(
     IOptimajetFlowRuntime? optimajetFlowRuntime = null,
     VulkanLogStore? vulkanLogStore = null,
     IVulkanLogStatusPublisher? vulkanLogStatusPublisher = null,
-    IPyTorchTrainingService? pyTorchTrainingService = null) : IDataService
+    IPyTorchTrainingService? pyTorchTrainingService = null,
+    IBenchmarkRunPublisher? benchmarkRunPublisher = null,
+    InferenceLogService? inferenceLogService = null) : IDataService
 {
+    private static readonly SemaphoreSlim localModelMetadataSync = new(1, 1);
     private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web)
     {
         Converters = { new JsonStringEnumConverter() }
@@ -63,64 +66,84 @@ public sealed class DataService(
     public Task<IReadOnlyList<ProviderTraceEntry>> ProviderTrace_ReadAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(providerTraceStore?.Read() ?? (IReadOnlyList<ProviderTraceEntry>)[]);
 
+    public Task<InferenceLog> InferenceLog_CreateAsync(InferenceLog log, CancellationToken cancellationToken = default) =>
+        GetInferenceLogService().InferenceLog_CreateAsync(log, cancellationToken);
+
+    public Task<IReadOnlyList<InferenceLog>> InferenceLog_ReadAsync(CancellationToken cancellationToken = default) =>
+        GetInferenceLogService().InferenceLog_ReadAsync(cancellationToken);
+
+    public Task<InferenceLog> InferenceLog_UpdateAsync(InferenceLog log, CancellationToken cancellationToken = default) =>
+        GetInferenceLogService().InferenceLog_UpdateAsync(log, cancellationToken);
+
+    public Task InferenceLog_DeleteAsync(Guid id, CancellationToken cancellationToken = default) =>
+        GetInferenceLogService().InferenceLog_DeleteAsync(id, cancellationToken);
+
     #endregion
 
     #region LocalModels
 
     public async Task<IReadOnlyList<LocalModel>> LocalModel_ReadAsync(CancellationToken cancellationToken = default)
     {
-        var scannedModels = await localModelCatalog.ScanLocalModelsAsync(cancellationToken);
-        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var metadata = await db.ModelMetadata
-            .ToDictionaryAsync(item => item.ModelPath, StringComparer.OrdinalIgnoreCase, cancellationToken);
-        var downloadedModelIds = await GetCompletedDownloadModelIdsAsync(db, cancellationToken);
-        var result = new List<LocalModel>(scannedModels.Count);
-        var now = DateTime.UtcNow;
-
-        foreach (var model in scannedModels)
+        await localModelMetadataSync.WaitAsync(cancellationToken);
+        try
         {
-            if (!metadata.TryGetValue(model.Path, out var entity))
+            var scannedModels = await localModelCatalog.ScanLocalModelsAsync(cancellationToken);
+            await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+            var metadata = await db.ModelMetadata
+                .ToDictionaryAsync(item => item.ModelPath, StringComparer.OrdinalIgnoreCase, cancellationToken);
+            var downloadedModelIds = await GetCompletedDownloadModelIdsAsync(db, cancellationToken);
+            var result = new List<LocalModel>(scannedModels.Count);
+            var now = DateTime.UtcNow;
+
+            foreach (var model in scannedModels)
             {
-                entity = new ModelMetadataEntity
+                if (!metadata.TryGetValue(model.Path, out var entity))
                 {
-                    Id = Guid.NewGuid(),
-                    ModelPath = model.Path,
-                    CompatibleBackendsJson = JsonSerializer.Serialize(ModelBackendCompatibility.ForFormat(model.Format)),
-                    CapabilitiesJson = JsonSerializer.Serialize(new ModelCapabilities()),
-                    UpdatedAtUtc = now
-                };
-                db.ModelMetadata.Add(entity);
-                metadata[model.Path] = entity;
+                    entity = new ModelMetadataEntity
+                    {
+                        Id = Guid.NewGuid(),
+                        ModelPath = model.Path,
+                        CompatibleBackendsJson = JsonSerializer.Serialize(ModelBackendCompatibility.ForFormat(model.Format)),
+                        CapabilitiesJson = JsonSerializer.Serialize(new ModelCapabilities()),
+                        UpdatedAtUtc = now
+                    };
+                    db.ModelMetadata.Add(entity);
+                    metadata[model.Path] = entity;
+                }
+
+                if (entity.IsDeleted)
+                    continue;
+
+                if (string.IsNullOrWhiteSpace(entity.HuggingFaceModelId) && downloadedModelIds.TryGetValue(model.Path, out var huggingFaceModelId))
+                {
+                    entity.HuggingFaceModelId = huggingFaceModelId;
+                    entity.UpdatedAtUtc = now;
+                }
+
+                if (!entity.IsManuallyConfigured && entity.HuggingFaceSynchronizedAtUtc is null && !string.IsNullOrWhiteSpace(entity.HuggingFaceModelId))
+                {
+                    var huggingFaceMetadata = await huggingFaceCatalog.GetHuggingFaceModelMetadataAsync(entity.HuggingFaceModelId, cancellationToken);
+                    entity.CompatibleBackendsJson = JsonSerializer.Serialize(ModelBackendCompatibility.FromHuggingFace(huggingFaceMetadata.LibraryName, huggingFaceMetadata.Tags));
+                    entity.CapabilitiesJson = JsonSerializer.Serialize(ModelBackendCompatibility.CapabilitiesFromHuggingFace(huggingFaceMetadata.PipelineTag, huggingFaceMetadata.Tags));
+                    entity.HuggingFaceRevision = huggingFaceMetadata.Revision;
+                    entity.HuggingFaceSynchronizedAtUtc = now;
+                    entity.UpdatedAtUtc = now;
+                }
+
+                var compatibleBackends = JsonSerializer.Deserialize<ConfigurationBackend[]>(entity.CompatibleBackendsJson) ?? [];
+                var capabilities = JsonSerializer.Deserialize<ModelCapabilities>(entity.CapabilitiesJson) ?? new ModelCapabilities();
+                result.Add(new LocalModel(model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc, model.Format, compatibleBackends, entity.HuggingFaceModelId, capabilities));
             }
 
-            if (entity.IsDeleted)
-                continue;
+            if (db.ChangeTracker.HasChanges())
+                await db.SaveChangesAsync(cancellationToken);
 
-            if (string.IsNullOrWhiteSpace(entity.HuggingFaceModelId) && downloadedModelIds.TryGetValue(model.Path, out var huggingFaceModelId))
-            {
-                entity.HuggingFaceModelId = huggingFaceModelId;
-                entity.UpdatedAtUtc = now;
-            }
-
-            if (!entity.IsManuallyConfigured && entity.HuggingFaceSynchronizedAtUtc is null && !string.IsNullOrWhiteSpace(entity.HuggingFaceModelId))
-            {
-                var huggingFaceMetadata = await huggingFaceCatalog.GetHuggingFaceModelMetadataAsync(entity.HuggingFaceModelId, cancellationToken);
-                entity.CompatibleBackendsJson = JsonSerializer.Serialize(ModelBackendCompatibility.FromHuggingFace(huggingFaceMetadata.LibraryName, huggingFaceMetadata.Tags));
-                entity.CapabilitiesJson = JsonSerializer.Serialize(ModelBackendCompatibility.CapabilitiesFromHuggingFace(huggingFaceMetadata.PipelineTag, huggingFaceMetadata.Tags));
-                entity.HuggingFaceRevision = huggingFaceMetadata.Revision;
-                entity.HuggingFaceSynchronizedAtUtc = now;
-                entity.UpdatedAtUtc = now;
-            }
-
-            var compatibleBackends = JsonSerializer.Deserialize<ConfigurationBackend[]>(entity.CompatibleBackendsJson) ?? [];
-            var capabilities = JsonSerializer.Deserialize<ModelCapabilities>(entity.CapabilitiesJson) ?? new ModelCapabilities();
-            result.Add(new LocalModel(model.Name, model.Path, model.SizeInBytes, model.LastWriteTimeUtc, model.Format, compatibleBackends, entity.HuggingFaceModelId, capabilities));
+            return result;
         }
-
-        if (db.ChangeTracker.HasChanges())
-            await db.SaveChangesAsync(cancellationToken);
-
-        return result;
+        finally
+        {
+            localModelMetadataSync.Release();
+        }
     }
 
     private static async Task<IReadOnlyDictionary<string, string>> GetCompletedDownloadModelIdsAsync(
@@ -173,21 +196,30 @@ public sealed class DataService(
     public async Task<IReadOnlyList<LocalModel>> LocalModel_UpdateAsync(ModelCompatibilityUpdate update, CancellationToken cancellationToken = default)
     {
         var modelPath = Path.GetFullPath(update.ModelPath.Trim());
-        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var entity = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == modelPath, cancellationToken);
-        entity ??= new ModelMetadataEntity { Id = Guid.NewGuid(), ModelPath = modelPath };
-        var existingBackends = JsonSerializer.Deserialize<ConfigurationBackend[]>(entity.CompatibleBackendsJson) ?? [];
-        var compatibleBackends = update.CompatibleBackends is null
-            ? existingBackends
-            : NormalizeBackends(update.CompatibleBackends);
-        entity.CompatibleBackendsJson = JsonSerializer.Serialize(compatibleBackends);
-        entity.CapabilitiesJson = JsonSerializer.Serialize(update.Capabilities ?? new ModelCapabilities());
-        entity.HuggingFaceModelId = string.IsNullOrWhiteSpace(update.HuggingFaceModelId) ? null : update.HuggingFaceModelId.Trim();
-        entity.IsManuallyConfigured = true;
-        entity.UpdatedAtUtc = DateTime.UtcNow;
-        if (db.Entry(entity).State == EntityState.Detached)
-            db.ModelMetadata.Add(entity);
-        await db.SaveChangesAsync(cancellationToken);
+        await localModelMetadataSync.WaitAsync(cancellationToken);
+        try
+        {
+            await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+            var entity = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == modelPath, cancellationToken);
+            entity ??= new ModelMetadataEntity { Id = Guid.NewGuid(), ModelPath = modelPath };
+            var existingBackends = JsonSerializer.Deserialize<ConfigurationBackend[]>(entity.CompatibleBackendsJson) ?? [];
+            var compatibleBackends = update.CompatibleBackends is null
+                ? existingBackends
+                : NormalizeBackends(update.CompatibleBackends);
+            entity.CompatibleBackendsJson = JsonSerializer.Serialize(compatibleBackends);
+            entity.CapabilitiesJson = JsonSerializer.Serialize(update.Capabilities ?? new ModelCapabilities());
+            entity.HuggingFaceModelId = string.IsNullOrWhiteSpace(update.HuggingFaceModelId) ? null : update.HuggingFaceModelId.Trim();
+            entity.IsManuallyConfigured = true;
+            entity.UpdatedAtUtc = DateTime.UtcNow;
+            if (db.Entry(entity).State == EntityState.Detached)
+                db.ModelMetadata.Add(entity);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        finally
+        {
+            localModelMetadataSync.Release();
+        }
+
         return await LocalModel_ReadAsync(cancellationToken);
     }
 
@@ -201,8 +233,10 @@ public sealed class DataService(
         var metadata = await huggingFaceCatalog.GetHuggingFaceModelMetadataAsync(normalizedModelId, cancellationToken);
         var compatibleBackends = ModelBackendCompatibility.FromHuggingFace(metadata.LibraryName, metadata.Tags);
 
-        await using (var db = await dbContextFactory.CreateDbContextAsync(cancellationToken))
+        await localModelMetadataSync.WaitAsync(cancellationToken);
+        try
         {
+            await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
             var entity = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == normalizedPath, cancellationToken);
             entity ??= new ModelMetadataEntity { Id = Guid.NewGuid(), ModelPath = normalizedPath };
             entity.CompatibleBackendsJson = JsonSerializer.Serialize(compatibleBackends);
@@ -216,6 +250,10 @@ public sealed class DataService(
                 db.ModelMetadata.Add(entity);
             await db.SaveChangesAsync(cancellationToken);
         }
+        finally
+        {
+            localModelMetadataSync.Release();
+        }
 
         return await LocalModel_ReadAsync(cancellationToken);
     }
@@ -228,35 +266,44 @@ public sealed class DataService(
         if (!IsWithinModelDirectory(modelPath))
             throw new InvalidOperationException("The model path is outside the configured model directories.");
 
-        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var metadata = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == modelPath, cancellationToken);
-        if (request.DeleteFiles)
-            DeleteModelFiles(modelPath);
-
-        if (metadata is not null)
+        await localModelMetadataSync.WaitAsync(cancellationToken);
+        try
         {
+            await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+            var metadata = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == modelPath, cancellationToken);
             if (request.DeleteFiles)
-                db.ModelMetadata.Remove(metadata);
-            else
+                DeleteModelFiles(modelPath);
+
+            if (metadata is not null)
             {
-                metadata.IsDeleted = true;
-                metadata.UpdatedAtUtc = DateTime.UtcNow;
+                if (request.DeleteFiles)
+                    db.ModelMetadata.Remove(metadata);
+                else
+                {
+                    metadata.IsDeleted = true;
+                    metadata.UpdatedAtUtc = DateTime.UtcNow;
+                }
             }
-        }
-        else if (!request.DeleteFiles)
-        {
-            db.ModelMetadata.Add(new ModelMetadataEntity
+            else if (!request.DeleteFiles)
             {
-                Id = Guid.NewGuid(),
-                ModelPath = modelPath,
-                IsDeleted = true,
-                UpdatedAtUtc = DateTime.UtcNow
-            });
+                db.ModelMetadata.Add(new ModelMetadataEntity
+                {
+                    Id = Guid.NewGuid(),
+                    ModelPath = modelPath,
+                    IsDeleted = true,
+                    UpdatedAtUtc = DateTime.UtcNow
+                });
+            }
+
+            var models = await db.Models.Where(model => model.Path == modelPath).ToArrayAsync(cancellationToken);
+            db.Models.RemoveRange(models);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        finally
+        {
+            localModelMetadataSync.Release();
         }
 
-        var models = await db.Models.Where(model => model.Path == modelPath).ToArrayAsync(cancellationToken);
-        db.Models.RemoveRange(models);
-        await db.SaveChangesAsync(cancellationToken);
         return await LocalModel_ReadAsync(cancellationToken);
     }
 
@@ -272,37 +319,44 @@ public sealed class DataService(
         ModelCleanupRequest request,
         CancellationToken cancellationToken = default)
     {
-        var (directoryPath, candidates) = await GetModelCleanupCandidatesAsync(request.DirectoryPath, cancellationToken);
         var deletedCount = 0;
         long reclaimedBytes = 0;
-
-        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
-        var referencedPaths = await GetReferencedModelPathsAsync(db, cancellationToken);
-        var protectedRuntimePaths = GetProtectedRuntimeModelPaths();
-        var activeDownloadPaths = await GetActiveModelDownloadPathsAsync(db, cancellationToken);
-
-        foreach (var candidate in candidates)
+        await localModelMetadataSync.WaitAsync(cancellationToken);
+        try
         {
-            if (!IsPathWithinDirectory(candidate.Path, directoryPath) ||
-                !IsWithinModelDirectory(candidate.Path) ||
-                IsPathReferenced(candidate.Path, referencedPaths) ||
-                IsPathReferenced(candidate.Path, protectedRuntimePaths) ||
-                IsPathReferenced(candidate.Path, activeDownloadPaths))
-                continue;
+            var (directoryPath, candidates) = await GetModelCleanupCandidatesAsync(request.DirectoryPath, cancellationToken);
+            await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+            var referencedPaths = await GetReferencedModelPathsAsync(db, cancellationToken);
+            var protectedRuntimePaths = GetProtectedRuntimeModelPaths();
+            var activeDownloadPaths = await GetActiveModelDownloadPathsAsync(db, cancellationToken);
 
-            if (!File.Exists(candidate.Path) && !Directory.Exists(candidate.Path))
-                continue;
+            foreach (var candidate in candidates)
+            {
+                if (!IsPathWithinDirectory(candidate.Path, directoryPath) ||
+                    !IsWithinModelDirectory(candidate.Path) ||
+                    IsPathReferenced(candidate.Path, referencedPaths) ||
+                    IsPathReferenced(candidate.Path, protectedRuntimePaths) ||
+                    IsPathReferenced(candidate.Path, activeDownloadPaths))
+                    continue;
 
-            DeleteModelFiles(candidate.Path);
-            var metadata = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == candidate.Path, cancellationToken);
-            if (metadata is not null)
-                db.ModelMetadata.Remove(metadata);
+                if (!File.Exists(candidate.Path) && !Directory.Exists(candidate.Path))
+                    continue;
 
-            var modelEntries = await db.Models.Where(model => model.Path == candidate.Path).ToArrayAsync(cancellationToken);
-            db.Models.RemoveRange(modelEntries);
-            await db.SaveChangesAsync(cancellationToken);
-            deletedCount++;
-            reclaimedBytes += candidate.SizeInBytes;
+                DeleteModelFiles(candidate.Path);
+                var metadata = await db.ModelMetadata.SingleOrDefaultAsync(item => item.ModelPath == candidate.Path, cancellationToken);
+                if (metadata is not null)
+                    db.ModelMetadata.Remove(metadata);
+
+                var modelEntries = await db.Models.Where(model => model.Path == candidate.Path).ToArrayAsync(cancellationToken);
+                db.Models.RemoveRange(modelEntries);
+                await db.SaveChangesAsync(cancellationToken);
+                deletedCount++;
+                reclaimedBytes += candidate.SizeInBytes;
+            }
+        }
+        finally
+        {
+            localModelMetadataSync.Release();
         }
 
         return new ModelCleanupResult(deletedCount, reclaimedBytes);
@@ -504,16 +558,20 @@ public sealed class DataService(
             throw new ArgumentException("A fully qualified GGUF path is required.");
         var settings = (await ModelSettings_ReadAsync(cancellationToken))
             .FirstOrDefault(item => item.Backend == ConfigurationBackend.Llama);
+        var variantId = settings?.BackendVariantId ?? "llama.vulkan";
         var requestSettings = settings is null
             ? new LoadModelRequest(request.Path, "Vulkan", 0, (uint)LlamaContextSize.Context128K,
                 new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase), null)
-            : JsonSerializer.Deserialize<LoadModelRequest>(settings.ConfigurationJson)
-                ?? throw new InvalidOperationException("The persisted model settings are invalid.");
+            : BackendConfigurationJson.Deserialize<LoadModelRequest>(
+                settings.ConfigurationJson,
+                variantId,
+                ConfigurationJsonOptions);
         await ModelSettings_UpdateAsync(new ModelSettings(
             request.Path,
             ConfigurationBackend.Llama,
-            JsonSerializer.Serialize(requestSettings with { ModelPath = request.Path }),
-            settings?.ConfigurationId), cancellationToken);
+            BackendConfigurationJson.Serialize(variantId, requestSettings with { ModelPath = request.Path }, ConfigurationJsonOptions),
+            settings?.ConfigurationId,
+            variantId), cancellationToken);
         return new ModelStatus(request.Path, requestSettings.Backend, requestSettings.GpuLayerCount, requestSettings.ContextSize, 0, false);
     }
 
@@ -546,6 +604,162 @@ public sealed class DataService(
         db.FlowDefinitions.Remove(definition);
         await db.SaveChangesAsync(cancellationToken);
     }
+
+    #region BenchmarkRuns
+
+    public async Task<BenchmarkRun> BenchmarkRun_CreateAsync(BenchmarkRun run, CancellationToken cancellationToken = default)
+    {
+        ValidateBenchmarkRun(run);
+        if (run.Measurements.Count != 0)
+            throw new ArgumentException("A new benchmark history entry cannot contain measurements.", nameof(run));
+
+        var now = DateTime.UtcNow;
+        var entity = new BenchmarkRunEntity
+        {
+            Id = Guid.NewGuid(),
+            ProfileId = run.ProfileId,
+            Backend = run.ProfileSnapshot.Backend,
+            BackendVariantId = run.ProfileSnapshot.BackendVariantId,
+            ModelPath = run.ProfileSnapshot.ModelPath,
+            ProfileSnapshotJson = JsonSerializer.Serialize(run.ProfileSnapshot, ConfigurationJsonOptions),
+            SettingsJson = JsonSerializer.Serialize(run.Settings, ConfigurationJsonOptions),
+            MeasurementsJson = "[]",
+            State = BenchmarkRunState.Running,
+            CreatedAtUtc = now
+        };
+
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        db.BenchmarkRuns.Add(entity);
+        await db.SaveChangesAsync(cancellationToken);
+        var created = ToBenchmarkRun(entity);
+        await GetBenchmarkRunPublisher().PublishCreateAsync(created, cancellationToken);
+        return created;
+    }
+
+    public async Task<IReadOnlyList<BenchmarkRun>> BenchmarkRun_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var entities = await db.BenchmarkRuns.AsNoTracking()
+            .OrderByDescending(run => run.CreatedAtUtc)
+            .ToArrayAsync(cancellationToken);
+        return entities.Select(ToBenchmarkRun).ToArray();
+    }
+
+    public async Task<BenchmarkRun> BenchmarkRun_UpdateAsync(BenchmarkRun run, CancellationToken cancellationToken = default)
+    {
+        ValidateBenchmarkRun(run);
+        if (run.Id == Guid.Empty)
+            throw new ArgumentException("A persisted benchmark history identifier is required.", nameof(run));
+
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var entity = await db.BenchmarkRuns.SingleOrDefaultAsync(item => item.Id == run.Id, cancellationToken)
+            ?? throw new KeyNotFoundException("The benchmark history entry was not found.");
+        var previous = ToBenchmarkRun(entity);
+        if (previous.State != BenchmarkRunState.Running)
+            throw new InvalidOperationException("Only a running benchmark history entry can be updated.");
+        if (previous.ProfileId != run.ProfileId ||
+            previous.ProfileSnapshot != run.ProfileSnapshot ||
+            previous.Settings != run.Settings)
+            throw new InvalidOperationException("The profile snapshot and benchmark settings cannot be changed after a run starts.");
+        if (run.Measurements.Count < previous.Measurements.Count ||
+            !previous.Measurements.SequenceEqual(run.Measurements.Take(previous.Measurements.Count)))
+            throw new InvalidOperationException("Benchmark measurements are append-only.");
+        if (run.Measurements.Count > run.Settings.WarmupCount + run.Settings.MeasuredRunCount)
+            throw new ArgumentException("The benchmark contains more samples than configured.", nameof(run));
+        if (!Enum.IsDefined(run.State))
+            throw new ArgumentOutOfRangeException(nameof(run), "The benchmark state is invalid.");
+        if (run.State == BenchmarkRunState.Completed &&
+            run.Measurements.Count != run.Settings.WarmupCount + run.Settings.MeasuredRunCount)
+            throw new InvalidOperationException("A benchmark can only be completed after all configured samples have been saved.");
+
+        entity.MeasurementsJson = JsonSerializer.Serialize(run.Measurements, ConfigurationJsonOptions);
+        entity.State = run.State;
+        entity.CompletedAtUtc = run.State == BenchmarkRunState.Running ? null : DateTime.UtcNow;
+        entity.ErrorMessage = string.IsNullOrWhiteSpace(run.ErrorMessage) ? null : run.ErrorMessage;
+        await db.SaveChangesAsync(cancellationToken);
+
+        var updated = ToBenchmarkRun(entity);
+        await GetBenchmarkRunPublisher().PublishUpdateAsync(updated, cancellationToken);
+        return updated;
+    }
+
+    public async Task BenchmarkRun_DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
+        var entity = await db.BenchmarkRuns.SingleOrDefaultAsync(run => run.Id == id, cancellationToken)
+            ?? throw new KeyNotFoundException("The benchmark history entry was not found.");
+        if (entity.State == BenchmarkRunState.Running)
+            throw new InvalidOperationException("A running benchmark history entry cannot be deleted.");
+        var deleted = ToBenchmarkRun(entity);
+        db.BenchmarkRuns.Remove(entity);
+        await db.SaveChangesAsync(cancellationToken);
+        await GetBenchmarkRunPublisher().PublishDeleteAsync(deleted, cancellationToken);
+    }
+
+    private static void ValidateBenchmarkRun(BenchmarkRun run)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentNullException.ThrowIfNull(run.ProfileSnapshot);
+        ArgumentNullException.ThrowIfNull(run.Settings);
+        ArgumentNullException.ThrowIfNull(run.Measurements);
+        if (run.ProfileId == Guid.Empty || run.ProfileSnapshot.Id != run.ProfileId)
+            throw new ArgumentException("The benchmark profile snapshot must match the original profile identifier.", nameof(run));
+        if (string.IsNullOrWhiteSpace(run.ProfileSnapshot.Name) ||
+            string.IsNullOrWhiteSpace(run.ProfileSnapshot.ModelPath) ||
+            string.IsNullOrWhiteSpace(run.ProfileSnapshot.BackendVariantId))
+            throw new ArgumentException("The benchmark profile snapshot must include its name, model path, and backend variant.", nameof(run));
+        if (!Enum.IsDefined(run.ProfileSnapshot.Backend))
+            throw new ArgumentException("The benchmark profile backend is invalid.", nameof(run));
+        if (run.Settings.Kind is not ("short" or "long") ||
+            run.Settings.RepeatCount is < 1 or > 127850 ||
+            run.Settings.WarmupCount is < 0 or > 20 ||
+            run.Settings.MeasuredRunCount is < 1 or > 20 ||
+            run.Settings.MaxTokens < 1 ||
+            string.IsNullOrWhiteSpace(run.Settings.PromptVersion) ||
+            !double.IsFinite(run.Settings.Temperature) ||
+            !double.IsFinite(run.Settings.TopP) ||
+            !double.IsFinite(run.Settings.MinP) ||
+            !double.IsFinite(run.Settings.RepetitionPenalty) ||
+            !double.IsFinite(run.Settings.FrequencyPenalty) ||
+            !double.IsFinite(run.Settings.PresencePenalty))
+            throw new ArgumentException("The benchmark request settings are invalid.", nameof(run));
+        if (run.Settings.Kind == "long" &&
+            (run.Settings.WarmupCount != 0 || run.Settings.MeasuredRunCount != 1))
+            throw new ArgumentException("A long-context probe must contain one sample and no warm-ups.", nameof(run));
+        if (run.Measurements.Any(measurement =>
+            string.IsNullOrWhiteSpace(measurement.RunId) ||
+            measurement.HttpStatus is < 200 or >= 300 ||
+            measurement.CompletionTokens < 0))
+            throw new ArgumentException("One or more benchmark measurements are invalid.", nameof(run));
+    }
+
+    private static BenchmarkRun ToBenchmarkRun(BenchmarkRunEntity entity)
+    {
+        var profileSnapshot = JsonSerializer.Deserialize<ModelConfiguration>(entity.ProfileSnapshotJson, ConfigurationJsonOptions)
+            ?? throw new InvalidDataException($"Benchmark history entry '{entity.Id}' has an invalid profile snapshot.");
+        var settings = JsonSerializer.Deserialize<BenchmarkRunSettings>(entity.SettingsJson, ConfigurationJsonOptions)
+            ?? throw new InvalidDataException($"Benchmark history entry '{entity.Id}' has invalid request settings.");
+        var measurements = JsonSerializer.Deserialize<List<BenchmarkMeasurement>>(entity.MeasurementsJson, ConfigurationJsonOptions)
+            ?? throw new InvalidDataException($"Benchmark history entry '{entity.Id}' has invalid measurement data.");
+        return new BenchmarkRun(
+            entity.Id,
+            entity.ProfileId,
+            profileSnapshot,
+            settings,
+            measurements,
+            entity.State,
+            entity.CreatedAtUtc,
+            entity.CompletedAtUtc,
+            entity.ErrorMessage);
+    }
+
+    private IBenchmarkRunPublisher GetBenchmarkRunPublisher() =>
+        benchmarkRunPublisher ?? throw new InvalidOperationException("Benchmark run SignalR publishing is not configured.");
+
+    #endregion
+
+    private InferenceLogService GetInferenceLogService() =>
+        inferenceLogService ?? throw new InvalidOperationException("Inference log persistence and SignalR publishing are not configured.");
 
     public async Task FlowDefinition_SeedDefaultsAsync(CancellationToken cancellationToken = default)
     {
@@ -794,9 +1008,10 @@ public sealed class DataService(
 
     public async Task ModelSettings_UpdateAsync(ModelSettings settings, CancellationToken cancellationToken = default)
     {
-        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         if (!Enum.IsDefined(settings.Backend))
             throw new ArgumentException("A valid model backend is required.", nameof(settings));
+        EnsureSupportedBackend(settings.Backend);
+        await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken);
         var backendVariantId = ResolveAndValidateBackendVariantId(
             settings.Backend, settings.ConfigurationJson, settings.BackendVariantId, nameof(settings.BackendVariantId));
         var settingsForBackend = await db.ModelSettings
@@ -862,6 +1077,7 @@ public sealed class DataService(
             ?? throw new KeyNotFoundException($"The model '{request.ModelId}' was not found.");
         var configuration = await ModelConfiguration_ReadAsync(request.ConfigurationId, CancellationToken.None)
             ?? throw new KeyNotFoundException($"The model configuration '{request.ConfigurationId}' was not found.");
+        EnsureSupportedBackend(configuration.Backend);
         if (!string.Equals(Path.GetFullPath(model.Path), Path.GetFullPath(configuration.ModelPath), StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The selected model configuration does not belong to the selected model.");
 
@@ -870,11 +1086,11 @@ public sealed class DataService(
             var backendConfiguration = configuration.Backend switch
             {
                 ConfigurationBackend.Llama => JsonSerializer.SerializeToElement(
-                    DeserializeConfiguration<LoadModelRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, ConfigurationJsonOptions),
+                    DeserializeConfiguration<LoadModelRequest>(configuration.ConfigurationJson, configuration.BackendVariantId) with { ModelPath = model.Path }, ConfigurationJsonOptions),
                 ConfigurationBackend.OpenVino => JsonSerializer.SerializeToElement(
-                    DeserializeConfiguration<OpenVinoLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, ConfigurationJsonOptions),
+                    DeserializeConfiguration<OpenVinoLoadRequest>(configuration.ConfigurationJson, configuration.BackendVariantId) with { ModelPath = model.Path }, ConfigurationJsonOptions),
                 ConfigurationBackend.Vllm => JsonSerializer.SerializeToElement(
-                    DeserializeConfiguration<PythonInferenceLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path, Backend = ConfigurationBackend.Vllm }, ConfigurationJsonOptions),
+                    DeserializeConfiguration<PythonInferenceLoadRequest>(configuration.ConfigurationJson, configuration.BackendVariantId) with { ModelPath = model.Path, Backend = ConfigurationBackend.Vllm }, ConfigurationJsonOptions),
                 _ => throw new ArgumentException($"The backend variant '{configuration.BackendVariantId}' is not supported by this host.", nameof(request))
             };
             await modelRuntime.LoadBackendAsync(
@@ -889,13 +1105,13 @@ public sealed class DataService(
         switch (configuration.Backend)
         {
             case ConfigurationBackend.Llama:
-                await LoadModelAsync(DeserializeConfiguration<LoadModelRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, CancellationToken.None);
+                await LoadModelAsync(DeserializeConfiguration<LoadModelRequest>(configuration.ConfigurationJson, configuration.BackendVariantId) with { ModelPath = model.Path }, CancellationToken.None);
                 break;
             case ConfigurationBackend.OpenVino:
-                await modelRuntime.LoadAsync(DeserializeConfiguration<OpenVinoLoadRequest>(configuration.ConfigurationJson) with { ModelPath = model.Path }, CancellationToken.None);
+                await modelRuntime.LoadAsync(DeserializeConfiguration<OpenVinoLoadRequest>(configuration.ConfigurationJson, configuration.BackendVariantId) with { ModelPath = model.Path }, CancellationToken.None);
                 break;
             case ConfigurationBackend.Vllm:
-                await LoadPythonModelAsync(DeserializeConfiguration<PythonInferenceLoadRequest>(configuration.ConfigurationJson) with
+                await LoadPythonModelAsync(DeserializeConfiguration<PythonInferenceLoadRequest>(configuration.ConfigurationJson, configuration.BackendVariantId) with
                 {
                     ModelPath = model.Path,
                     Backend = configuration.Backend
@@ -984,6 +1200,7 @@ public sealed class DataService(
 
     public async Task<IReadOnlyList<BackendModel>> BackendModel_ReadAsync(ConfigurationBackend backend, CancellationToken cancellationToken = default)
     {
+        EnsureSupportedBackend(backend);
         var models = (await LocalModel_ReadAsync(cancellationToken))
             .Where(model => model.CompatibleBackends?.Contains(backend) == true)
             .ToArray();
@@ -997,7 +1214,9 @@ public sealed class DataService(
     }
 
     private static IReadOnlyList<ConfigurationBackend> NormalizeBackends(IEnumerable<ConfigurationBackend> backends) =>
-        Enum.GetValues<ConfigurationBackend>().Where(backends.Contains).ToArray();
+        Enum.GetValues<ConfigurationBackend>()
+            .Where(backend => IsSupportedBackend(backend) && backends.Contains(backend))
+            .ToArray();
 
     public async Task<IReadOnlyList<Model>> Model_UpdateAsync(CancellationToken cancellationToken = default)
     {
@@ -1100,6 +1319,7 @@ public sealed class DataService(
     private async Task<ModelConfiguration> ModelConfiguration_SaveAsync(ModelConfiguration configuration, CancellationToken cancellationToken = default)
     {
         ValidateConfiguration(configuration);
+        EnsureSupportedBackend(configuration.Backend);
         var backendVariantId = ResolveAndValidateBackendVariantId(
             configuration.Backend, configuration.ConfigurationJson, configuration.BackendVariantId,
             nameof(configuration.BackendVariantId));
@@ -1125,6 +1345,8 @@ public sealed class DataService(
             ? new ModelConfigurationEntity { Id = Guid.NewGuid(), CreatedAtUtc = now }
             : await db.ModelConfigurations.SingleOrDefaultAsync(item => item.Id == configuration.Id, cancellationToken)
                 ?? throw new KeyNotFoundException("The model configuration was not found.");
+        var modelPathChanged = configuration.Id != Guid.Empty &&
+            !string.Equals(entity.ModelPath.Trim(), configuration.ModelPath.Trim(), StringComparison.OrdinalIgnoreCase);
         entity.Name = configuration.Name.Trim();
         entity.Description = string.IsNullOrWhiteSpace(configuration.Description) ? null : configuration.Description.Trim();
         entity.ModelPath = configuration.ModelPath.Trim();
@@ -1147,6 +1369,21 @@ public sealed class DataService(
             await ClearOtherDefaultsAsync(db, entity.Id, cancellationToken);
         else if (!await db.ModelConfigurations.AnyAsync(item => item.IsDefault && item.Id != entity.Id, cancellationToken))
             entity.IsDefault = true;
+
+        if (modelPathChanged)
+        {
+            var assignedModels = await db.Models
+                .Where(model => model.ConfigurationId == entity.Id)
+                .ToArrayAsync(cancellationToken);
+            foreach (var model in assignedModels)
+                model.ConfigurationId = null;
+
+            var targetModel = await db.Models.SingleOrDefaultAsync(
+                model => model.Path == entity.ModelPath,
+                cancellationToken);
+            if (targetModel is not null)
+                targetModel.ConfigurationId = entity.Id;
+        }
 
         await db.SaveChangesAsync(cancellationToken);
         return ToConfiguration(entity);
@@ -1399,6 +1636,7 @@ public sealed class DataService(
 
     public async Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null)
     {
+        EnsureSupportedBackend(backend);
         if (effectiveBackendSandbox is not null)
         {
             return await effectiveBackendSandbox.DiagnoseRequirementsAsync(
@@ -1488,6 +1726,7 @@ public sealed class DataService(
 
     public async Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null)
     {
+        EnsureSupportedBackend(backend);
         if (backend == ConfigurationBackend.Llama)
         {
             var route = devices?.FirstOrDefault()?.Split(':', 2)[0] ?? "cpu";
@@ -1695,9 +1934,7 @@ public sealed class DataService(
 
     private static ModelSettings ToModelSettings(ModelSettingsEntity entity) =>
         new(entity.ModelPath, entity.Backend, entity.ConfigurationJson, entity.ConfigurationId,
-            string.IsNullOrWhiteSpace(entity.BackendVariantId)
-                ? ResolveBackendVariantId(entity.Backend, entity.ConfigurationJson)
-                : entity.BackendVariantId)
+            ResolvePersistedBackendVariantId(entity.Backend, entity.ConfigurationJson, entity.BackendVariantId))
         {
             Devices = entity.Devices.ToList()
         };
@@ -1706,9 +1943,21 @@ public sealed class DataService(
         new(entity.Id, entity.Name, entity.Description, entity.ModelPath, entity.IsDefault, entity.SchemaVersion,
             entity.ConfigurationJson, entity.CreatedAtUtc, entity.UpdatedAtUtc, entity.Backend,
             DeserializeInferenceTimeout(entity.InferenceTimeoutJson), entity.AutoLaunch,
-            string.IsNullOrWhiteSpace(entity.BackendVariantId)
-                ? ResolveBackendVariantId(entity.Backend, entity.ConfigurationJson)
-                : entity.BackendVariantId);
+            ResolvePersistedBackendVariantId(entity.Backend, entity.ConfigurationJson, entity.BackendVariantId));
+
+    private static string ResolvePersistedBackendVariantId(
+        ConfigurationBackend backend,
+        string configurationJson,
+        string? persistedVariantId)
+    {
+        var resolvedVariantId = ResolveBackendVariantId(backend, configurationJson);
+        if (!string.IsNullOrWhiteSpace(persistedVariantId) &&
+            !string.Equals(persistedVariantId.Trim(), resolvedVariantId, StringComparison.OrdinalIgnoreCase))
+            throw new JsonException(
+                $"The stored backend variant '{persistedVariantId}' does not match the configuration variant '{resolvedVariantId}'.");
+
+        return resolvedVariantId;
+    }
 
     private static string ResolveAndValidateBackendVariantId(
         ConfigurationBackend backend,
@@ -1716,23 +1965,15 @@ public sealed class DataService(
         string? suppliedVariantId,
         string parameterName)
     {
+        EnsureSupportedBackend(backend);
         var resolvedVariantId = ResolveBackendVariantId(backend, configurationJson);
         if (string.IsNullOrWhiteSpace(suppliedVariantId) ||
             string.Equals(suppliedVariantId.Trim(), resolvedVariantId, StringComparison.OrdinalIgnoreCase))
             return resolvedVariantId;
 
-        var normalizedVariantId = suppliedVariantId.Trim().ToLowerInvariant();
-        if (backend == ConfigurationBackend.Vllm &&
-            normalizedVariantId is "vllm.cuda12" or "vllm.xpu" &&
-            !HasConfiguredVllmDeviceRoute(configurationJson))
-            return normalizedVariantId;
-
-        if (!string.Equals(normalizedVariantId, resolvedVariantId, StringComparison.OrdinalIgnoreCase))
-            throw new ArgumentException(
-                $"Backend variant '{suppliedVariantId}' does not match the configuration variant '{resolvedVariantId}'.",
-                parameterName);
-
-        return resolvedVariantId;
+        throw new ArgumentException(
+            $"Backend variant '{suppliedVariantId}' does not match the configuration variant '{resolvedVariantId}'.",
+            parameterName);
     }
 
     private static bool ConfigurationResolvesToVariant(
@@ -1753,91 +1994,34 @@ public sealed class DataService(
 
     private static string ResolveBackendVariantId(ConfigurationBackend backend, string configurationJson)
     {
-        using var configuration = JsonDocument.Parse(configurationJson);
-        var root = configuration.RootElement;
-        var llamaBackend = GetStringProperty(root, "Backend");
-        return backend switch
+        var variantId = BackendConfigurationJson.GetBackendVariantId(configurationJson);
+        var belongsToBackend = backend switch
         {
-            ConfigurationBackend.Llama => llamaBackend?.Trim().ToLowerInvariant() switch
-                {
-                    "vulkan" => "llama.vulkan",
-                    "cuda" or "cuda12" => "llama.cuda12",
-                    "sycl" or "sycl16" or "xpu" => "llama.sycl",
-                    _ => "llama.cpu"
-                },
-            ConfigurationBackend.OpenVino => "openvino",
-            ConfigurationBackend.Vllm => IsXpuConfiguration(root) ? "vllm.xpu" : "vllm.cuda12",
-            ConfigurationBackend.Sglang => IsXpuConfiguration(root) ? "sglang.xpu" : "sglang.cuda12",
-            ConfigurationBackend.DotLlm => "dotllm.cpu",
-            _ => throw new ArgumentOutOfRangeException(nameof(backend), backend, "Unsupported backend family.")
+            ConfigurationBackend.Llama => variantId is "llama.vulkan" or "llama.cuda12" or "llama.sycl",
+            ConfigurationBackend.OpenVino => string.Equals(variantId, "openvino", StringComparison.Ordinal),
+            ConfigurationBackend.Vllm => variantId is "vllm.cuda12" or "vllm.xpu",
+            ConfigurationBackend.Sglang => variantId.StartsWith("sglang.", StringComparison.Ordinal),
+            ConfigurationBackend.DotLlm => variantId.StartsWith("dotllm.", StringComparison.Ordinal),
+            _ => false
         };
+        if (!belongsToBackend)
+            throw new JsonException($"The configuration block '{variantId}' does not match backend '{backend}'.");
+
+        return variantId;
     }
 
-    private static bool HasConfiguredVllmDeviceRoute(string configurationJson)
+    private static bool IsSupportedBackend(ConfigurationBackend backend) =>
+        backend is ConfigurationBackend.Llama or ConfigurationBackend.OpenVino or ConfigurationBackend.Vllm;
+
+    private static void EnsureSupportedBackend(ConfigurationBackend backend)
     {
-        using var configuration = JsonDocument.Parse(configurationJson);
-        var root = configuration.RootElement;
-        return IsVllmDeviceRoute(GetStringProperty(root, "Device")) ||
-            TryGetProperty(root, "Devices", out var devices) && devices.ValueKind == JsonValueKind.Array &&
-            devices.EnumerateArray().Any(device => device.ValueKind == JsonValueKind.String &&
-                IsVllmDeviceRoute(device.GetString()));
-    }
+        if (IsSupportedBackend(backend))
+            return;
 
-    private static bool IsVllmDeviceRoute(string? route) =>
-        route?.StartsWith("cuda:", StringComparison.OrdinalIgnoreCase) == true ||
-        route?.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase) == true;
+        if (backend is ConfigurationBackend.Sglang or ConfigurationBackend.DotLlm)
+            throw new NotSupportedException($"The '{backend}' backend is no longer supported by Esi.AI Studio.");
 
-    private static string? GetStringProperty(JsonElement root, string propertyName)
-    {
-        if (root.ValueKind != JsonValueKind.Object)
-            return null;
-
-        foreach (var property in root.EnumerateObject())
-        {
-            if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase) &&
-                property.Value.ValueKind == JsonValueKind.String)
-                return property.Value.GetString();
-        }
-
-        return null;
-    }
-
-    private static bool IsXpuConfiguration(JsonElement root)
-    {
-        var device = GetStringProperty(root, "Device");
-        if (IsVllmDeviceRoute(device))
-            return device!.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase);
-
-        if (TryGetProperty(root, "Devices", out var devices) && devices.ValueKind == JsonValueKind.Array)
-        {
-            var routes = devices.EnumerateArray()
-                .Where(item => item.ValueKind == JsonValueKind.String)
-                .Select(item => item.GetString())
-                .Where(IsVllmDeviceRoute)
-                .ToArray();
-            if (routes.Length > 0)
-                return routes.Any(route => route!.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase));
-        }
-
-        return TryGetProperty(root, "EnableXpuGraph", out var xpuGraph) && xpuGraph.ValueKind == JsonValueKind.True;
-    }
-
-    private static bool TryGetProperty(JsonElement root, string propertyName, out JsonElement value)
-    {
-        if (root.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var property in root.EnumerateObject())
-            {
-                if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase))
-                {
-                    value = property.Value;
-                    return true;
-                }
-            }
-        }
-
-        value = default;
-        return false;
+        throw new ArgumentOutOfRangeException(nameof(backend), backend, "Unsupported backend family.");
     }
 
     private static InferenceTimeoutSettings? DeserializeInferenceTimeout(string? json) =>
@@ -1845,12 +2029,12 @@ public sealed class DataService(
             ? null
             : JsonSerializer.Deserialize<InferenceTimeoutSettings>(json, ConfigurationJsonOptions);
 
-    private static T DeserializeConfiguration<T>(string configurationJson)
+    private static T DeserializeConfiguration<T>(string configurationJson, string backendVariantId)
+        where T : class
     {
         try
         {
-            return JsonSerializer.Deserialize<T>(configurationJson, ConfigurationJsonOptions)
-                ?? throw new ArgumentException("The selected model configuration is empty.", nameof(configurationJson));
+            return BackendConfigurationJson.Deserialize<T>(configurationJson, backendVariantId, ConfigurationJsonOptions);
         }
         catch (JsonException exception)
         {

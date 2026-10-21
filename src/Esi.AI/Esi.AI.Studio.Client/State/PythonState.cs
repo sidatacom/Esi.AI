@@ -24,6 +24,13 @@ public sealed class PythonState : IBackendTabConfigurationData
     public bool EnablePrefixCaching { get; set; } = true;
     public bool EnableXpuGraph { get; set; } = true;
     public bool EnableBf16MtpDraft { get; set; } = true;
+    public string OneApiDeviceSelector { get; set; } = "level_zero:gpu";
+    public string ZeFlatDeviceHierarchy { get; set; } = "COMPOSITE";
+    public string PyTorchAllocatorConfig { get; set; } = "expandable_segments:True";
+    public string CclZeIpcExchange { get; set; } = "sockets";
+    public string CclAtlTransport { get; set; } = "ofi";
+    public string FiProvider { get; set; } = "tcp";
+    public string WorkerMultiprocessMethod { get; set; } = "spawn";
     public bool IsDeviceSelected(string device) => Devices.Contains(device, StringComparer.OrdinalIgnoreCase);
 
     public void Load(PythonInferenceLoadRequest request)
@@ -39,12 +46,20 @@ public sealed class PythonState : IBackendTabConfigurationData
         MaxNumBatchedTokens = request.MaxNumBatchedTokens > 0 ? (int)Math.Min(int.MaxValue, request.MaxNumBatchedTokens) : MaxNumBatchedTokens;
         MtpTokens = GetMtpTokenCount(request.SpeculativeConfigJson);
         EnablePrefixCaching = request.EnablePrefixCaching; EnableXpuGraph = request.EnableXpuGraph; EnableBf16MtpDraft = request.EnableBf16MtpDraft;
+        var xpuSettings = request.XpuRuntimeSettings ?? new VllmXpuRuntimeSettings();
+        OneApiDeviceSelector = xpuSettings.OneApiDeviceSelector;
+        ZeFlatDeviceHierarchy = xpuSettings.ZeFlatDeviceHierarchy;
+        PyTorchAllocatorConfig = xpuSettings.PyTorchAllocatorConfig;
+        CclZeIpcExchange = xpuSettings.CclZeIpcExchange;
+        CclAtlTransport = xpuSettings.CclAtlTransport;
+        FiProvider = xpuSettings.FiProvider;
+        WorkerMultiprocessMethod = xpuSettings.WorkerMultiprocessMethod;
     }
 
-    public void Load(PythonInferenceLoadRequest request, string backendVariantId, string configurationJson)
+    public void Load(PythonInferenceLoadRequest request, string backendVariantId)
     {
         Load(request);
-        if (HasConfiguredVllmDeviceRoute(configurationJson))
+        if (GetDevices().Any(IsVllmDeviceRoute))
             return;
 
         var defaultDevice = backendVariantId.ToLowerInvariant() switch
@@ -61,9 +76,52 @@ public sealed class PythonState : IBackendTabConfigurationData
         Device = defaultDevice;
     }
 
-    public PythonInferenceLoadRequest ToRequest(ConfigurationBackend backend) => new(ModelPath, backend, PythonExecutable, WorkingDirectory, 8000, GpuMemoryUtilization, (uint)Math.Max(1, MaxModelLength), Math.Max(1, TensorParallelSize), TrustRemoteCode, null, (uint)Math.Max(0, MtpTokens), .7f, .9f, !EnableXpuGraph, GetDevices().FirstOrDefault() ?? Device, GetDevices(), Quantization, DType, KvCacheDType, MtpTokens > 0 ? $"{{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":{MtpTokens}}}" : string.Empty, (uint)Math.Max(0, MaxNumSeqs), (uint)Math.Max(0, MaxNumBatchedTokens), EnablePrefixCaching, EnableXpuGraph, EnableBf16MtpDraft);
+    public PythonInferenceLoadRequest ToRequest(ConfigurationBackend backend, string? backendVariantId = null)
+    {
+        var variantId = backendVariantId ?? (Device.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase) ? "vllm.xpu" : "vllm.cuda12");
+        var isXpu = backend == ConfigurationBackend.Vllm && string.Equals(variantId, "vllm.xpu", StringComparison.OrdinalIgnoreCase);
+        var request = new PythonInferenceLoadRequest(
+            ModelPath,
+            backend,
+            PythonExecutable,
+            WorkingDirectory,
+            8000,
+            GpuMemoryUtilization,
+            (uint)Math.Max(1, MaxModelLength),
+            Math.Max(1, TensorParallelSize),
+            TrustRemoteCode,
+            null,
+            (uint)Math.Max(0, MtpTokens),
+            .7f,
+            .9f,
+            !EnableXpuGraph,
+            GetDevices().FirstOrDefault() ?? Device,
+            GetDevices(),
+            Quantization,
+            DType,
+            KvCacheDType,
+            MtpTokens > 0 ? $"{{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":{MtpTokens}}}" : string.Empty,
+            (uint)Math.Max(0, MaxNumSeqs),
+            (uint)Math.Max(0, MaxNumBatchedTokens),
+            EnablePrefixCaching,
+            isXpu && EnableXpuGraph,
+            isXpu && EnableBf16MtpDraft);
+        return request with
+        {
+            XpuRuntimeSettings = isXpu
+                ? new VllmXpuRuntimeSettings(
+                    OneApiDeviceSelector,
+                    ZeFlatDeviceHierarchy,
+                    PyTorchAllocatorConfig,
+                    CclZeIpcExchange,
+                    CclAtlTransport,
+                    FiProvider,
+                    WorkerMultiprocessMethod)
+                : null
+        };
+    }
 
-    public void Reset() { PythonExecutable = "python3"; Device = string.Empty; Devices.Clear(); GpuMemoryUtilization = 90; MaxModelLength = 2048; TensorParallelSize = 1; TrustRemoteCode = true; Quantization = string.Empty; DType = "float16"; KvCacheDType = "fp8"; MtpTokens = 0; MaxNumSeqs = 1; MaxNumBatchedTokens = 8192; EnablePrefixCaching = true; EnableXpuGraph = true; EnableBf16MtpDraft = true; }
+    public void Reset() { PythonExecutable = "python3"; Device = string.Empty; Devices.Clear(); GpuMemoryUtilization = 90; MaxModelLength = 2048; TensorParallelSize = 1; TrustRemoteCode = true; Quantization = string.Empty; DType = "float16"; KvCacheDType = "fp8"; MtpTokens = 0; MaxNumSeqs = 1; MaxNumBatchedTokens = 8192; EnablePrefixCaching = true; EnableXpuGraph = true; EnableBf16MtpDraft = true; OneApiDeviceSelector = "level_zero:gpu"; ZeFlatDeviceHierarchy = "COMPOSITE"; PyTorchAllocatorConfig = "expandable_segments:True"; CclZeIpcExchange = "sockets"; CclAtlTransport = "ofi"; FiProvider = "tcp"; WorkerMultiprocessMethod = "spawn"; }
     private IReadOnlyList<string> GetDevices() => Devices.Where(device => !string.IsNullOrWhiteSpace(device)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
     private static int GetMtpTokenCount(string speculativeConfigJson)
@@ -78,50 +136,7 @@ public sealed class PythonState : IBackendTabConfigurationData
                 : 0;
     }
 
-    private static bool HasConfiguredVllmDeviceRoute(string configurationJson)
-    {
-        using var configuration = JsonDocument.Parse(configurationJson);
-        var root = configuration.RootElement;
-        return IsVllmDeviceRoute(GetStringProperty(root, "Device")) ||
-            TryGetProperty(root, "Devices", out var devices) && devices.ValueKind == JsonValueKind.Array &&
-            devices.EnumerateArray().Any(device => device.ValueKind == JsonValueKind.String &&
-                IsVllmDeviceRoute(device.GetString()));
-    }
-
     private static bool IsVllmDeviceRoute(string? route) =>
         route?.StartsWith("cuda:", StringComparison.OrdinalIgnoreCase) == true ||
         route?.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase) == true;
-
-    private static string? GetStringProperty(JsonElement root, string propertyName)
-    {
-        if (root.ValueKind != JsonValueKind.Object)
-            return null;
-
-        foreach (var property in root.EnumerateObject())
-        {
-            if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase) &&
-                property.Value.ValueKind == JsonValueKind.String)
-                return property.Value.GetString();
-        }
-
-        return null;
-    }
-
-    private static bool TryGetProperty(JsonElement root, string propertyName, out JsonElement value)
-    {
-        if (root.ValueKind == JsonValueKind.Object)
-        {
-            foreach (var property in root.EnumerateObject())
-            {
-                if (property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase))
-                {
-                    value = property.Value;
-                    return true;
-                }
-            }
-        }
-
-        value = default;
-        return false;
-    }
 }

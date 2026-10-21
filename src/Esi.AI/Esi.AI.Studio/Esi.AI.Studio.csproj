@@ -39,8 +39,8 @@
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.2.3" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
     <!-- Use the locally built Ubuntu 26.04 runtime packages from NuGet.config. -->
-    <PackageReference Include="OpenVINO.runtime.ubuntu.26-x86_64" Version="2026.4.0" />
-    <PackageReference Include="JYPPX.OpenVINO.GenAI.runtime.ubuntu.26-x86_64" Version="2026.4.0" />
+    <PackageReference Include="OpenVINO.runtime.ubuntu.26-x86_64" Version="2026.4.1" />
+    <PackageReference Include="JYPPX.OpenVINO.GenAI.runtime.ubuntu.26-x86_64" Version="2026.4.1" />
   </ItemGroup>
 
 </Project>

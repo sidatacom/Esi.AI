@@ -12,6 +12,13 @@
 - Der Standard-Projektstart über EsiMCP ist `debug.launchProject` mit dem `.csproj`; URL und Umgebung stammen aus dem ausgewählten `Properties/launchSettings.json`-Profil, das optional über `launchProfile` gewählt wird. `debug.launchFile` bleibt ausschließlich ein ausdrücklicher Kompatibilitätsweg für eine benötigte, Studio-spezifische benannte VS-Code-Konfiguration und ist kein allgemeiner Projektstart. Beide Wege stoppen aktive Debugsessions vor dem Build und starten anschließend über öffentliche VS-Code-APIs. Für Live-Updates ohne C# Dev Kit `debug.hotReload` mit `mode: "watch"` und einem `.csproj` verwenden: `dotnet watch` wendet unterstützte Edits live an und startet nur bei nicht unterstützten Änderungen neu. Diese Watch-Session ist nicht an den VS-Code-Debugger angehängt. `mode: "rebuild"` bleibt der ausdrückliche vollständige Build mit Debugger-Neustart.
 - Bei Konflikten zwischen einer allgemeinen Vorgehensweise und `vscode-debug` hat `vscode-debug` für Debug-, Start-, Restart-, Hot-Reload- und Browser-Lifecycle Vorrang.
 
+## Debug Pause Detection
+
+- After every launch, step, pause, or continue operation, and immediately before browser or terminal work, drain `debug.wait.for.event` without a `type` filter. Process events in arrival order and correlate each event by `sessionId`; reset the tracked state when the active session ID changes.
+- Treat `type: "paused"` as a stopped debugger. Inspect `reason`, `exceptionType`, `exceptionMessage`, `fileFullPath`, and `line`. For `reason: "exception"`, inspect and diagnose the exception before continuing. For `reason: "unknown"` or missing details, do not assume a normal breakpoint; inspect the Debug view/Console, and do not continue or perform browser/terminal work while the cause remains unresolved.
+- A `null` result means only that no event was observed during that wait; it does not prove that the session is running. Keep the last observed state. If no state has been established for the active session, report it as unknown and do not claim the debugger is running.
+- `{ continued: true }` confirms only that the continue command was accepted. Consume subsequent unfiltered events for the same session; if a `paused` event arrives, inspect it instead of proceeding. Confirm a `continued` event before browser/terminal work, then check Studio host readiness where applicable.
+
 ## Root-Cause-Regel
 
 - Probleme werden an ihrer Ursache gelöst, nicht durch symptomatische Patches, Workarounds oder zusätzliche Fallbacks.

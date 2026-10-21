@@ -641,15 +641,13 @@ public sealed class OpenVinoModelLoader : IDisposable
 
     private static void LoadLinuxOpenVinoDependencies(string runtimeDirectory)
     {
-        var tbbLibrary = Path.GetFullPath(Path.Combine(
-            runtimeDirectory,
-            "..",
-            "..",
-            "3rdparty",
-            "tbb",
-            "lib",
-            "libtbb.so.12"));
-        if (File.Exists(tbbLibrary))
+        var tbbDirectory = Path.GetFullPath(Path.Combine(runtimeDirectory, "..", "..", "3rdparty", "tbb", "lib"));
+        var tbbLibrary = new[]
+        {
+            Path.Combine(runtimeDirectory, "libtbb.so.12"),
+            Path.Combine(tbbDirectory, "libtbb.so.12")
+        }.FirstOrDefault(File.Exists);
+        if (tbbLibrary is not null)
             NativeLibrary.Load(tbbLibrary);
 
         var libraries = new[]
@@ -893,6 +891,9 @@ public sealed class OpenVinoChatSession : IDisposable
         if (messages is null || messages.Count == 0)
             throw new ArgumentException("At least one chat message is required.", nameof(messages));
 
+        if (llmPipeline is not null && images is { Length: > 0 })
+            throw new NotSupportedException("Image input requires an OpenVINO vision-language model.");
+
         cancellationToken.ThrowIfCancellationRequested();
         generationLock.Wait(cancellationToken);
         try
@@ -901,7 +902,7 @@ public sealed class OpenVinoChatSession : IDisposable
             using var generationConfig = GetGenerationConfig(generationOptions);
             if (llmPipeline is not null)
             {
-                using var history = CreateChatHistory(messages, tools, generationOptions?.ReasoningEffort, images is { Length: > 0 });
+                using var history = CreateChatHistory(messages, tools, generationOptions?.ReasoningEffort);
                 using var results = streamingCallback is null
                     ? llmPipeline.GenerateWithHistory(history, generationConfig)
                     : llmPipeline.GenerateWithHistory(history, generationConfig, streamingCallback);
@@ -911,7 +912,7 @@ public sealed class OpenVinoChatSession : IDisposable
 
             if (vlmPipeline is not null)
             {
-                using var history = CreateChatHistory(messages, tools, generationOptions?.ReasoningEffort, images is { Length: > 0 });
+                using var history = CreateChatHistory(messages, tools, generationOptions?.ReasoningEffort);
                 if (streamingCallback is null)
                 {
                     using var nonStreamingResults = vlmPipeline.GenerateWithHistory(history, images, generationConfig);
@@ -948,20 +949,14 @@ public sealed class OpenVinoChatSession : IDisposable
         };
     }
 
-    private static ChatHistory CreateChatHistory(
+    internal static ChatHistory CreateChatHistory(
         IReadOnlyList<OpenAiChatMessage> messages,
         IReadOnlyList<OpenAiToolDefinition>? tools,
-        string? reasoningEffort,
-        bool hasImages)
+        string? reasoningEffort)
     {
         var history = new ChatHistory();
         foreach (var message in messages)
-        {
-            if (hasImages)
-                history.AddMessage(message.Role, GetPlainHistoryContent(message.Content));
-            else
-                history.PushBackJson(SerializeChatMessageForHistory(message));
-        }
+            history.PushBackJson(SerializeChatMessageForHistory(message));
 
         var templateContext = CreateChatTemplateContext(reasoningEffort ?? "high");
         if (templateContext is not null)

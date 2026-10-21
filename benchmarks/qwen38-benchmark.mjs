@@ -2,6 +2,10 @@
 
 import { performance } from "node:perf_hooks";
 
+const maxContextTokens = 131_072;
+const minimumTokensPerSecond = 1;
+const requestTimeoutBuffer = 1.25;
+const requestTimeoutMs = Math.ceil(maxContextTokens / minimumTokensPerSecond * requestTimeoutBuffer * 1000);
 const options = parseArguments(process.argv.slice(2));
 const baseUrl = (options["base-url"] ?? process.env.ESI_STUDIO_URL ?? "http://localhost:7010").replace(/\/$/, "");
 const model = options.model;
@@ -67,7 +71,7 @@ async function runRequest({ baseUrl, model, repeatCount, runId, kind }) {
             stream: true,
             stream_options: { include_usage: true }
         }),
-        signal: AbortSignal.timeout(600_000)
+        signal: AbortSignal.timeout(requestTimeoutMs)
     });
 
     if (!response.ok) {

@@ -31,6 +31,18 @@ public interface IDataService
 
     Task<IReadOnlyList<ProviderTraceEntry>> ProviderTrace_ReadAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Creates a pending inference log entry.</summary>
+    Task<InferenceLog> InferenceLog_CreateAsync(InferenceLog log, CancellationToken cancellationToken = default);
+
+    /// <summary>Reads the latest persisted inference log entries.</summary>
+    Task<IReadOnlyList<InferenceLog>> InferenceLog_ReadAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Updates a running inference log entry.</summary>
+    Task<InferenceLog> InferenceLog_UpdateAsync(InferenceLog log, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes a completed inference log entry.</summary>
+    Task InferenceLog_DeleteAsync(Guid id, CancellationToken cancellationToken = default);
+
     Task ModelSettings_UpdateAsync(ModelSettings settings, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<Model>> Model_ReadAsync(CancellationToken cancellationToken = default);
@@ -52,6 +64,28 @@ public interface IDataService
     Task ModelConfiguration_DeleteAsync(Guid id, CancellationToken cancellationToken = default);
 
     Task ModelConfiguration_SetDefaultAsync(Guid id, CancellationToken cancellationToken = default);
+
+    /// <summary>Creates a persisted benchmark history entry and publishes it to connected clients.</summary>
+    /// <param name="run">The profile snapshot and request settings for the benchmark series.</param>
+    /// <param name="cancellationToken">A token that cancels creation.</param>
+    /// <returns>The created benchmark run.</returns>
+    Task<BenchmarkRun> BenchmarkRun_CreateAsync(BenchmarkRun run, CancellationToken cancellationToken = default);
+
+    /// <summary>Reads the persisted benchmark history.</summary>
+    /// <param name="cancellationToken">A token that cancels the read.</param>
+    /// <returns>The benchmark history ordered from newest to oldest.</returns>
+    Task<IReadOnlyList<BenchmarkRun>> BenchmarkRun_ReadAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>Appends samples or finalizes a running benchmark history entry.</summary>
+    /// <param name="run">The updated benchmark run.</param>
+    /// <param name="cancellationToken">A token that cancels the update.</param>
+    /// <returns>The persisted benchmark run.</returns>
+    Task<BenchmarkRun> BenchmarkRun_UpdateAsync(BenchmarkRun run, CancellationToken cancellationToken = default);
+
+    /// <summary>Deletes a benchmark history entry and publishes its removal.</summary>
+    /// <param name="id">The benchmark history identifier.</param>
+    /// <param name="cancellationToken">A token that cancels deletion.</param>
+    Task BenchmarkRun_DeleteAsync(Guid id, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<LocalModel>> LocalModel_ReadAsync(CancellationToken cancellationToken = default);
     Task<IReadOnlyList<LocalModel>> LocalModel_UpdateAsync(ModelCompatibilityUpdate update, CancellationToken cancellationToken = default);

@@ -291,6 +291,30 @@ public sealed class OpenVinoBackendTests
     }
 
     [TestMethod]
+    [TestCategory("OpenVINO.Native")]
+    public void CreateChatHistory_WhenStructuredImageContentIsProvided_PreservesImageParts()
+    {
+        OpenVinoRuntime.InitializeRuntime();
+        GenAI.Initialize();
+        using var content = JsonDocument.Parse("[{\"type\":\"text\",\"text\":\"Describe\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AA==\"}}]");
+        var message = new OpenAiChatMessage("user", content.RootElement.Clone());
+
+        using var history = OpenVinoChatSession.CreateChatHistory([message], null, null);
+        using var historyMessages = history.GetMessages();
+        using var document = JsonDocument.Parse(historyMessages.ToJsonString());
+        var parts = document.RootElement[0].GetProperty("content");
+
+        Assert.AreEqual(JsonValueKind.Array, parts.ValueKind);
+        Assert.AreEqual("image_url", parts[1].GetProperty("type").GetString());
+    }
+
+    [TestMethod]
+    public void CreateChatTemplateContext_WhenReasoningEffortIsOmitted_ReturnsNull()
+    {
+        Assert.IsNull(OpenVinoChatSession.CreateChatTemplateContext(null));
+    }
+
+    [TestMethod]
     public void Parse_WhenQwenXmlToolCallIsReturned_ProducesNormalizedToolCall()
     {
         var parsed = OpenVinoToolCallParser.Parse(

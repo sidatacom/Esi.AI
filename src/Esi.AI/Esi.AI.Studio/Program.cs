@@ -33,8 +33,6 @@ catch (AbandonedMutexException)
 {
 }
 
-BackendRuntimePaths.PrepareSyclRuntimeEnvironment(AppContext.BaseDirectory);
-
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
@@ -182,8 +180,13 @@ builder.Services.AddScoped<IModelRuntimeEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IBackendRequirementEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IApplicationSettingsEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<ITrainingRunEvents, ServerModelDownloadEvents>();
+builder.Services.AddScoped<IBenchmarkRunEvents, ServerModelDownloadEvents>();
 builder.Services.AddSingleton<ProviderTraceStore>();
 builder.Services.AddScoped<IProviderTraceEvents, ServerProviderTraceEvents>();
+builder.Services.AddSingleton<IBenchmarkRunPublisher, SignalRBenchmarkRunPublisher>();
+builder.Services.AddSingleton<IInferenceLogPublisher, SignalRInferenceLogPublisher>();
+builder.Services.AddSingleton<InferenceLogService>();
+builder.Services.AddScoped<IInferenceLogEvents, ServerInferenceLogEvents>();
 builder.Services.AddHttpClient("HuggingFace", client =>
 {
     client.BaseAddress = new Uri("https://huggingface.co/");
@@ -215,6 +218,7 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<ApplicationDbContext>();
     db.Database.Migrate();
+    await scope.ServiceProvider.GetRequiredService<InferenceLogService>().InferenceLog_MarkInterruptedAsync();
     await scope.ServiceProvider.GetRequiredService<ApplicationSettingsService>().SeedAsync();
     await scope.ServiceProvider.GetRequiredService<BackendRuntimeCatalogService>().SeedAsync();
 
@@ -269,4 +273,3 @@ applicationLifetime.ApplicationStarted.Register(() =>
 });
 
 app.Run();
-

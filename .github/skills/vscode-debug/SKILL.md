@@ -74,9 +74,13 @@ When adding a launch or lifecycle branch, add a focused unit test for its succes
 
 - Use `debug.add.breakpoint` or `debug.add.logpoint` with an absolute source path and one-based line number. Check adapter binding in the response.
 - Use `debug.list.breakpoints`, `debug.remove.breakpoint`, and `debug.clear.all.breakpoints` to manage breakpoints.
+- After launch, step, pause, or continue, and immediately before browser or terminal work, drain `debug.wait.for.event` without a `type` filter. Process the FIFO events in order and correlate them to the active session ID. Reset the tracked state when the session ID changes; do not let a filtered wait skip a later `continued` event behind an older `paused` event.
+- Treat `type: "paused"` as a stopped session. Inspect `reason`, `exceptionType`, `exceptionMessage`, `fileFullPath`, and `line`. If `reason` is `exception`, inspect the exception and paused frame/stack before deciding whether to continue. If `reason` is `unknown` or exception details are missing, do not assume a normal breakpoint or resume blindly; inspect the VS Code Debug view/Console. If the cause cannot be established, report the state as unresolved and stop before browser/terminal work.
+- A `null` result from `debug.wait.for.event` means only that no event arrived during that wait; it is not proof that the debugger is running. Preserve the last observed state, and report unknown if no state is known for the active session.
+- The `{ continued: true }` response only confirms command acceptance. Consume later unfiltered events for that same session and require a `continued` event before proceeding. If another `paused` event arrives, inspect it first. After a confirmed continuation, check Studio host readiness before browser validation.
 - Inspect only a paused frame. Use `debug.list.variable.names` before requesting specific names with `debug.get.variables.values`.
 - Use `debug.evaluate.expression` for a bounded expression in the paused frame. Do not use it for unrelated side effects.
-- Use `debug.wait.for.event` for paused, continued, or terminated events. Resume a paused server before browser or HTTP validation.
+- Use `debug.wait.for.event` for paused, continued, or terminated events. Do not resume until the pause reason has been classified and any exception has been inspected.
 - Use stepping and pause/continue operations only when the session state permits them.
 
 ## Studio And Browser Validation

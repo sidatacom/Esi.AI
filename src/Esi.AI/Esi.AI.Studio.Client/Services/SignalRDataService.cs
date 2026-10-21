@@ -6,7 +6,7 @@ using System.Runtime.CompilerServices;
 
 namespace Esi.AI.Studio.Client.Services;
 
-public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents, IApplicationSettingsEvents, IProviderTraceEvents, IVulkanLogEvents, ITrainingRunEvents, IAsyncDisposable
+public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents, IApplicationSettingsEvents, IProviderTraceEvents, IInferenceLogEvents, IVulkanLogEvents, ITrainingRunEvents, IBenchmarkRunEvents, IAsyncDisposable
 {
     private readonly HubConnection connection;
     private readonly IClientStateStore stateStore;
@@ -27,6 +27,10 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     public event Func<BackendRuntimeStatus, Task>? BackendRuntime_Delete;
     public event Func<ApplicationSettings, Task>? ApplicationSettings_Update;
     public event Func<ProviderTraceEntry, Task>? ProviderTrace_Create;
+    public event Func<IReadOnlyList<InferenceLog>, Task>? InferenceLog_Read;
+    public event Func<InferenceLog, Task>? InferenceLog_Create;
+    public event Func<InferenceLog, Task>? InferenceLog_Update;
+    public event Func<InferenceLog, Task>? InferenceLog_Delete;
     public event Func<IReadOnlyList<VulkanLogStatus>, Task>? VulkanLog_Read;
     public event Func<VulkanLogStatus, Task>? VulkanLog_Create;
     public event Func<VulkanLogStatus, Task>? VulkanLog_Update;
@@ -35,6 +39,10 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     public event Func<TrainingRunStatus, Task>? TrainingRun_Create;
     public event Func<TrainingRunStatus, Task>? TrainingRun_Update;
     public event Func<TrainingRunStatus, Task>? TrainingRun_Delete;
+    public event Func<IReadOnlyList<BenchmarkRun>, Task>? BenchmarkRun_Read;
+    public event Func<BenchmarkRun, Task>? BenchmarkRun_Create;
+    public event Func<BenchmarkRun, Task>? BenchmarkRun_Update;
+    public event Func<BenchmarkRun, Task>? BenchmarkRun_Delete;
 
     public SignalRDataService(NavigationManager navigationManager, IClientStateStore stateStore)
     {
@@ -129,6 +137,24 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
             if (handler is not null)
                 await handler(status);
         });
+        connection.On<BenchmarkRun>("BenchmarkRun_Create", async run =>
+        {
+            var handler = BenchmarkRun_Create;
+            if (handler is not null)
+                await handler(run);
+        });
+        connection.On<BenchmarkRun>("BenchmarkRun_Update", async run =>
+        {
+            var handler = BenchmarkRun_Update;
+            if (handler is not null)
+                await handler(run);
+        });
+        connection.On<BenchmarkRun>("BenchmarkRun_Delete", async run =>
+        {
+            var handler = BenchmarkRun_Delete;
+            if (handler is not null)
+                await handler(run);
+        });
         connection.On<ModelLoadStatus>("LoadedModel_Read", async status =>
         {
             stateStore.LoadedModel_Read(status);
@@ -211,6 +237,30 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
             if (handler is not null)
                 await handler(entry);
         });
+        connection.On<IReadOnlyList<InferenceLog>>("InferenceLog_Read", async logs =>
+        {
+            var handler = InferenceLog_Read;
+            if (handler is not null)
+                await handler(logs);
+        });
+        connection.On<InferenceLog>("InferenceLog_Create", async log =>
+        {
+            var handler = InferenceLog_Create;
+            if (handler is not null)
+                await handler(log);
+        });
+        connection.On<InferenceLog>("InferenceLog_Update", async log =>
+        {
+            var handler = InferenceLog_Update;
+            if (handler is not null)
+                await handler(log);
+        });
+        connection.On<InferenceLog>("InferenceLog_Delete", async log =>
+        {
+            var handler = InferenceLog_Delete;
+            if (handler is not null)
+                await handler(log);
+        });
     }
 
     public async Task<IReadOnlyList<ModelSettings>> ModelSettings_ReadAsync(CancellationToken cancellationToken = default)
@@ -292,6 +342,30 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         return await connection.InvokeAsync<IReadOnlyList<ProviderTraceEntry>>("ProviderTrace_Read", cancellationToken);
     }
 
+    public async Task<InferenceLog> InferenceLog_CreateAsync(InferenceLog log, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<InferenceLog>("InferenceLog_Create", log, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<InferenceLog>> InferenceLog_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<IReadOnlyList<InferenceLog>>("InferenceLog_Read", cancellationToken);
+    }
+
+    public async Task<InferenceLog> InferenceLog_UpdateAsync(InferenceLog log, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<InferenceLog>("InferenceLog_Update", log, cancellationToken);
+    }
+
+    public async Task InferenceLog_DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("InferenceLog_Delete", id, cancellationToken);
+    }
+
     public async Task<IReadOnlyList<Model>> Model_ReadAsync(CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
@@ -350,6 +424,34 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     {
         await EnsureConnectedAsync(cancellationToken);
         await connection.InvokeAsync("ModelConfiguration_SetDefault", id, cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<BenchmarkRun>> BenchmarkRun_ReadAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        var runs = await connection.InvokeAsync<IReadOnlyList<BenchmarkRun>>("BenchmarkRun_Read", cancellationToken);
+        var handler = BenchmarkRun_Read;
+        if (handler is not null)
+            await handler(runs);
+        return runs;
+    }
+
+    public async Task<BenchmarkRun> BenchmarkRun_CreateAsync(BenchmarkRun run, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<BenchmarkRun>("BenchmarkRun_Create", run, cancellationToken);
+    }
+
+    public async Task<BenchmarkRun> BenchmarkRun_UpdateAsync(BenchmarkRun run, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<BenchmarkRun>("BenchmarkRun_Update", run, cancellationToken);
+    }
+
+    public async Task BenchmarkRun_DeleteAsync(Guid id, CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("BenchmarkRun_Delete", id, cancellationToken);
     }
 
     public async Task<ModelLoadStatus> LoadedModel_ReadAsync(CancellationToken cancellationToken = default)

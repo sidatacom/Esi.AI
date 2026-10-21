@@ -38,6 +38,8 @@ The bridge port is the `Port` value in `PythonInferenceLoadRequest`. It binds
 only to loopback; it does not expose a public HTTP or gRPC address. The
 existing OpenAI-compatible controller and SignalR model-loading path remain
 unchanged.
+Unloading a vLLM XPU model also stops its bridge process after the model has
+been released, freeing the configured port before another vLLM variant starts.
 
 Run the optional integration smoke test with an installed model environment:
 
@@ -55,6 +57,12 @@ the end-to-end test. `VLLM_USE_FLASHINFER_SAMPLER=0` avoids a FlashInfer JIT
 header mismatch while retaining vLLM's native sampler. The environment also
 needs a C/C++ compiler, Ninja, and a CUDA toolkit exposing `nvcc` through
 `CUDA_HOME` when vLLM builds runtime kernels.
+
+The `vllm.cuda12` runtime sets `VLLM_USE_FLASHINFER_SAMPLER=0` for its bridge
+process. The managed CUDA wheels provide runtime libraries, not `nvcc`, and
+vLLM's default FlashInfer sampler otherwise tries to JIT-compile at model
+startup. This selects vLLM's supported native sampler without adding a
+system-wide CUDA toolkit requirement for that sampling path.
 
 The fake gRPC transport tests do not require Python, vLLM, a GPU, or a model.
 

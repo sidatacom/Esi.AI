@@ -66,10 +66,28 @@ public interface ITrainingRunEvents
     event Func<TrainingRunStatus, Task>? TrainingRun_Delete;
 }
 
+/// <summary>Publishes persisted benchmark history collection changes to connected clients.</summary>
+public interface IBenchmarkRunEvents
+{
+    event Func<IReadOnlyList<BenchmarkRun>, Task>? BenchmarkRun_Read;
+    event Func<BenchmarkRun, Task>? BenchmarkRun_Create;
+    event Func<BenchmarkRun, Task>? BenchmarkRun_Update;
+    event Func<BenchmarkRun, Task>? BenchmarkRun_Delete;
+}
+
 /// <summary>Publishes transient provider communication entries to connected clients.</summary>
 public interface IProviderTraceEvents
 {
     event Func<ProviderTraceEntry, Task>? ProviderTrace_Create;
+}
+
+/// <summary>Publishes persisted inference-log collection changes to connected clients.</summary>
+public interface IInferenceLogEvents
+{
+    event Func<IReadOnlyList<InferenceLog>, Task>? InferenceLog_Read;
+    event Func<InferenceLog, Task>? InferenceLog_Create;
+    event Func<InferenceLog, Task>? InferenceLog_Update;
+    event Func<InferenceLog, Task>? InferenceLog_Delete;
 }
 
 /// <summary>Publishes backend runtime installation changes from the server application layer.</summary>

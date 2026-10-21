@@ -286,12 +286,13 @@ public sealed class FlowRoutingServiceTests
                 modelPath,
                 false,
                 1,
-                JsonSerializer.Serialize(new LoadModelRequest(modelPath, "CPU", 0, 4096, new Dictionary<string, float>(), null)),
+                BackendConfigurationJson.Serialize("llama.vulkan",
+                    new LoadModelRequest(modelPath, "Vulkan", 0, 4096, new Dictionary<string, float>(), null)),
                 now,
                 now,
                 ConfigurationBackend.Llama,
                 AutoLaunch: false,
-                BackendVariantId: "llama.cpu"));
+                BackendVariantId: "llama.vulkan"));
             var flow = (await dataService.FlowDefinition_ReadAsync())
                 .Single(definition => definition.Name == "Chat request router");
             var routeJson = JsonSerializer.Serialize(new

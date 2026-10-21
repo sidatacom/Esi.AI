@@ -124,7 +124,11 @@ public sealed class VllmXpuRuntime : IBackendRuntime
             lock (sync)
                 loadLog = preparation.Message;
 
-            var scriptPath = Path.Combine(AppContext.BaseDirectory, "Python", "inference_server.py");
+            var pythonDirectory = Path.Combine(AppContext.BaseDirectory, "Python");
+            var bootstrapScriptPath = Path.Combine(pythonDirectory, "vllm_xpu_bootstrap.py");
+            var scriptPath = Path.Combine(pythonDirectory, "inference_server.py");
+            if (!File.Exists(bootstrapScriptPath))
+                throw new FileNotFoundException("The vLLM XPU Python bootstrap was not deployed.", bootstrapScriptPath);
             if (!File.Exists(scriptPath))
                 throw new FileNotFoundException("The Python gRPC inference bridge was not deployed.", scriptPath);
 
@@ -137,15 +141,8 @@ public sealed class VllmXpuRuntime : IBackendRuntime
                 RedirectStandardError = true,
                 CreateNoWindow = true
             };
-            foreach (var argument in new[]
-            {
-                scriptPath,
-                "--host", "127.0.0.1",
-                "--grpc-port", configuration.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            })
+            foreach (var argument in BuildBootstrapArguments(bootstrapScriptPath, scriptPath, configuration))
                 startInfo.ArgumentList.Add(argument);
-            ApplyDeviceEnvironment(startInfo, configuration.Devices!, configuration.EnableXpuGraph, configuration.EnableBf16MtpDraft);
-            ConfigureXpuCommunicationEnvironment(startInfo, preparation.PythonExecutable);
 
             if (!IsExecutable(preparation.PythonExecutable))
                 throw new InvalidOperationException($"The Python executable '{preparation.PythonExecutable}' was not found or is not executable.");
@@ -183,8 +180,11 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         }
         catch (Exception exception)
         {
+            var failure = ExtractRootCause(exception.Message);
             lock (sync)
-                loadLog = ExtractRootCause(exception.Message);
+                loadLog = string.IsNullOrWhiteSpace(loadLog)
+                    ? failure
+                    : string.Concat(loadLog, Environment.NewLine, failure);
             await StopAsync(CancellationToken.None).ConfigureAwait(false);
             throw;
         }
@@ -213,11 +213,7 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         var response = await call.ResponseAsync.ConfigureAwait(false);
         if (!response.Succeeded)
             throw new InvalidOperationException(response.Error);
-        lock (sync)
-        {
-            this.modelPath = null;
-            modelId = null;
-        }
+        await StopAsync(CancellationToken.None).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -325,29 +321,30 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         };
     }
 
-    internal static void ApplyDeviceEnvironment(
-        ProcessStartInfo startInfo,
-        IReadOnlyList<string> devices,
-        bool enableXpuGraph,
-        bool enableBf16MtpDraft)
-    {
-        ArgumentNullException.ThrowIfNull(startInfo);
-        ValidateXpuDevices(devices);
-        var ordinals = devices.Select(device => int.Parse(device.AsSpan(4))).ToArray();
-        startInfo.Environment["CUDA_VISIBLE_DEVICES"] = string.Empty;
-        startInfo.Environment["ONEAPI_DEVICE_SELECTOR"] = "level_zero:gpu";
-        startInfo.Environment["ZE_FLAT_DEVICE_HIERARCHY"] = "COMPOSITE";
-        startInfo.Environment["ZE_AFFINITY_MASK"] = string.Join(',', ordinals);
-        startInfo.Environment["PYTORCH_ALLOC_CONF"] = "expandable_segments:True";
-        startInfo.Environment["VLLM_XPU_ENABLE_XPU_GRAPH"] = enableXpuGraph ? "1" : "0";
-        startInfo.Environment["B70_MTP_BF16_DRAFT"] = enableBf16MtpDraft ? "1" : "0";
-        startInfo.Environment["VLLM_TARGET_DEVICE"] = "xpu";
-        startInfo.Environment["CCL_ZE_IPC_EXCHANGE"] = "sockets";
-        startInfo.Environment["CCL_ATL_TRANSPORT"] = "ofi";
-        startInfo.Environment["FI_PROVIDER"] = "tcp";
-        startInfo.Environment["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn";
-    }
 
+    internal static IReadOnlyList<string> BuildBootstrapArguments(
+        string bootstrapScriptPath,
+        string serverScriptPath,
+        PythonLoadRequest configuration)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(bootstrapScriptPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(serverScriptPath);
+        ArgumentNullException.ThrowIfNull(configuration);
+        return
+        [
+            bootstrapScriptPath,
+            "--esi-xpu-settings",
+            JsonSerializer.Serialize(configuration.XpuRuntimeSettings ?? new VllmXpuRuntimeSettings(), ConfigurationJsonOptions),
+            "--esi-xpu-graph",
+            configuration.EnableXpuGraph ? "1" : "0",
+            "--esi-xpu-bf16-mtp-draft",
+            configuration.EnableBf16MtpDraft ? "1" : "0",
+            "--",
+            serverScriptPath,
+            "--host", "127.0.0.1",
+            "--grpc-port", configuration.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        ];
+    }
     private async Task WaitUntilReadyAsync(
         Inference.InferenceClient activeClient,
         Process activeProcess,
@@ -410,65 +407,6 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         if (!string.IsNullOrWhiteSpace(args.Data))
             lock (sync)
                 loadLog = string.Concat(loadLog, Environment.NewLine, args.Data);
-    }
-
-    private static void ConfigureXpuCommunicationEnvironment(ProcessStartInfo startInfo, string pythonExecutable)
-    {
-        if (!OperatingSystem.IsLinux())
-            return;
-
-        var pythonDirectory = Path.GetDirectoryName(Path.GetFullPath(pythonExecutable));
-        var environmentRoot = pythonDirectory is null ? null : Directory.GetParent(pythonDirectory)?.FullName;
-        if (string.IsNullOrWhiteSpace(environmentRoot))
-            throw new InvalidOperationException($"Could not determine the Python environment directory for '{pythonExecutable}'.");
-
-        var environmentLibraryDirectory = Path.Combine(environmentRoot, "lib");
-        Directory.CreateDirectory(environmentLibraryDirectory);
-        var loaderPath = FindLevelZeroLoader();
-        if (loaderPath is null)
-            throw new InvalidOperationException("The Intel XPU runtime requires libze_loader.so or libze_loader.so.1 on Linux.");
-        var compatibilityLoaderPath = Path.Combine(environmentLibraryDirectory, "libze_loader.so");
-        if (!File.Exists(compatibilityLoaderPath))
-            File.CreateSymbolicLink(compatibilityLoaderPath, loaderPath);
-
-        startInfo.Environment["CCL_ROOT"] = environmentRoot;
-        startInfo.Environment.Remove("ZE_ENABLE_ALT_DRIVERS");
-        startInfo.Environment.Remove("UR_ADAPTERS_FORCE_LOAD");
-        startInfo.Environment.Remove("ZES_ENABLE_SYSMAN");
-        startInfo.Environment["LD_LIBRARY_PATH"] = environmentLibraryDirectory;
-        ConfigureOclocEnvironment(startInfo);
-    }
-
-    private static void ConfigureOclocEnvironment(ProcessStartInfo startInfo)
-    {
-        var oclocRoot = Environment.GetEnvironmentVariable("ESI_OCLOC_ROOT");
-        if (string.IsNullOrWhiteSpace(oclocRoot))
-            oclocRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "opt", "intel-ocloc");
-        var binDirectory = Path.Combine(oclocRoot, "usr", "bin");
-        var libraryDirectory = Path.Combine(oclocRoot, "usr", "lib", "x86_64-linux-gnu");
-        if (!File.Exists(Path.Combine(libraryDirectory, "libocloc.so")) || !Directory.Exists(binDirectory))
-            return;
-
-        var currentPath = startInfo.Environment["PATH"] ?? Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, binDirectory, currentPath);
-        var currentLibraryPath = startInfo.Environment["LD_LIBRARY_PATH"] ?? Environment.GetEnvironmentVariable("LD_LIBRARY_PATH") ?? string.Empty;
-        startInfo.Environment["LD_LIBRARY_PATH"] = string.Join(Path.PathSeparator, libraryDirectory, currentLibraryPath);
-    }
-
-    private static string? FindLevelZeroLoader()
-    {
-        foreach (var candidate in new[]
-        {
-            "/usr/lib/x86_64-linux-gnu/libze_loader.so",
-            "/usr/lib/x86_64-linux-gnu/libze_loader.so.1",
-            "/usr/lib64/libze_loader.so",
-            "/usr/lib64/libze_loader.so.1"
-        })
-        {
-            if (File.Exists(candidate))
-                return candidate;
-        }
-        return null;
     }
 
     private static void ValidateXpuDevices(IReadOnlyList<string> devices)

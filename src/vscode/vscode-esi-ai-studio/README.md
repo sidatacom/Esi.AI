@@ -12,7 +12,7 @@ The default API URL is `http://127.0.0.1:7010/v1`. Change `esiAiStudio.baseUrl` 
 
 The provider uses the OpenAI-compatible endpoints `GET /models` and `POST /chat/completions` with streaming enabled.
 
-The extension adds an **Esi.AI Studio** icon to the VS Code activity bar. Its **Provider** view lets you configure the base URL, request timeout, request logging, and log path, test the connection, refresh models, and open the secure API-key dialog. Request traces are JSONL and include a copyable curl replay command; Authorization values are never logged. The provider is also listed in VS Code as **Esi.AI Studio**. If the icon does not appear after installation, run **Developer: Reload Window**.
+The extension adds an **Esi.AI Studio** icon to the VS Code activity bar. Its **Provider** view lets you configure the base URL, request timeout, request logging, and log path, test the connection, refresh models, and open the secure API-key dialog. Request traces are JSONL and correlate the provider's local `requestId` with the server's `inferenceId` response header. They record model and request counts, status, usage, and bounded SSE chunk metadata; message text, image data, tool descriptions/arguments, response text, credentials, and replayable request bodies are not recorded. Studio's structured inference logs use the same `InferenceId` and include the inference route, backend/model, counts, elapsed time, and outcome. The provider is also listed in VS Code as **Esi.AI Studio**. If the icon does not appear after installation, run **Developer: Reload Window**.
 
 ## Local installation
 
@@ -30,7 +30,7 @@ After installation, reload VS Code, start Esi.AI Studio on port `7010`, and load
 
 For an authenticated deployment, run **Esi AI Studio: Configure API Key** from the Command Palette. The key is stored in VS Code SecretStorage. The `ESI_AI_STUDIO_API_KEY` environment variable is used as a fallback.
 
-Request logging is enabled by default for compatibility with earlier diagnostic builds. Disable it with `esiAiStudio.loggingEnabled` or the **Provider** view. Configure `esiAiStudio.loggingPath` with an absolute path; an empty value uses `os.tmpdir()/esi-ai-studio-provider.jsonl`.
+Request logging is enabled by default for compatibility with earlier diagnostic builds. Disable it with `esiAiStudio.loggingEnabled` or the **Provider** view. Configure `esiAiStudio.loggingPath` with an absolute path; an empty value uses `os.tmpdir()/esi-ai-studio-provider.jsonl`. To correlate a provider JSONL entry with Studio logs, match its `inferenceId` with the `InferenceId` structured logging property; `requestId` remains local to the provider.
 
 Configure `esiAiStudio.reasoningEffort` with `none`, `low`, `medium`, `high`, `xhigh`, or `max`. A reasoning option supplied by VS Code for an individual request takes precedence over this setting.
 

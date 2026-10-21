@@ -26,7 +26,9 @@ builder.Services.AddScoped<IBackendRequirementEvents>(services => services.GetRe
 builder.Services.AddScoped<IBackendRuntimeEvents>(services => services.GetRequiredService<SignalRDataService>());
 builder.Services.AddScoped<IApplicationSettingsEvents>(services => services.GetRequiredService<SignalRDataService>());
 builder.Services.AddScoped<IProviderTraceEvents>(services => services.GetRequiredService<SignalRDataService>());
+builder.Services.AddScoped<IInferenceLogEvents>(services => services.GetRequiredService<SignalRDataService>());
 builder.Services.AddScoped<IVulkanLogEvents>(services => services.GetRequiredService<SignalRDataService>());
 builder.Services.AddScoped<ITrainingRunEvents>(services => services.GetRequiredService<SignalRDataService>());
+builder.Services.AddScoped<IBenchmarkRunEvents>(services => services.GetRequiredService<SignalRDataService>());
 
 await builder.Build().RunAsync();

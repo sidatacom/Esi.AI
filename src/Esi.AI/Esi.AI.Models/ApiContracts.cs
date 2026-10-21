@@ -8,7 +8,9 @@ public enum ConfigurationBackend
     Llama = 0,
     OpenVino = 1,
     Vllm = 2,
+    /// <summary>Legacy persisted backend value; Studio no longer provides a runtime for it.</summary>
     Sglang = 3,
+    /// <summary>Legacy persisted backend value; Studio no longer provides a runtime for it.</summary>
     DotLlm = 4
 }
 
@@ -612,7 +614,18 @@ public sealed record OpenVinoLoadRequest(
     bool DoSample = true,
     OpenVinoNpuSettings? Npu = null,
     int TopK = 50,
-    float RepetitionPenalty = 1.2f);
+    float RepetitionPenalty = 1.2f,
+    IReadOnlyDictionary<string, OpenVinoDeviceSetting>? Devices = null);
+
+/// <summary>Stores typed process options for the vLLM Intel XPU runtime.</summary>
+public sealed record VllmXpuRuntimeSettings(
+    string OneApiDeviceSelector = "level_zero:gpu",
+    string ZeFlatDeviceHierarchy = "COMPOSITE",
+    string PyTorchAllocatorConfig = "expandable_segments:True",
+    string CclZeIpcExchange = "sockets",
+    string CclAtlTransport = "ofi",
+    string FiProvider = "tcp",
+    string WorkerMultiprocessMethod = "spawn");
 
 public sealed record PythonInferenceLoadRequest(
     string ModelPath,
@@ -639,7 +652,8 @@ public sealed record PythonInferenceLoadRequest(
     uint MaxNumBatchedTokens = 0,
     bool EnablePrefixCaching = false,
     bool EnableXpuGraph = false,
-    bool EnableBf16MtpDraft = false);
+    bool EnableBf16MtpDraft = false,
+    VllmXpuRuntimeSettings? XpuRuntimeSettings = null);
 
 /// <summary>Identifies one loaded model and its backend for an application API unload operation.</summary>
 public sealed record ApplicationModelUnloadRequest(

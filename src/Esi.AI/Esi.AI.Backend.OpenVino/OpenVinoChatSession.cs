@@ -33,10 +33,12 @@ internal sealed class OpenVinoChatSession
         cancellationToken.ThrowIfCancellationRequested();
         if (messages.Count == 0)
             throw new ArgumentException("At least one chat message is required.", nameof(messages));
+        if (llmPipeline is not null && images.Length > 0)
+            throw new NotSupportedException("Image input requires an OpenVINO vision-language model.");
 
         var streamingCallback = CreateStreamingCallback(streamer, cancellationToken);
         using var generationConfig = GetGenerationConfig(options);
-        using var history = CreateChatHistory(messages, tools, options.ReasoningEffort, images.Length > 0);
+        using var history = CreateChatHistory(messages, tools, options.ReasoningEffort);
         if (llmPipeline is not null)
         {
             using var results = streamingCallback is null
@@ -104,22 +106,16 @@ internal sealed class OpenVinoChatSession
         return json.ToJsonString(ChatJsonOptions);
     }
 
-    private static ChatHistory CreateChatHistory(
+    internal static ChatHistory CreateChatHistory(
         IReadOnlyList<OpenAiChatMessage> messages,
         IReadOnlyList<OpenAiToolDefinition>? tools,
-        string? reasoningEffort,
-        bool hasImages)
+        string? reasoningEffort)
     {
         var history = new ChatHistory();
         foreach (var message in messages)
-        {
-            if (hasImages)
-                history.AddMessage(message.Role, GetPlainHistoryContent(message.Content));
-            else
-                history.PushBackJson(SerializeChatMessageForHistory(message));
-        }
+            history.PushBackJson(SerializeChatMessageForHistory(message));
 
-        var templateContext = CreateChatTemplateContext(reasoningEffort ?? "high");
+        var templateContext = CreateChatTemplateContext(reasoningEffort);
         if (templateContext is not null)
         {
             using var context = JsonContainer.FromJsonString(templateContext);
@@ -135,20 +131,7 @@ internal sealed class OpenVinoChatSession
         return history;
     }
 
-    private static string GetPlainHistoryContent(object? content)
-    {
-        if (content is JsonElement element && element.ValueKind == JsonValueKind.Array)
-        {
-            return string.Concat(element.EnumerateArray()
-                .Where(part => part.TryGetProperty("type", out var type) && type.GetString() == "text")
-                .Select(part => part.TryGetProperty("text", out var text) ? text.GetString() : null)
-                .Where(text => text is not null));
-        }
-
-        return content?.ToString() ?? string.Empty;
-    }
-
-    private static string? CreateChatTemplateContext(string? reasoningEffort)
+    internal static string? CreateChatTemplateContext(string? reasoningEffort)
     {
         if (string.IsNullOrWhiteSpace(reasoningEffort))
             return null;

@@ -8,7 +8,7 @@ namespace Esi.AI.Studio.Services;
 public interface IInferenceFailureCoordinator
 {
     /// <summary>Stops every model runtime and requests host shutdown once.</summary>
-    Task FailAsync(Exception exception);
+    Task FailAsync(Exception exception, string? inferenceId = null);
 }
 
 /// <summary>Unloads all backends before terminating the host after a backend inference failure.</summary>
@@ -21,22 +21,16 @@ public sealed class InferenceFailureCoordinator(
     private int shutdownStarted;
 
     /// <inheritdoc />
-    public async Task FailAsync(Exception exception)
+    public async Task FailAsync(Exception exception, string? inferenceId = null)
     {
         ArgumentNullException.ThrowIfNull(exception);
         if (Interlocked.Exchange(ref shutdownStarted, 1) != 0)
             return;
 
-        logger.LogCritical(exception, "Fatal inference failure; shutting down Studio and stopping model runtimes.");
-        try
-        {
-            applicationLifetime.StopApplication();
-        }
-        catch (Exception shutdownException)
-        {
-            logger.LogCritical(shutdownException, "Host shutdown could not be requested after a fatal inference error.");
-        }
-
+        logger.LogCritical(
+            exception,
+            "Fatal inference failure for {InferenceId}; stopping model runtimes before shutting down Studio.",
+            inferenceId ?? "unknown");
         try
         {
             using var cleanupCancellation = new CancellationTokenSource(RuntimeCleanupTimeout);
@@ -44,15 +38,27 @@ public sealed class InferenceFailureCoordinator(
         }
         catch (TimeoutException)
         {
-            logger.LogCritical("Model runtime cleanup exceeded {TimeoutSeconds} seconds after a fatal inference error.", RuntimeCleanupTimeout.TotalSeconds);
+            logger.LogCritical(
+                "Model runtime cleanup for inference {InferenceId} exceeded {TimeoutSeconds} seconds.",
+                inferenceId ?? "unknown",
+                RuntimeCleanupTimeout.TotalSeconds);
         }
         catch (OperationCanceledException) when (RuntimeCleanupTimeout > TimeSpan.Zero)
         {
-            logger.LogCritical("Model runtime cleanup was cancelled after a fatal inference error.");
+            logger.LogCritical("Model runtime cleanup was cancelled after inference {InferenceId} failed.", inferenceId ?? "unknown");
         }
         catch (Exception cleanupException)
         {
-            logger.LogCritical(cleanupException, "Model runtime cleanup failed after a fatal inference error.");
+            logger.LogCritical(cleanupException, "Model runtime cleanup failed after inference {InferenceId} failed.", inferenceId ?? "unknown");
+        }
+
+        try
+        {
+            applicationLifetime.StopApplication();
+        }
+        catch (Exception shutdownException)
+        {
+            logger.LogCritical(shutdownException, "Host shutdown could not be requested after inference {InferenceId} failed.", inferenceId ?? "unknown");
         }
     }
 }
@@ -61,7 +67,7 @@ internal sealed class NoOpInferenceFailureCoordinator : IInferenceFailureCoordin
 {
     public static NoOpInferenceFailureCoordinator Instance { get; } = new();
 
-    public Task FailAsync(Exception exception)
+    public Task FailAsync(Exception exception, string? inferenceId = null)
     {
         ArgumentNullException.ThrowIfNull(exception);
         return Task.CompletedTask;

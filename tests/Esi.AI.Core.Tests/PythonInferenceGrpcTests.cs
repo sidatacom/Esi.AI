@@ -13,11 +13,33 @@ namespace Esi.AI.Core.Tests;
 public sealed class PythonInferenceGrpcTests
 {
     [TestMethod]
-    public void GetXpuAffinityMask_SelectedRoutes_UsesTheirOrdinalsInPriorityOrder()
+    public void BuildXpuBootstrapArguments_LoadSettings_PassesTypedOptionsAndBridgeArguments()
     {
-        var affinityMask = PythonInferenceServer.GetXpuAffinityMask(["xpu:3", "xpu:1"]);
+        var request = new PythonInferenceLoadRequest(
+            "Qwen/test",
+            ConfigurationBackend.Vllm,
+            Port: 8123,
+            Devices: ["xpu:3", "xpu:1"],
+            EnableXpuGraph: true,
+            EnableBf16MtpDraft: true,
+            XpuRuntimeSettings: new VllmXpuRuntimeSettings(CclAtlTransport: "custom"));
+        var arguments = PythonInferenceServer.BuildXpuBootstrapArguments(
+            "/app/Python/vllm_xpu_bootstrap.py",
+            "/app/Python/inference_server.py",
+            request);
 
-        Assert.AreEqual("3,1", affinityMask);
+        Assert.AreEqual("/app/Python/vllm_xpu_bootstrap.py", arguments[0]);
+        Assert.AreEqual("--esi-xpu-settings", arguments[1]);
+        using var settings = JsonDocument.Parse(arguments[2]);
+        Assert.AreEqual("custom", settings.RootElement.GetProperty("cclAtlTransport").GetString());
+        CollectionAssert.AreEqual(new[]
+        {
+            "--esi-xpu-graph", "1",
+            "--esi-xpu-bf16-mtp-draft", "1",
+            "--", "/app/Python/inference_server.py",
+            "--host", "127.0.0.1",
+            "--grpc-port", "8123"
+        }, arguments.Skip(3).ToArray());
     }
 
     [TestMethod]

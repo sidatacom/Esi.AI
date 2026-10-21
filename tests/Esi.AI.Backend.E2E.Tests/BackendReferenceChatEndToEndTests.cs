@@ -2,7 +2,6 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Esi.AI.Models;
-using Microsoft.AspNetCore.SignalR.Client;
 using Microsoft.Playwright;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -58,13 +57,18 @@ public sealed class BackendReferenceChatEndToEndTests
             EnableXpuGraph: true,
             EnableBf16MtpDraft: true);
         Assert.AreEqual("xpu:0", loadRequest.Device);
-        template = template with { ConfigurationJson = JsonSerializer.Serialize(loadRequest, JsonOptions) };
-        var serializedRequest = JsonSerializer.Deserialize<PythonInferenceLoadRequest>(template.ConfigurationJson, JsonOptions);
+        template = template with
+        {
+            ConfigurationJson = BackendConfigurationJson.Serialize("vllm.xpu", loadRequest, JsonOptions)
+        };
+        var serializedRequest = BackendConfigurationJson.Deserialize<PythonInferenceLoadRequest>(
+            template.ConfigurationJson, template.BackendVariantId, JsonOptions);
         Assert.IsNotNull(serializedRequest);
         Assert.AreEqual("xpu:0", serializedRequest.Device);
 
         var prepared = PrepareConfigurationTemplateForReferenceModel(template, modelPath);
-        var preparedRequest = JsonSerializer.Deserialize<PythonInferenceLoadRequest>(prepared.ConfigurationJson, JsonOptions);
+        var preparedRequest = BackendConfigurationJson.Deserialize<PythonInferenceLoadRequest>(
+            prepared.ConfigurationJson, prepared.BackendVariantId, JsonOptions);
 
         Assert.IsNotNull(preparedRequest);
         Assert.AreEqual(modelPath, preparedRequest.ModelPath);
@@ -113,28 +117,7 @@ public sealed class BackendReferenceChatEndToEndTests
         var model = ResolveReferenceModel(catalog, referenceModel);
         var modelPath = model.Path;
 
-        await using var hubConnection = new HubConnectionBuilder()
-            .WithUrl(new Uri(baseAddress, "/hubs/data"))
-            .Build();
-        await hubConnection.StartAsync();
-
-        var configurationTemplate = PrepareConfigurationTemplateForReferenceModel(
-            ResolveConfigurationTemplate(catalog, backend, backendVariantId, modelPath),
-            modelPath);
-        var now = DateTime.UtcNow;
-        var configuration = await hubConnection.InvokeAsync<ModelConfiguration>(
-            "ModelConfiguration_Create",
-            configurationTemplate with
-            {
-                Id = Guid.Empty,
-                Name = $"E2E {backendVariantId} {Guid.NewGuid():N}",
-                Description = $"Temporary reference-model chat test for {backendVariantId}.",
-                ModelPath = modelPath,
-                IsDefault = false,
-                CreatedAtUtc = now,
-                UpdatedAtUtc = now,
-                AutoLaunch = false
-            });
+        var configuration = ResolveSavedReferenceConfiguration(catalog, backend, backendVariantId, modelPath);
 
         var loadAttempted = false;
         try
@@ -167,16 +150,24 @@ public sealed class BackendReferenceChatEndToEndTests
         {
             if (loadAttempted)
                 await TryUnloadModelAsync(httpClient, backend, backendVariantId, modelPath);
-
-            try
-            {
-                await hubConnection.InvokeAsync("ModelConfiguration_Delete", configuration.Id);
-            }
-            catch (Exception exception)
-            {
-                TestContext.WriteLine($"Could not delete temporary {backendVariantId} configuration: {exception.Message}");
-            }
         }
+    }
+
+    private static ModelConfiguration ResolveSavedReferenceConfiguration(
+        ApplicationModelCatalog catalog,
+        ConfigurationBackend backend,
+        string backendVariantId,
+        string modelPath)
+    {
+        var candidates = catalog.Configurations
+            .Where(configuration => configuration.Backend == backend &&
+                string.Equals(configuration.BackendVariantId, backendVariantId, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(configuration.Name, "Reference", StringComparison.OrdinalIgnoreCase) &&
+                PathsMatch(configuration.ModelPath, modelPath))
+            .ToArray();
+        Assert.AreEqual(1, candidates.Length,
+            $"Expected exactly one saved Reference configuration for {backendVariantId} and '{modelPath}', found {candidates.Length}.");
+        return candidates.Single();
     }
 
     private static Model ResolveReferenceModel(ApplicationModelCatalog catalog, BackendReferenceModel referenceModel)
@@ -250,7 +241,7 @@ public sealed class BackendReferenceChatEndToEndTests
         return template with
         {
             ModelPath = modelPath,
-            ConfigurationJson = JsonSerializer.Serialize(loadRequest with
+            ConfigurationJson = BackendConfigurationJson.Serialize(template.BackendVariantId, loadRequest with
             {
                 ModelPath = modelPath,
                 Backend = ConfigurationBackend.Vllm,
@@ -282,7 +273,8 @@ public sealed class BackendReferenceChatEndToEndTests
         IReadOnlyList<string> devices,
         DateTime timestamp)
     {
-        var configurationJson = JsonSerializer.Serialize(
+        var configurationJson = BackendConfigurationJson.Serialize(
+            "vllm.xpu",
             new PythonInferenceLoadRequest(modelPath, ConfigurationBackend.Vllm, Device: device, Devices: devices),
             JsonOptions);
         return new ModelConfiguration(
@@ -307,9 +299,8 @@ public sealed class BackendReferenceChatEndToEndTests
 
         try
         {
-            var loadRequest = JsonSerializer.Deserialize<PythonInferenceLoadRequest>(configuration.ConfigurationJson, JsonOptions);
-            if (loadRequest is null)
-                return false;
+            var loadRequest = BackendConfigurationJson.Deserialize<PythonInferenceLoadRequest>(
+                configuration.ConfigurationJson, backendVariantId, JsonOptions);
 
             var configuredDevices = loadRequest.Devices?.Where(device => !string.IsNullOrWhiteSpace(device)).ToArray() ?? [];
             var devices = configuredDevices.Length > 0 ? configuredDevices : [loadRequest.Device];

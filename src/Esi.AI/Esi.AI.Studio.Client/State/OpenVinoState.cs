@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Esi.AI.Models;
 
 namespace Esi.AI.Studio.Client.State;
@@ -20,11 +19,27 @@ public sealed class OpenVinoState : IBackendTabConfigurationData
     public string PrefillHint { get; set; } = "DYNAMIC";
     public string GenerateHint { get; set; } = "FAST_COMPILE";
 
-    public ModelSettings ToSettings(Guid? configurationId = null) => new(ModelPath, ConfigurationBackend.OpenVino, JsonSerializer.Serialize(new OpenVinoAdvancedState(Device, Devices, CacheDirectory, MaxNewTokens, Temperature, TopP, DoSample, TopK, RepetitionPenalty, new OpenVinoNpuSettings(MaxPromptLength, MinResponseLength, PrefillHint, GenerateHint))), configurationId);
+    public ModelSettings ToSettings(Guid? configurationId = null) => new(
+        ModelPath,
+        ConfigurationBackend.OpenVino,
+        BackendConfigurationJson.Serialize("openvino", new OpenVinoLoadRequest(
+            ModelPath,
+            Device,
+            CacheDirectory,
+            MaxNewTokens,
+            Temperature,
+            TopP,
+            DoSample,
+            new OpenVinoNpuSettings(MaxPromptLength, MinResponseLength, PrefillHint, GenerateHint),
+            TopK,
+            RepetitionPenalty,
+            Devices.ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.OrdinalIgnoreCase))),
+        configurationId,
+        "openvino");
 
     public void Load(ModelSettings settings)
     {
-        var data = JsonSerializer.Deserialize<OpenVinoAdvancedState>(settings.ConfigurationJson) ?? throw new JsonException();
+        var data = BackendConfigurationJson.Deserialize<OpenVinoLoadRequest>(settings.ConfigurationJson, "openvino");
         ModelPath = settings.ModelPath; Device = data.Device; CacheDirectory = data.CacheDirectory; MaxNewTokens = data.MaxNewTokens;
         Temperature = data.Temperature; TopP = data.TopP; DoSample = data.DoSample; TopK = data.TopK; RepetitionPenalty = data.RepetitionPenalty;
         MaxPromptLength = data.Npu?.MaxPromptLength ?? 1024; MinResponseLength = data.Npu?.MinResponseLength ?? 128;

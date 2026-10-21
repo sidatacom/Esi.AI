@@ -33,14 +33,35 @@
     {
         @foreach (var model in DisplayedLoadedModels)
         {
-            <article class="loaded-model @(model.IsLoading ? "loaded-model-loading" : "")">
+            var configurationId = GetLoadedModelConfigurationId(model);
+            var configurationName = configurationId is Guid profileId
+                ? profiles.FirstOrDefault(profile => profile.Id == profileId)?.Name
+                : null;
+            <article class="loaded-model @(model.IsLoading ? "loaded-model-loading" : IsFailedModelLoad(model) ? "loaded-model-failed" : "")">
                 <div class="loaded-model-topline">
-                    <div class="loaded-model-state @(model.IsLoading ? "loaded-model-state-loading" : "loaded-model-state-ready")" role="status" aria-label="@(model.IsLoading ? "Loading model" : "Model loaded")">
+                    <div class="loaded-model-state @(model.IsLoading ? "loaded-model-state-loading" : IsFailedModelLoad(model) ? "loaded-model-state-failed" : "loaded-model-state-ready")" role="status" aria-label="@(model.IsLoading ? "Loading model" : IsFailedModelLoad(model) ? "Model load failed" : "Model loaded")">
                         <span class="loaded-model-state-dot"></span>
                     </div>
                     <div class="loaded-model-copy">
                         <strong>@Path.GetFileName(model.ModelPath)</strong>
-                        <span>@(model.IsLoading ? $"Loading on {model.Runtime}..." : FormatLoadedModelSummary(model))</span>
+                        <span>@(model.IsLoading ? $"Loading on {model.Runtime}..." : IsFailedModelLoad(model) ? "Model load failed." : FormatLoadedModelSummary(model))</span>
+                        @if (configurationId is Guid savedConfigurationId)
+                        {
+                            <div class="loaded-model-configuration">
+                                <span>Configuration: @(string.IsNullOrWhiteSpace(configurationName) ? "Name unavailable" : configurationName)</span>
+                                <span>Configuration ID: @savedConfigurationId.ToString("D")</span>
+                                <button class="copy-configuration-button" type="button"
+                                        aria-label="Copy configuration ID"
+                                        title="Copy configuration ID"
+                                        @onclick="() => CopyConfigurationIdAsync(savedConfigurationId)">
+                                    @(copiedConfigurationId == savedConfigurationId ? "Copied" : "Copy")
+                                </button>
+                            </div>
+                        }
+                        else
+                        {
+                            <span>Configuration ID: Not assigned</span>
+                        }
                     </div>
                     @if (model.IsLoading)
                     {
@@ -728,8 +749,22 @@
                 <div class="field-group"><label class="form-label" for="python-batched-tokens">Maximum batched tokens</label><InputNumber id="python-batched-tokens" class="form-control" @bind-Value="pythonForm.MaxNumBatchedTokens" @bind-Value:after="SaveSettingsAsync" /></div>
             </div>
             <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.EnablePrefixCaching" @bind-Value:after="SaveSettingsAsync" /> Enable prefix caching</label>
-            <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.EnableXpuGraph" @bind-Value:after="SaveSettingsAsync" /> Enable XPU graph mode</label>
-            <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.EnableBf16MtpDraft" @bind-Value:after="SaveSettingsAsync" /> Keep MTP draft layers in BF16</label>
+            @if (activeBackend == BackendTab.VllmXpu)
+            {
+                <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.EnableXpuGraph" @bind-Value:after="SaveSettingsAsync" /> Enable XPU graph mode</label>
+                <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.EnableBf16MtpDraft" @bind-Value:after="SaveSettingsAsync" /> Keep MTP draft layers in BF16</label>
+                <div class="field-row">
+                    <div class="field-group"><label class="form-label" for="xpu-device-selector">ONEAPI device selector</label><InputText id="xpu-device-selector" class="form-control" @bind-Value="pythonForm.OneApiDeviceSelector" @bind-Value:after="SaveSettingsAsync" /></div>
+                    <div class="field-group"><label class="form-label" for="xpu-flat-hierarchy">ZE flat device hierarchy</label><InputText id="xpu-flat-hierarchy" class="form-control" @bind-Value="pythonForm.ZeFlatDeviceHierarchy" @bind-Value:after="SaveSettingsAsync" /></div>
+                    <div class="field-group"><label class="form-label" for="xpu-allocator-config">PyTorch allocator</label><InputText id="xpu-allocator-config" class="form-control" @bind-Value="pythonForm.PyTorchAllocatorConfig" @bind-Value:after="SaveSettingsAsync" /></div>
+                </div>
+                <div class="field-row">
+                    <div class="field-group"><label class="form-label" for="xpu-ccl-ipc">CCL ZE IPC exchange</label><InputText id="xpu-ccl-ipc" class="form-control" @bind-Value="pythonForm.CclZeIpcExchange" @bind-Value:after="SaveSettingsAsync" /></div>
+                    <div class="field-group"><label class="form-label" for="xpu-ccl-transport">CCL ATL transport</label><InputText id="xpu-ccl-transport" class="form-control" @bind-Value="pythonForm.CclAtlTransport" @bind-Value:after="SaveSettingsAsync" /></div>
+                    <div class="field-group"><label class="form-label" for="xpu-fi-provider">Fabric provider</label><InputText id="xpu-fi-provider" class="form-control" @bind-Value="pythonForm.FiProvider" @bind-Value:after="SaveSettingsAsync" /></div>
+                    <div class="field-group"><label class="form-label" for="xpu-worker-method">Worker process method</label><InputText id="xpu-worker-method" class="form-control" @bind-Value="pythonForm.WorkerMultiprocessMethod" @bind-Value:after="SaveSettingsAsync" /></div>
+                </div>
+            }
         }
         @if (!string.IsNullOrWhiteSpace(pythonStatus)) { <p class="mt-3" role="status">@pythonStatus</p> }
     </section>
@@ -889,7 +924,7 @@ else if (activeBackend == BackendTab.OpenVino)
                     <summary>Model loading</summary>
                     <div class="field-group">
                             <label class="form-label" for="openvino-model-path">Custom GGUF file or IR directory</label>
-                        <InputText id="openvino-model-path" class="form-control" @bind-Value="openVinoState.ModelPath" @bind-Value:after="SelectOpenVinoModelAsync" />
+                        <InputText id="openvino-model-path" class="form-control" @bind-Value="openVinoState.ModelPath" @bind-Value:after="HandleOpenVinoModelPathChangedAsync" />
                             <span class="picker-note">Use a supported .gguf file directly, or an OpenVINO IR/GenAI model directory.</span>
                     </div>
                     <div class="field-row">
@@ -954,6 +989,12 @@ else if (activeBackend == BackendTab.OpenVino)
     <RuntimeTelemetry>
 @if (IsPythonBackendTab(activeBackend))
 {
+    var isActivePythonRuntimeLoaded = DisplayedLoadedModels.Any(model =>
+        model.Backend == ConfigurationBackend.Vllm &&
+        model.IsModelLoaded &&
+        !model.IsLoading &&
+        (string.IsNullOrWhiteSpace(model.BackendVariantId) ||
+         string.Equals(model.BackendVariantId, CurrentBackendVariantId, StringComparison.OrdinalIgnoreCase)));
     @if (GetBackendLoadLog() is { } backendLoadLog)
     {
         <section class="telemetry-panel backend-load-log-panel" aria-labelledby="backend-load-log-heading">
@@ -968,7 +1009,7 @@ else if (activeBackend == BackendTab.OpenVino)
             <dt>Python executable</dt><dd>@pythonForm.PythonExecutable</dd>
             <dt>Model</dt><dd>@(string.IsNullOrWhiteSpace(pythonForm.ModelPath) ? "Not selected" : pythonForm.ModelPath)</dd>
             <dt>Transport</dt><dd>Local gRPC bridge</dd>
-            <dt>Runtime</dt><dd class="diagnostic-@(loadStatus?.Backend == "vLLM" ? "ok" : "error")">@(isPythonLoading ? "Starting" : loadStatus?.Backend == "vLLM" ? "Ready" : "Not running")</dd>
+            <dt>Runtime</dt><dd class="diagnostic-@(isPythonLoading || isActivePythonRuntimeLoaded ? "ok" : "error")">@(isPythonLoading ? "Starting" : isActivePythonRuntimeLoaded ? "Ready" : "Not running")</dd>
         </dl>
     </section>
 }
@@ -1040,6 +1081,7 @@ else if (activeBackend == BackendTab.OpenVino)
     private readonly Dictionary<ConfigurationBackend, string> backendLoadLogs = [];
     private bool isOpenVinoLoading;
     private bool isOpenVinoModelLoaded;
+    private bool isOpenVinoProfilePathDirty;
     private bool isCheckingOpenVino;
     private bool isCheckingBackendRequirements;
     private bool isCheckingPrerequisites;
@@ -1172,6 +1214,25 @@ else if (activeBackend == BackendTab.OpenVino)
         }
     }
 
+    private Guid? GetLoadedModelConfigurationId(LoadedModelStatus model) =>
+        databaseModels.FirstOrDefault(item =>
+            string.Equals(item.Path.Trim(), model.ModelPath.Trim(), StringComparison.OrdinalIgnoreCase))?.ConfigurationId;
+
+    private async Task CopyConfigurationIdAsync(Guid configurationId)
+    {
+        try
+        {
+            await JsRuntime.InvokeVoidAsync("navigator.clipboard.writeText", configurationId.ToString("D"));
+            copiedConfigurationId = configurationId;
+            statusMessage = "Configuration ID copied to clipboard.";
+        }
+        catch (Microsoft.JSInterop.JSException exception)
+        {
+            copiedConfigurationId = null;
+            statusMessage = $"Could not copy configuration ID: {exception.Message}";
+        }
+    }
+
     private IReadOnlyList<Model> Models => databaseModels
         .Where(model => string.Equals(Path.GetExtension(model.Path), ".gguf", StringComparison.OrdinalIgnoreCase))
         .ToArray();
@@ -1186,7 +1247,7 @@ else if (activeBackend == BackendTab.OpenVino)
     private bool IsCurrentModelLoadDisabled => optimisticLoadingModel is not null || string.IsNullOrWhiteSpace(CurrentModelPath) || activeBackend switch
     {
         BackendTab.LlamaVulkan or BackendTab.LlamaCuda12 or BackendTab.LlamaSycl => isLoading || !IsBackendPrerequisitesReady || !string.Equals(Path.GetExtension(CurrentModelPath), ".gguf", StringComparison.OrdinalIgnoreCase),
-        BackendTab.OpenVino => isOpenVinoLoading || !IsOpenVinoValidationReady || string.IsNullOrWhiteSpace(openVinoState.Device),
+        BackendTab.OpenVino => isOpenVinoLoading || isOpenVinoProfilePathDirty || !IsOpenVinoValidationReady || string.IsNullOrWhiteSpace(openVinoState.Device),
         BackendTab.VllmCuda12 or BackendTab.VllmXpu => isPythonLoading || !IsBackendPrerequisitesReady,
         _ => true
     };
@@ -1201,6 +1262,10 @@ else if (activeBackend == BackendTab.OpenVino)
 
     private static string GetBackendLabel(BackendTab backend) =>
         BackendTabOptions.First(option => option.Backend == backend).Label;
+
+    private static bool IsVllmBackendStatus(ModelLoadStatus status) =>
+        string.Equals(status.Backend, "vLLM", StringComparison.OrdinalIgnoreCase) ||
+        status.BackendVariantId.StartsWith("vllm.", StringComparison.OrdinalIgnoreCase);
 
     private async Task OpenMatrixRequirementsDialogAsync(string backend, string vendor)
     {
@@ -1337,7 +1402,7 @@ else if (activeBackend == BackendTab.OpenVino)
             {
                 optimisticLoadingModel = null;
             }
-            if (status.Backend == "vLLM" && !string.IsNullOrWhiteSpace(status.LoadLog))
+            if (IsVllmBackendStatus(status) && !string.IsNullOrWhiteSpace(status.LoadLog))
                 backendLoadLogs[ConfigurationBackend.Vllm] = status.LoadLog;
             StateHasChanged();
         });
@@ -1636,7 +1701,7 @@ else if (activeBackend == BackendTab.OpenVino)
         await InvokeAsync(StateHasChanged);
         try
         {
-            var result = await DataService.LoadPythonModelAsync(pythonForm.ToRequest(backend));
+            var result = await DataService.LoadPythonModelAsync(pythonForm.ToRequest(backend, CurrentBackendVariantId));
             if (!string.IsNullOrWhiteSpace(result.LoadLog))
                 backendLoadLogs[backend] = result.LoadLog;
             pythonStatus = result.IsModelLoaded
@@ -2133,6 +2198,7 @@ else if (activeBackend == BackendTab.OpenVino)
     private string? statusMessage;
     private ModelLoadStatus? loadStatus;
     private LoadedModelStatus? optimisticLoadingModel;
+    private Guid? copiedConfigurationId;
         private long loadedModelStatusVersion;
     private LlamaAdvancedState llamaAdvancedState => llamaState.Advanced;
     private IReadOnlyList<Model> databaseModels = [];
@@ -2195,8 +2261,10 @@ else if (activeBackend == BackendTab.OpenVino)
             SyncOpenVinoDevices();
             if (savedLlamaSettings is not null && !IsOpenVinoModelPath(savedLlamaSettings.ModelPath))
             {
-                var llamaRequest = JsonSerializer.Deserialize<LoadModelRequest>(savedLlamaSettings.ConfigurationJson, ConfigurationJsonOptions)
-                    ?? throw new JsonException();
+                var llamaRequest = BackendConfigurationJson.Deserialize<LoadModelRequest>(
+                    savedLlamaSettings.ConfigurationJson,
+                    savedLlamaSettings.BackendVariantId,
+                    ConfigurationJsonOptions);
                 llamaState.ModelPath = savedLlamaSettings.ModelPath;
                 llamaState.Backend = llamaRequest.Backend;
                 llamaState.GpuLayerCount = GetDefaultGpuLayerCount(llamaRequest.Backend, llamaRequest.GpuLayerCount);
@@ -2343,9 +2411,9 @@ else if (activeBackend == BackendTab.OpenVino)
             statusMessage = "The specified model file was not found.";
             return false;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            statusMessage = "The model could not be loaded.";
+            statusMessage = exception.ToString();
             return false;
         }
         finally
@@ -2447,14 +2515,15 @@ else if (activeBackend == BackendTab.OpenVino)
         await DataService.ModelSettings_UpdateAsync(new ModelSettings(
             llamaState.ModelPath,
             ConfigurationBackend.Llama,
-            JsonSerializer.Serialize(new LoadModelRequest(
+            BackendConfigurationJson.Serialize(CurrentBackendVariantId, new LoadModelRequest(
                 llamaState.ModelPath,
                 llamaState.Backend,
                 llamaState.GpuLayerCount,
                 llamaState.ContextSize,
                 llamaState.BackendDevices.ToDictionary(pair => pair.Key, pair => pair.Value.Weight),
                 llamaAdvancedState.ToSettings(),
-                llamaState.MmprojPath)),
+                llamaState.MmprojPath,
+                GetSelectedDeviceNames()), ConfigurationJsonOptions),
             selectedProfileId,
             CurrentBackendVariantId)
         {
@@ -2544,9 +2613,7 @@ else if (activeBackend == BackendTab.OpenVino)
             string.Equals(model.Path, profileTargetModelPath, StringComparison.OrdinalIgnoreCase))?.Name
             ?? Path.GetFileName(profileTargetModelPath);
         var copyName = GetAvailableProfileName($"{profile.Name} - {targetName}");
-        var configurationJson = profile.Backend == ConfigurationBackend.OpenVino
-            ? SerializeSettingsForModel(profile.ConfigurationJson, profileTargetModelPath)
-            : SerializeSettingsForModel(profile.ConfigurationJson, profileTargetModelPath);
+        var configurationJson = SerializeSettingsForModel(profile, profileTargetModelPath);
         var saved = await DataService.ModelConfiguration_CreateAsync(new ModelConfiguration(
             Guid.Empty,
             copyName,
@@ -2559,7 +2626,8 @@ else if (activeBackend == BackendTab.OpenVino)
             default,
             profile.Backend,
             profile.InferenceTimeout,
-            profile.AutoLaunch));
+            profile.AutoLaunch,
+            profile.BackendVariantId));
         profiles = profiles.Append(saved).ToArray();
         profileTargetModelPath = saved.ModelPath;
         assignSourceProfileId = saved.Id;
@@ -2687,6 +2755,7 @@ else if (activeBackend == BackendTab.OpenVino)
                 AutoLaunch = selectedProfileAutoLaunch
             });
             profiles = profiles.Select(item => item.Id == saved.Id ? saved : item).ToArray();
+            isOpenVinoProfilePathDirty = false;
             await PersistSelectedProfileAsync(saved.ModelPath, saved.Id);
             statusMessage = $"Updated: {saved.Name}";
         }
@@ -2935,6 +3004,7 @@ else if (activeBackend == BackendTab.OpenVino)
             ? "/home/llm/.venvs/esi-ai-vllm-xpu/bin/python"
             : "python3";
         pythonForm.EnableXpuGraph = isXpu;
+        pythonForm.EnableBf16MtpDraft = isXpu;
     }
 
     private IEnumerable<ModelConfiguration> BackendProfiles =>
@@ -2960,7 +3030,19 @@ else if (activeBackend == BackendTab.OpenVino)
     private async Task SelectSharedModelAsync(ChangeEventArgs args)
     {
         var modelPath = args.Value?.ToString() ?? string.Empty;
+        var selectedProfile = selectedProfileId is Guid profileId
+            ? profiles.FirstOrDefault(profile => profile.Id == profileId &&
+                profile.Backend == CurrentProfileBackend &&
+                IsProfileForBackendVariant(profile, activeBackend))
+            : null;
         SetModelPath(activeBackend, modelPath);
+
+        if (selectedProfile is not null && !string.IsNullOrWhiteSpace(modelPath))
+        {
+            await SaveSettingsAsync();
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
 
         var profile = GetPreferredProfile(modelPath, CurrentProfileBackend);
         if (profile is not null)
@@ -3030,6 +3112,7 @@ else if (activeBackend == BackendTab.OpenVino)
         {
             isApplyingProfile = true;
             selectedProfileId = profile.Id;
+            isOpenVinoProfilePathDirty = false;
             selectedProfileName = profile.Name;
             selectedProfileAutoLaunch = profile.AutoLaunch;
             ApplyProfileTimeout(profile.InferenceTimeout);
@@ -3038,18 +3121,28 @@ else if (activeBackend == BackendTab.OpenVino)
             switch (profile.Backend)
             {
                 case ConfigurationBackend.OpenVino:
-                    openVinoState.Load(new ModelSettings(profile.ModelPath, profile.Backend, profile.ConfigurationJson));
+                    openVinoState.Load(new ModelSettings(
+                        profile.ModelPath,
+                        profile.Backend,
+                        profile.ConfigurationJson,
+                        profile.Id,
+                        profile.BackendVariantId));
                     SyncOpenVinoDevices();
                     EnsureOpenVinoDeviceRoute();
                     break;
                 case ConfigurationBackend.Vllm:
                     pythonForm.Load(
-                        JsonSerializer.Deserialize<PythonInferenceLoadRequest>(profile.ConfigurationJson, ConfigurationJsonOptions) ?? throw new JsonException(),
-                        profile.BackendVariantId,
-                        profile.ConfigurationJson);
+                        BackendConfigurationJson.Deserialize<PythonInferenceLoadRequest>(
+                            profile.ConfigurationJson,
+                            profile.BackendVariantId,
+                            ConfigurationJsonOptions),
+                        profile.BackendVariantId);
                     break;
                 default:
-                    ApplySettings(JsonSerializer.Deserialize<LoadModelRequest>(profile.ConfigurationJson, ConfigurationJsonOptions) ?? throw new JsonException());
+                    ApplySettings(BackendConfigurationJson.Deserialize<LoadModelRequest>(
+                        profile.ConfigurationJson,
+                        profile.BackendVariantId,
+                        ConfigurationJsonOptions));
                     break;
             }
             SetModelPath(activeBackend, profile.ModelPath);
@@ -3095,7 +3188,7 @@ else if (activeBackend == BackendTab.OpenVino)
 
         var profile = profiles.FirstOrDefault(item => item.Id == selectedProfileId.Value &&
             item.Backend == CurrentProfileBackend &&
-            string.Equals(item.ModelPath.Trim(), CurrentModelPath.Trim(), StringComparison.OrdinalIgnoreCase));
+            IsProfileForBackendVariant(item, activeBackend));
         if (profile is null)
             return;
 
@@ -3111,12 +3204,28 @@ else if (activeBackend == BackendTab.OpenVino)
         profiles = profiles.Select(item => item.Id == saved.Id ? saved : item).ToArray();
     }
 
-    private static string SerializeSettingsForModel(string configurationJson, string modelPath)
+    private static string SerializeSettingsForModel(ModelConfiguration profile, string modelPath)
     {
-        var json = System.Text.Json.Nodes.JsonNode.Parse(configurationJson)?.AsObject()
-            ?? throw new JsonException();
-        json["ModelPath"] = modelPath;
-        return json.ToJsonString();
+        var variantId = profile.BackendVariantId;
+        return profile.Backend switch
+        {
+            ConfigurationBackend.Llama => BackendConfigurationJson.Serialize(
+                variantId,
+                BackendConfigurationJson.Deserialize<LoadModelRequest>(profile.ConfigurationJson, variantId, ConfigurationJsonOptions)
+                    with { ModelPath = modelPath },
+                ConfigurationJsonOptions),
+            ConfigurationBackend.OpenVino => BackendConfigurationJson.Serialize(
+                variantId,
+                BackendConfigurationJson.Deserialize<OpenVinoLoadRequest>(profile.ConfigurationJson, variantId, ConfigurationJsonOptions)
+                    with { ModelPath = modelPath },
+                ConfigurationJsonOptions),
+            ConfigurationBackend.Vllm => BackendConfigurationJson.Serialize(
+                variantId,
+                BackendConfigurationJson.Deserialize<PythonInferenceLoadRequest>(profile.ConfigurationJson, variantId, ConfigurationJsonOptions)
+                    with { ModelPath = modelPath, Backend = ConfigurationBackend.Vllm },
+                ConfigurationJsonOptions),
+            _ => throw new JsonException($"The backend '{profile.Backend}' does not have a supported model configuration.")
+        };
     }
 
     private async Task SelectOpenVinoModelAsync()
@@ -3124,6 +3233,7 @@ else if (activeBackend == BackendTab.OpenVino)
         if (isInitializing || isApplyingProfile)
             return;
 
+        isOpenVinoProfilePathDirty = false;
         if (string.IsNullOrWhiteSpace(openVinoState.ModelPath))
         {
             selectedProfileId = null;
@@ -3150,6 +3260,39 @@ else if (activeBackend == BackendTab.OpenVino)
     {
         openVinoState.ModelPath = args.Value?.ToString() ?? string.Empty;
         await SelectOpenVinoModelAsync();
+    }
+
+    private async Task HandleOpenVinoModelPathChangedAsync()
+    {
+        if (isInitializing || isApplyingProfile)
+            return;
+
+        if (string.IsNullOrWhiteSpace(openVinoState.ModelPath) || !selectedProfileId.HasValue)
+        {
+            isOpenVinoProfilePathDirty = false;
+            await SelectOpenVinoModelAsync();
+            return;
+        }
+
+        var selectedProfile = profiles.FirstOrDefault(profile =>
+            profile.Id == selectedProfileId.Value &&
+            profile.Backend == ConfigurationBackend.OpenVino &&
+            IsProfileForBackendVariant(profile, activeBackend));
+        if (selectedProfile is null ||
+            GetPreferredProfile(openVinoState.ModelPath, ConfigurationBackend.OpenVino) is not null)
+        {
+            isOpenVinoProfilePathDirty = false;
+            await SelectOpenVinoModelAsync();
+            return;
+        }
+
+        isOpenVinoProfilePathDirty = !string.Equals(
+            selectedProfile.ModelPath,
+            openVinoState.ModelPath.Trim(),
+            StringComparison.OrdinalIgnoreCase);
+        statusMessage = isOpenVinoProfilePathDirty
+            ? "Model path changed. Update the selected configuration set before loading."
+            : null;
     }
 
     private void ResetOpenVinoConfiguration()
@@ -3183,7 +3326,7 @@ else if (activeBackend == BackendTab.OpenVino)
     }
 
     private string SerializeCurrentSettings() => IsLlamaBackendTab(activeBackend)
-        ? JsonSerializer.Serialize(new LoadModelRequest(
+        ? BackendConfigurationJson.Serialize(CurrentBackendVariantId, new LoadModelRequest(
             llamaState.ModelPath,
             llamaState.Backend,
             llamaState.GpuLayerCount,
@@ -3191,10 +3334,13 @@ else if (activeBackend == BackendTab.OpenVino)
             llamaState.BackendDevices.ToDictionary(pair => pair.Key, pair => pair.Value.Weight),
             llamaAdvancedState.ToSettings(),
             llamaState.MmprojPath,
-            GetSelectedDeviceNames()))
+            GetSelectedDeviceNames()), ConfigurationJsonOptions)
         : activeBackend == BackendTab.OpenVino
             ? openVinoState.ToSettings().ConfigurationJson
-            : JsonSerializer.Serialize(pythonForm.ToRequest(CurrentProfileBackend));
+            : BackendConfigurationJson.Serialize(
+                CurrentBackendVariantId,
+                pythonForm.ToRequest(CurrentProfileBackend, CurrentBackendVariantId),
+                ConfigurationJsonOptions);
 
     private InferenceTimeoutSettings? CreateProfileTimeoutSettings() => profileTimeoutEnabled
         ? new InferenceTimeoutSettings(
@@ -3426,9 +3572,12 @@ else if (activeBackend == BackendTab.OpenVino)
             return "...";
 
         var models = DisplayedLoadedModels;
-        var activeCount = models.Count(model => !model.IsLoading);
+        var activeCount = models.Count(model => model.IsModelLoaded);
         var loadingCount = models.Count(model => model.IsLoading);
-        return loadingCount == 0 ? $"{activeCount} active" : $"{activeCount} active, {loadingCount} loading";
+        var failedCount = models.Count(IsFailedModelLoad);
+        return $"{activeCount} active" +
+            (loadingCount > 0 ? $", {loadingCount} loading" : string.Empty) +
+            (failedCount > 0 ? $", {failedCount} failed" : string.Empty);
     }
 
     private static bool IsOpenVinoModelPath(string modelPath) =>

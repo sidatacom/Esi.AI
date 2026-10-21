@@ -20,6 +20,14 @@ public sealed class OptimajetFlowRuntimeTests
             })
             .Build();
         var runtime = new OptimajetFlowRuntime(configuration);
+        var definition = new FlowDefinition(
+            Guid.NewGuid(),
+            "Chat request router",
+            1,
+            true,
+            "{}",
+            DateTime.UtcNow,
+            DateTime.UtcNow);
         var started = false;
 
         try
@@ -28,17 +36,12 @@ public sealed class OptimajetFlowRuntimeTests
             started = true;
 
             var result = await runtime.ExecuteRouteAsync(
-                new FlowDefinition(
-                    Guid.NewGuid(),
-                    "Chat request router",
-                    1,
-                    true,
-                    "{}",
-                    DateTime.UtcNow,
-                    DateTime.UtcNow),
+                definition,
                 "default-model");
+            var reusedSchemeResult = await runtime.ExecuteRouteAsync(definition, "default-model");
 
             Assert.AreEqual("default-model", result);
+            Assert.AreEqual("default-model", reusedSchemeResult);
         }
         finally
         {

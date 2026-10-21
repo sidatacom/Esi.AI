@@ -27,6 +27,7 @@ public sealed class DataHub(
 
         await Clients.Caller.SendAsync("ModelDownload_Read", dataService.ModelDownload_Read().Select(download => new ModelDownloadUpdate(download)).ToArray(), Context.ConnectionAborted);
         await Clients.Caller.SendAsync("VulkanLog_Read", await dataService.VulkanLog_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
+        await Clients.Caller.SendAsync("InferenceLog_Read", await dataService.InferenceLog_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
         await Clients.Caller.SendAsync("LoadedModel_Read", await dataService.LoadedModel_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
         try
         {
@@ -56,6 +57,18 @@ public sealed class DataHub(
 
     public Task<IReadOnlyList<ProviderTraceEntry>> ProviderTrace_Read() =>
         dataService.ProviderTrace_ReadAsync(Context.ConnectionAborted);
+
+    public Task<InferenceLog> InferenceLog_Create(InferenceLog log) =>
+        dataService.InferenceLog_CreateAsync(log, Context.ConnectionAborted);
+
+    public Task<IReadOnlyList<InferenceLog>> InferenceLog_Read() =>
+        dataService.InferenceLog_ReadAsync(Context.ConnectionAborted);
+
+    public Task<InferenceLog> InferenceLog_Update(InferenceLog log) =>
+        dataService.InferenceLog_UpdateAsync(log, Context.ConnectionAborted);
+
+    public Task InferenceLog_Delete(Guid id) =>
+        dataService.InferenceLog_DeleteAsync(id, Context.ConnectionAborted);
 
     public async Task ApplicationSettings_Update(ApplicationSettings settings)
     {
@@ -104,6 +117,18 @@ public sealed class DataHub(
 
     public Task ModelConfiguration_SetDefault(Guid id) =>
         dataService.ModelConfiguration_SetDefaultAsync(id, Context.ConnectionAborted);
+
+    public Task<IReadOnlyList<BenchmarkRun>> BenchmarkRun_Read() =>
+        dataService.BenchmarkRun_ReadAsync(Context.ConnectionAborted);
+
+    public Task<BenchmarkRun> BenchmarkRun_Create(BenchmarkRun run) =>
+        dataService.BenchmarkRun_CreateAsync(run, Context.ConnectionAborted);
+
+    public Task<BenchmarkRun> BenchmarkRun_Update(BenchmarkRun run) =>
+        dataService.BenchmarkRun_UpdateAsync(run, Context.ConnectionAborted);
+
+    public Task BenchmarkRun_Delete(Guid id) =>
+        dataService.BenchmarkRun_DeleteAsync(id, Context.ConnectionAborted);
 
     public Task<ModelLoadStatus> LoadedModel_Read() => dataService.LoadedModel_ReadAsync(Context.ConnectionAborted);
 

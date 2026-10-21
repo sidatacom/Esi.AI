@@ -6,7 +6,7 @@ These prompts define a repeatable browser test plan for the Studio navigation. T
 
 1. Overview: shell status and dashboard refresh.
 2. Backends: support matrix and shared lifecycle orchestration.
-3. Reference model: prepare one Qwen2.5 Instruct model family in backend-specific formats.
+3. Reference model: prepare one Qwen2.5 Instruct checkpoint/revision and quantization in backend-specific formats. This lightweight browser-smoke family is separate from the Qwen3.8 benchmark.
 4. LLama Vulkan: load, chat, and unload on Vulkan.
 5. LLama CUDA: load, chat, and unload on CUDA 12.
 6. LLama SYCL: load, chat, and unload on SYCL 16.
@@ -31,11 +31,10 @@ Run `00-run-all.prompt.md` for the complete plan. Individual prompts are intenti
 - `BLOCKED`: a required runtime, model, network permission, auth fixture, or disposable identity was unavailable.
 - Never report `PASS` for a skipped or assumed check.
 - A backend result must include its exact device variant; a generic backend PASS is invalid.
-- The reference model is one logical model family, not one physical file: GGUF, OpenVINO IR, and Transformers/Safetensors are required packaging variants.
+- The reference model is one logical source checkpoint, variant, revision, and quantization, not one physical file: GGUF, OpenVINO IR, and Transformers/Safetensors are allowed only with provenance showing that conversion preserves those requirements. Record each file's format and hash; hashes need not match across formats.
 - SGLang and dotLLM remain `DEFERRED` until their dedicated prompts are added.
 - Redact secrets and clean up disposable artifacts after every run.
 
-## Focused stability and benchmark runs
+## Focused stability runs
 
 - [Qwen3.8 Uncensored OpenVINO 128k](02e-qwen38-openvino-128k.prompt.md) uses the dedicated `test-openvino-qwen38-128k` agent to check the Studio provider path and run bounded long-context probes.
-- [Qwen3.8 backend benchmark](02h-qwen38-benchmark.prompt.md) runs the standardized short benchmark or an explicitly selected single 128k probe against one already-loaded, saved Studio profile. It is intentionally excluded from `00-run-all.prompt.md` because it performs real model inference and can consume substantial resources.

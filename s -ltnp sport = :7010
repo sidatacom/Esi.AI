@@ -1,0 +1,21 @@
+[1mdiff --git a/src/Esi.AI/Esi.AI.Backend.Llama.Cuda12/LlamaCuda12Runtime.cs b/src/Esi.AI/Esi.AI.Backend.Llama.Cuda12/LlamaCuda12Runtime.cs[m
+[1mindex 8d4c616..bb103bc 100644[m
+[1m--- a/src/Esi.AI/Esi.AI.Backend.Llama.Cuda12/LlamaCuda12Runtime.cs[m
+[1m+++ b/src/Esi.AI/Esi.AI.Backend.Llama.Cuda12/LlamaCuda12Runtime.cs[m
+[36m@@ -135,6 +135,8 @@[m [mpublic sealed class LlamaCuda12Runtime : IBackendRuntime[m
+         Cuda12RuntimeFiles.PrepareLibraryPath(runtimeDirectory);[m
+         Cuda12RuntimeFiles.Validate(runtimeDirectory);[m
+         ConfigureNativeBackend(applicationDirectory, runtimeDirectory);[m
+[32m+[m[32m        if (EnumerateCudaDevices().Count == 0)[m
+[32m+[m[32m            throw new InvalidOperationException("The CUDA 12 runtime did not discover any CUDA devices. The model was not loaded; verify CUDA runtime libraries and device visibility.");[m
+ [m
+         await runtimeLock.WaitAsync(cancellationToken).ConfigureAwait(false);[m
+         try[m
+[36m@@ -373,6 +375,7 @@[m [mpublic sealed class LlamaCuda12Runtime : IBackendRuntime[m
+                 .WithCuda(true)[m
+                 .WithVulkan(false)[m
+                 .WithSycl(false)[m
+[32m+[m[32m                .WithAutoFallback(false)[m
+                 .WithLogCallback((_, message) => NativeLog.Enqueue(message.TrimEnd()));[m
+             nativeConfigured = true;[m
+         }[m

@@ -1,78 +1,205 @@
-# Qwen3.8 Backend Benchmark
+# Qwen3.8 Backend Benchmark Results and Provenance Archive
 
-## Ziel
+Dieses Dokument archiviert die tatsaechlich erfassten Profile, Provenienznachweise, Laufmessungen und Stop-Ergebnisse. Es ist kein Runbook; die frueheren Prompt-, Runner-, Ablauf- und Ressourcenanweisungen wurden entfernt.
 
-Diese Benchmark-Vorlage standardisiert den Eingabetext, die Sampling-Optionen und die clientseitige Messung. Die Profile verwenden backendgerechte Qwen3.8-Artefakte; sie sind wegen unterschiedlicher Quantisierungen und Chat-Templates nicht bit-identisch. Prompt- und Completion-Tokenzahlen deshalb immer mitprotokollieren.
+## Gespeicherte Studio-Historie
 
-## Prompt und Runner
-
-Der Runner baut fuer jeden Request dieselbe Nachricht auf. Nur die feste Run-ID aendert sich, damit Prefix-Caches nicht denselben Request wiederverwenden. Die Kontextfuellung besteht aus `hello `-Wiederholungen; im aktuellen Qwen-Tokenizer entsprach eine Wiederholung einem Token. Massgeblich bleibt `usage.prompt_tokens`, nicht die Schaetzung.
-
-Die feste, einheitliche Request-Vorlage hat die Form eines einzelnen Copilot-Coding-Agent-Auftrags. Der lange Kontext bleibt absichtlich synthetische Token-Fuellung; der Lauf testet Streaming und Kontextaufnahme, aber keine Tool-Aufrufe oder echte Repository-Aenderungen:
-
-```text
-ESI-QWEN38-AGENT-BENCH-V1
-You are GitHub Copilot, an autonomous coding agent working in a VS Code repository.
-Run: <eindeutige Run-ID>
-Repository context padding (synthetic token-fill; no source files or tools are supplied):
-<"hello " genau N-mal wiederholen>
-Agent request:
-Investigate a streaming-cancellation bug in a C# service: cancelling a client request must stop generation, release backend resources, and preserve caller cancellation semantics. Trace the owning code path, propose the smallest root-cause fix, and include a focused regression test. Do not invent APIs or claim that tools were run. Continue with concrete patch and test details until the response token limit; do not end with an early summary.
-```
-
-Der Runner setzt `N` und Run-ID reproduzierbar. Bei manuellen Laeufen dieselbe Vorlage, dieselben Wiederholungszahlen und eine fortlaufende Run-ID verwenden.
-
-Kurzbenchmark mit 390 Kontextwiederholungen, einem Warm-up und fuenf Messlaeufen. Das ist eine feste Eingabevorlage, keine Zusicherung einer backenduebergreifend identischen Tokenzahl:
-
-```sh
-node benchmarks/qwen38-benchmark.mjs \
-  --model <MODEL_CONFIGURATION_ID> \
-  --repeat-count 390 \
-  --warmups 1 \
-  --runs 5
-```
-
-128k-Kontextprobe, ein einzelner Lauf ohne langen Warm-up:
-
-```sh
-node benchmarks/qwen38-benchmark.mjs \
-  --model <MODEL_CONFIGURATION_ID> \
-  --repeat-count 127850 \
-  --warmups 0 \
-  --runs 1
-```
-
-`--model` ist die ID des ausgewaehlten Studio-Konfigurationsprofils. `ESI_STUDIO_URL` kann die Basis-URL ueberschreiben; Standard ist `http://localhost:7010`.
-
-Der Runner sendet immer `max_tokens=128`, `temperature=0`, `top_p=1`, `top_k=1`, `min_p=0`, `repetition_penalty=1`, `frequency_penalty=0`, `presence_penalty=0`, `seed=42`, `reasoning_effort=none`, Streaming und Usage-Daten. Keine Tools, Bilder, Systemnachrichten, Chat-Historie oder parallelen Requests verwenden. `reasoning_effort=none` wird aktuell nur im OpenVINO-Adapter explizit auf Qwens `enable_thinking=false` abgebildet; der Prompt untersagt zusaetzlich Reasoning fuer alle Backends. Falls ein Backend dennoch Think-Tokens ausgibt, den Lauf als nicht direkt vergleichbar markieren.
-
-Die vLLM-Profile speichern zusaetzlich Runtime-Defaults fuer Temperatur und Top-P. Der Runner uebergibt die Benchmarkwerte explizit pro Request; die gespeicherten vLLM-Defaults duerfen fuer Messungen nicht anstelle dieser Request-Werte verwendet werden.
-
-## Messablauf
-
-1. Nur ein Modell/Backend gleichzeitig laden. Vor jedem Lauf Backend-Variante, Modellpfad, Geraeteroute und Profil-ID notieren.
-2. Kurzbenchmark: den Runner mit `repeat-count 390`, `warmups 1` und `runs 5` ausfuehren. Die erste Antwort ist Warm-up und geht nicht in den Median ein.
-3. 128k-Probe: nach erfolgreichem Kurzbenchmark pro Backend hoechstens einen Lauf mit `repeat-count 127850`, ohne Warm-up. Sicherstellen, dass `promptTokens + 128 <= 131072`; sonst fuer **alle** Backend-Laeufe denselben niedrigeren Repeat-Count verwenden.
-4. Jede Zeile des Runners enthaelt Usage, Finish-Reason, clientseitige TTFT, clientseitige Decode-Rate und Server-Rate. Fuer den Backendvergleich primaer den Median von `clientDecodeTokensPerSecond` aus den fuenf Kurzlaeufen verwenden; Serverraten sind backendseitig unterschiedlich definiert. Ein Lauf zaehlt nur als vollstaendig, wenn `completionLengthMatchesLimit=true` und `fits131072Context=true`.
-5. Die 128k-Probe separat ausweisen: Prompt-Tokens, TTFT, Decode-Rate, Wall-Zeit, verfuegbarer RAM und Swap vor/nach dem Lauf. Nicht mit dem Kurzbenchmark-Median vermischen.
-
-Wegen des zuvor beobachteten Speicherdrucks keine parallelen 128k-Anfragen starten. Vorher mindestens 16 GiB verfuegbaren RAM anstreben; bei weniger als 4 GiB verfuegbar, stark wachsendem Swap oder einem Runtime-Fehler sofort stoppen und nicht blind wiederholen. Nach jedem Backend das Modell entladen und Ressourcen erholen lassen.
+Jeder in der Studio-Seite gestartete Kurzbenchmark und jede 128k-Probe wird als eigener Verlaufseintrag in der Studio-SQLite-Datenbank gespeichert. Der Eintrag wird vor dem ersten Inferenzrequest erstellt und nach jeder Probe aktualisiert, damit bereits gemessene Samples auch bei Abbruch oder Fehler erhalten bleiben. Der Datensatz enthält eine vollständige Kopie der gewählten Profileinstellungen, die Benchmark-Requestparameter, Modellpfad und Backend-Variante sowie die ursprüngliche Profil-ID als Filterwert. Die Profil-ID ist keine Fremdschlüsselverknüpfung; spätere Änderungen oder das Löschen des Profils verändern ältere Verlaufseinträge nicht. Die Historie kann in der Benchmark-Seite nach Modellpfad und Profil-ID gefiltert werden.
 
 ## Studio-Profile
 
-Der All-Backend-Prompt verwendet pro Backend zusaetzlich den exakten Konfigurationsnamen `Benchmark`. Die folgende Tabelle dokumentiert den zuvor angelegten Profilbestand; diese Profile werden nicht umbenannt oder ueberschrieben. Falls noch kein passendes `Benchmark`-Profil existiert, wird ein separates Profil mit dem backendgerechten Qwen3.8-27B-Artefakt angelegt.
+Die folgenden Tabellen sind historische Studio-Katalogaufnahmen. Am 2026-10-19 waren fuer alle sechs startbaren Varianten Profile mit den aufgefuehrten IDs und Pfaden gespeichert. Der Profilbestand belegte weder Runtime-Bereitschaft noch vergleichbare Artefaktprovenienz.
 
-Die aufgefuehrten Bestandsprofile heissen `Benchmark - Qwen3.8 - <Variante>`, haben `AutoLaunch=false` und setzen, soweit die Runtime dies anbietet, Kontext auf 131072 sowie Sampling auf die Werte des Runners. Backend-spezifische Load-Optionen bleiben in der jeweiligen Konfiguration.
+| Backend-Variante / Route | Reference-ID / Modell | Benchmark-ID / Modell |
+|---|---|---|
+| `llama.vulkan` / Intel BMG `Vulkan1` | `8f969e2c-7b20-467c-bb0e-5679aabc8d12` / `/home/llm/models/qwen2.5-0.5b-instruct-fp16.gguf` | `b666178e-4654-4d97-a035-4bcbe14cbd40` / `/home/llm/models/Qwen3.8-27B-UD-Q4_K_S.gguf` |
+| `llama.cuda12` / RTX 4070 `CUDA0` | `6e17d85b-2e91-4074-995f-28acca4a8fb1` / `/home/llm/models/qwen2.5-0.5b-instruct-fp16.gguf` | `b4f35104-1123-472f-b656-a27720e87544` / `/home/llm/models/Qwen3.8-27B-UD-Q4_K_S.gguf` |
+| `llama.sycl` / Intel BMG `SYCL0` | `568fdedd-3250-435f-bc1a-7eb3d8f9e04e` / `/home/llm/models/qwen2.5-0.5b-instruct-fp16.gguf` | `017c7a03-cf0f-4430-8518-f05691ffd5dc` / `/home/llm/models/Qwen3.8-27B-UD-Q4_K_S.gguf` |
+| `openvino` / Intel BMG `GPU.1` | `86062aed-0df9-4eb8-938d-63cf50003636` / `/home/llm/models/Qwen2.5-1.5B-Instruct-int4-ov` | `0ed09ad3-1030-46d1-bdbe-5e72924d2f41` / `/home/llm/models/Qwen3.8-27B-Uncensored-int4-awq-g128-ov` |
+| `vllm.cuda12` / RTX 4070 `cuda:0` | `9be22f17-0b45-4769-9f5f-22b3d0134716` / `/home/llm/models/Qwen2.5-0.5B-Instruct` | `22848e29-e47a-43dc-a99b-7f29001b6371` / `/home/llm/models/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16` |
+| `vllm.xpu` / Intel BMG `xpu:0` | `d6f3ec55-35b2-4913-b8b8-9262516786ce` / `/home/llm/models/Qwen2.5-0.5B-Instruct` | `cea2f591-8134-4f95-8777-97f8a5c02ee2` / `/home/llm/models/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16` |
+
+Alle zwoelf Profile hatten `AutoLaunch=false`. Die Reference-Artefakte waren backendgerecht, aber ihre identische Quellrevision und Quantisierung waren nicht fuer alle Formate nachgewiesen; die Profile bildeten daher keine bestaetigte gemeinsame Reference-Messreihe.
+
+Die damaligen Benchmarkprofile hiessen `Benchmark - Qwen3.8 - <Variante>`, hatten `AutoLaunch=false` und setzten, soweit die Runtime dies anbot, den Kontext auf 131072. Backend-spezifische Load-Optionen waren in den jeweiligen Konfigurationen gespeichert. Der Profilbestand belegte keine gemeinsame Qwen3.8-Quantisierung.
 
 | Profil | Studio-Variante / Route | Qwen3.8-Modell | Backend-Loadwerte | Status |
 |---|---|---|---|---|
-| Benchmark - Qwen3.8 - Llama Vulkan | `llama.vulkan`, Intel BMG `Vulkan1` | `/home/llm/.cache/esi-ai/models/Qwen3.8-27B-UD-Q4_K_S.gguf` | Kontext 131072, alle moeglichen GPU-Layer | Gespeichert |
-| Benchmark - Qwen3.8 - Llama SYCL | `llama.sycl`, Intel BMG `SYCL0` | `/home/llm/.cache/esi-ai/models/Qwen3.8-27B-UD-Q4_K_S.gguf` | Kontext 131072, alle moeglichen GPU-Layer | Gespeichert; Runtime bereit |
-| Benchmark - Qwen3.8 - Llama CUDA12 | `llama.cuda12`, RTX 4070 `CUDA0` | `/home/llm/.cache/esi-ai/models/Qwen3.8-27B-UD-Q4_K_S.gguf` | Kontext 131072, alle moeglichen GPU-Layer | Gespeichert; Runtime bereit |
-| Benchmark - Qwen3.8 - OpenVINO | `openvino`, Intel BMG `GPU.1` | `/home/llm/.cache/esi-ai/models/Qwen3.8-27B-Uncensored-int4-awq-g128-ov` | 128 neue Tokens, Sampling aus, Temperatur 0, Top-P 1, Top-K 1, Repetition-Penalty 1 | Gespeichert |
-| Benchmark - Qwen3.8 - vLLM XPU | `vllm.xpu`, Intel BMG `xpu:0` | `/home/llm/.cache/esi-ai/models/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16` | Max-Model-Length 131072, eine Sequenz, Batch 8192, GPTQ, FP16, FP8-KV, Prefix-Cache aus, MTP aus, XPU-Graph aus; Runtime-Defaults Temperatur 0.7/Top-P 0.9 werden pro Request ueberschrieben | Gespeichert; Runtime bereit |
-| Benchmark - Qwen3.8 - vLLM CUDA12 | `vllm.cuda12`, RTX 4070 `cuda:0` | `/home/llm/.cache/esi-ai/models/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16` | Max-Model-Length 131072, eine Sequenz, Batch 8192, GPTQ, FP16, FP8-KV, Prefix-Cache aus, MTP aus | **Nicht gespeichert** |
+| Benchmark - Qwen3.8 - Llama Vulkan | `llama.vulkan`, Intel BMG `Vulkan1` | `/home/llm/models/Qwen3.8-27B-UD-Q4_K_S.gguf` | Kontext 131072, alle moeglichen GPU-Layer | Gespeichert; Voraussetzungen meldeten Vulkan1 bereit, aber der Qwen3.8-Modellladeversuch scheiterte generisch; bis zur Ursache nicht benchmarkbereit (2026-10-09) |
+| Benchmark - Qwen3.8 - Llama SYCL | `llama.sycl`, Intel BMG `SYCL0` | `/home/llm/models/Qwen3.8-27B-UD-Q4_K_S.gguf` | Kontext 131072, alle moeglichen GPU-Layer | Gespeichert; Runtime bereit |
+| Benchmark - Qwen3.8 - Llama CUDA12 | `llama.cuda12`, RTX 4070 `CUDA0` | `/home/llm/models/Qwen3.8-27B-UD-Q4_K_S.gguf` | Kontext 131072, alle moeglichen GPU-Layer | Gespeichert; CUDA-12-Abhaengigkeiten und RTX 4070 sind bereit. Reference-Profil am 2026-10-20 erfolgreich geladen; Chat antwortete exakt `OK`. Qwen3.8-Profil nicht geladen und nicht benchmarkbereit, solange die gemeinsame Artefaktprovenienz fehlt. |
+| Benchmark - Qwen3.8 - OpenVINO | `openvino`, Intel BMG `GPU.1` | `/home/llm/models/Qwen3.8-27B-Uncensored-int4-awq-g128-ov` | 128 neue Tokens, Sampling aus, Temperatur 0, Top-P 1, Top-K 1, Repetition-Penalty 1 | Gespeichert; Runtime meldet GPU.1 bereit, aber der 128k-Lauf verursachte stark wachsenden Swap und wurde gestoppt; unter aktueller Speicherausstattung nicht benchmarkbereit (2026-10-09). Separater Reference-Befund: das alte 0.5B-Artefakt scheiterte am 2026-10-20 nach 160 ms mit `UNKNOWN_EXCEPTION (-17)`; das gespeicherte Reference-Profil wurde danach auf Qwen2.5-1.5B-Instruct-int4-ov aktualisiert und der gespeicherte Profil-Chat antwortete `OK`. Kein Qwen3.8-Benchmarklauf. |
+| Benchmark - Qwen3.8 - vLLM XPU | `vllm.xpu`, Intel BMG `xpu:0` | `/home/llm/models/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16` | Max-Model-Length 131072, eine Sequenz, Batch 8192, GPTQ, FP16, FP8-KV, Prefix-Cache aus, MTP aus, XPU-Graph aus; Runtime-Defaults Temperatur 0.7/Top-P 0.9 werden pro Request ueberschrieben | Profil gespeichert; Modellstart in Studio auf Arc Pro B70 am 2026-10-19 erfolgreich; Benchmark-Generierung noch nicht ausgefuehrt |
+| Benchmark - Qwen3.8 - vLLM CUDA12 | `vllm.cuda12`, RTX 4070 `cuda:0` | `/home/llm/models/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16` | Max-Model-Length 131072, eine Sequenz, Batch 8192, GPTQ, FP16, FP8-KV, Prefix-Cache aus, MTP aus | Profil gespeichert; vLLM-CUDA12-Reference-Load und Chat wurden am 2026-10-20 erfolgreich verifiziert. Das Qwen3.8-Profil wurde nicht geladen und bleibt wegen fehlender gemeinsamer Artefaktprovenienz ausserhalb eines Vergleichs. |
 
-vLLM CUDA12 ist aktuell nicht benchmarkbereit: Studio meldet fehlende Pakete `grpc`, `google.protobuf` und `vllm` im Environment `/home/llm/.venvs/esi-ai-vllm`; ausserdem meldet PyTorch dort keinen CUDA-Accelerator. Das Anlegen des separaten Profils scheiterte im Studio-Create-Dialog, der den sichtbaren Namen nicht an seine Validierung uebergab. Es wurde kein bestehendes Profil ueberschrieben und keine Paketinstallation gestartet. Llama CUDA12 ist davon unabhaengig und meldet RTX/CUDA0 als bereit.
+Live-Anforderungskontrolle am 2026-10-20: Studio meldete alle sechs registrierten Backendvarianten als runtimebereit. Das umfasst LLama Vulkan, CUDA12 und SYCL, OpenVINO sowie vLLM CUDA12 und XPU. Die fehlenden SYCL-Buildwerkzeuge und der nicht verfuegbare OpenVINO-NPU-Pfad waren optional bzw. blockierten den GPU-Pfad nicht. Diese Anforderungskontrolle ersetzt weder einen Qwen3.8-Modellstart noch die fuer OpenVINO bereits beobachtete Speicherpruefung und belegt keine gemeinsame Artefaktprovenienz.
 
-SGLang und DotLlm sind in der aktuellen Studio-Registrierung keine startbaren Runtime-Varianten und erhalten deshalb kein irrefuehrendes Profil. Ein optimierter vLLM-XPU-Lauf mit MTP4 ist ein separater Benchmark-Modus und darf nicht mit den Baseline-Profilen vermischt werden.
+### Historische Kandidaten-Metadaten
+
+Diese upstream-Kandidaten wurden anhand ihrer gepinnten Modellkarten und Metadaten geprueft. Die Angaben sind Provenienzbelege, keine lokalen Benchmarkresultate.
+
+| Backend-Variante | Gepinnter Kandidat | Format und Provenienzbefund |
+|---|---|---|---|
+| Nvidia RTX 4070, `llama.cuda12` | [`mradermacher/Qwen3.8-4B-Distill-heretic-GGUF`](https://huggingface.co/mradermacher/Qwen3.8-4B-Distill-heretic-GGUF/tree/a1dce4577c0bba6be0ad5bd9a141e27b9458d49c), Datei `Qwen3.8-4B-Distill-heretic.Q4_K_M.gguf` | GGUF Q4_K_M, 2,708,805,024 Bytes; LFS SHA-256 `1c372d2c9b48ce9a959e07d9c44bc6ed4f8594ccc97adc9e87cd5e88d77a2867`. Repo-Tags kennzeichnen das Modell als Qwen3.8, uncensored, decensored und abliterated; GGUF-Metadaten melden 262144 Kontext. |
+| Nvidia RTX 4070, `vllm.cuda12` | [`hakergeniusz/Qwen3.8-4B-Heretic`](https://huggingface.co/hakergeniusz/Qwen3.8-4B-Heretic/tree/e4ab412fbdfd59af65cc5fe2bd82a37f5781f4f3) | Abliteriertes Qwen3.8-4B-Distill als BF16 safetensors; 262144 Kontext. Zwei Gewichtsshards: 4,972,947,968 Bytes (LFS SHA-256 `84f399d8156372d737004c873efe736768cfbff25ebd28f8945a4ea983a9fc6e`) und 4,105,672,464 Bytes (LFS SHA-256 `dbfc231281901b9d3763d8c7a8e3d7e9c323efc349de22466fca283b533fcd3c`), insgesamt 9,078,620,432 Bytes. HF-Modellkarte dokumentiert Heretic Trial 23 und BF16. |
+| Intel Arc Pro B70, `llama.vulkan`, `llama.sycl` | [`JonathanColetti/Qwen3.8-27B-Uncensored-GGUF`](https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/tree/45d0fc0ad6cfcf9eeee6008ddaea925536409b18), Datei `Qwen3.8-27B-Uncensored-Q4_K_M.gguf` | GGUF Q4_K_M, Modellkarte nennt 16.8 GB, 262144 Kontext und llama.cpp-Konverter `a94d563ed`; Heretic-Ablation bei BF16 vor der Quantisierung. |
+| Intel Arc Pro B70, `openvino` | [`Wondernutts/Qwen3.8-27B-Uncensored-int4-awq-g128-ov`](https://huggingface.co/Wondernutts/Qwen3.8-27B-Uncensored-int4-awq-g128-ov/tree/af1f15806d4ded37890e1f763eac0483a68dbc3e) | OpenVINO IR, INT4 AWQ asymmetrisch, Gruppe 128; Conversion-Manifest pinnt `JonathanColetti/Qwen3.8-27B-Uncensored@5bb7aa90f0efef548e87005b1fb7658e522b6b7f`. Die Modellkarte dokumentiert einen Arc-Pro-B70-Lauf mit 31.89 GB Gesamt-VRAM und 17.25 GB belegt nach der Suite; OpenVINO 2026.4.0+ erforderlich. |
+| Intel Arc Pro B70, `vllm.xpu` | [`kernelogic/Qwen3.8-27B-Uncensored-GPTQ-Int4-sym-G128-MTP-BF16`](https://huggingface.co/kernelogic/Qwen3.8-27B-Uncensored-GPTQ-Int4-sym-G128-MTP-BF16/tree/bd3f8d56b9dc617c995ec5a3ececa486d1d064be) | GPTQ INT4 symmetrisch, Gruppe 128, 19 GB; Modellkarte pinnt die Uncensored-Quelle und berichtet 120532 Tokens Long-Context-Validierung auf Arc Pro B70. |
+
+Die Kandidaten verwendeten unterschiedliche Modellgroessen, Varianten und Quantisierungen. Die externen Modellkarten dokumentieren keine gemeinsame Vergleichsgruppe; die Kandidaten wurden nicht als lokale Benchmarkresultate gewertet.
+
+### Artefaktstatus und Kompatibilitaetsnachweis
+
+Die vorhandenen Profile sind Kandidaten, nicht als backenduebergreifend kompatible Qwen3.8-Artefakte bestaetigt:
+
+- LLama Vulkan, SYCL und CUDA12 verwenden `Qwen3.8-27B-UD-Q4_K_S.gguf` (GGUF, Q4_K_S).
+- OpenVINO verwendet `Qwen3.8-27B-Uncensored-int4-awq-g128-ov` (OpenVINO IR, AWQ INT4, Gruppe 128).
+- vLLM XPU und CUDA12 verwenden `Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16` (Transformers/GPTQ, symmetrisch INT4, Gruppe 128).
+
+Q4_K_S, AWQ INT4 und GPTQ INT4 sind unterschiedliche Quantisierungsverfahren bzw. Konfigurationen; gleiche Bitbreite belegte keine Gleichheit. Die Profilangaben belegten fuer die Kandidaten weder denselben Quellcheckpoint, Modellvariante und exakte Revision noch eine quantisierungserhaltende Konvertierung. Die Profile blieben unbestaetigte Kandidaten; die gespeicherten Profile und Modelldateien wurden nicht veraendert.
+
+Eine lokale Metadatenpruefung am 2026-10-20 bestaetigte zudem konkrete Unterschiede: Der GGUF-Header nennt Unsloth als Quantizer und `Qwen/Qwen3.8-27B` als Basismodell, aber keine Quellrevision. Das GPTQ-README nennt ebenfalls `Qwen/Qwen3.8-27B` als Basismodell und gptqmodel 7.3.2; `quantize_config.json` bestaetigt symmetrisches GPTQ INT4, Gruppe 128, enthaelt aber keine exakte Basisrevision. Das OpenVINO-`conversion_manifest.json` dokumentiert AWQ asymmetrisch INT4, Gruppe 128, Quelle `JonathanColetti/Qwen3.8-27B-Uncensored@5bb7aa90f0efef548e87005b1fb7658e522b6b7f` und Basis `Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`. Damit unterscheiden sich Quantisierungsverfahren und Modellvariante nachweislich; diese Profile sind keine gemeinsame Qwen3.8-Vergleichsreihe. Die gespeicherten Profile wurden nicht geladen oder veraendert.
+
+Nachpruefung der lokalen Artefakte am 2026-10-20: Der lokale GGUF-Kandidat `/home/llm/models/Qwen3.8-27B-UD-Q4_K_S.gguf` hat SHA-256 `75bc9c8adba2842e72f0ab5201aaa07133c5010b566305c09187fcbdcd364017`. Dieser Hash und die Dateigroesse stimmen exakt mit dem LFS-Objekt `Qwen3.8-27B-UD-Q4_K_S.gguf` im Unsloth-Repository-Commit [`4ca720788d1e01f1bff70c033e0d0028fd02e502`](https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/commit/4ca720788d1e01f1bff70c033e0d0028fd02e502) ueberein. Damit ist die Identitaet dieses GGUF-Artefakts fuer die drei LLama-Profile nachgewiesen. Das Repository nennt `Qwen/Qwen3.8-27B` als Basismodell, pinnt in seiner Modellkarte aber keine Revision des Quellcheckpoints. Die aktuelle offizielle Revision [`1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`](https://huggingface.co/Qwen/Qwen3.8-27B/commit/1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0) stimmt mit der im OpenVINO-AWQ-Manifest angegebenen Basisrevision ueberein; daraus folgt nicht, dass der GGUF-Konverter genau diese Revision verwendet hat.
+
+Die vLLM CUDA12- und XPU-Profile zeigen auf dasselbe lokale GPTQ-Artefaktverzeichnis; dessen Modellgewichte und `quantize_config.json` wurden gehasht. Die lokale Dokumentation pinnt GPTQ INT4 symmetrisch, Gruppe 128, `desc_act=false` und gptqmodel 7.3.2, nennt jedoch keine exakte Quellrevision. Das OpenVINO-AWQ-Profil ist ausserdem eine eigene Uncensored-Variante und verwendet asymmetrisches AWQ. Die Metadaten liessen moegliche *Artefakt-identische* Teilkohorten erkennen (drei LLama-Routen und zwei vLLM-Routen), belegten aber keinen gemeinsamen Qwen3.8-Quellcheckpoint mit exakter Revision und gleicher Quantisierung ueber alle sechs Varianten. OpenVINO verwendete ein separates AWQ-Artefakt.
+
+Die Provenienz-Nachpruefung vom 2026-10-20 erfasste pro lokalem Artefakt die verfuegbaren Quellen, Quantisierung, Konvertierungsdaten und Hashes. Fuer die sechs Profile belegten diese Aufzeichnungen keine gemeinsame Modell-/Quantisierungsidentitaet; die spaeteren Laufstatus sind getrennt in den Ergebnisabschnitten dokumentiert.
+
+Die frueheren Readiness-Meldungen fuer `vllm.cuda12` und `llama.cuda12` sind durch aktuelle Reference-Smokes ueberholt. Am 2026-10-20 zeigte Studio fuer LLama CUDA12 alle Voraussetzungen als bereit, erkannte die RTX 4070 und lud das Reference-Profil `6e17d85b-2e91-4074-995f-28acca4a8fb1`. Der CUDA-Chat antwortete mit exakt `OK` (1 Token, TTFT 65 ms); anschliessend wurde das Modell entladen. `libcudart.so.12` und `libcublas.so.12` sind in der verwalteten vLLM-Pythonumgebung vorhanden und wurden von der dynamischen Linkerdiagnose mit den verwalteten Bibliothekspfaden aufgeloest. Es wurde keine System-CUDA-Runtime installiert.
+
+Beim vLLM-CUDA12-Reference-Smoke wurden Runtime-Load, Chat und Unload erfolgreich verifiziert. Die Runtime setzt `VLLM_USE_FLASHINFER_SAMPLER=0`, womit vLLM seinen nativen Sampler statt des FlashInfer-JIT-Pfads verwendet, der andernfalls NVCC/CUDA-Toolkit-Headers voraussetzen kann. Der Chat generierte 16 Tokens; die Antwort begann mit `OK`, war aber nicht exakt `OK`. Der zuvor zurueckgelassene vLLM-XPU-Bridge-Prozess konnte den gemeinsam genutzten Port 8000 blockieren; der XPU-Unload stoppt jetzt den Bridge-Prozess, und der Wechsel XPU-Unload zu CUDA12-Load wurde im selben Studio-Prozess erfolgreich verifiziert. Diese Reference-Ergebnisse belegen nicht die Ladefaehigkeit des grossen Qwen3.8-Benchmarkartefakts.
+
+Die CUDA12-Backend-Runtimes waren fuer die Reference-Profile bereit. Die Qwen3.8-Profile wurden in diesem Stand wegen fehlender gemeinsamer Artefaktprovenienz nicht geladen; Runtime-Abhaengigkeiten wurden nicht installiert oder repariert.
+
+Korrektur zum vLLM-XPU-Readiness-Status: Das gespeicherte Qwen3.8-GPTQ-Profil lud am 2026-10-19 erfolgreich auf der Arc Pro B70 und initialisierte den vLLM-Engine-Core. Ein spaeterer Studio-Neustart am 2026-10-20 meldete alle erforderlichen XPU-Pakete verfuegbar und erkannte die Arc Pro B70. Das gespeicherte Reference-Profil `d6f3ec55-35b2-4913-b8b8-9262516786ce` lud `Qwen2.5-0.5B-Instruct`; der Chat generierte eine Antwort (16 Tokens, 57,6 Decode-Tokens/s), die jedoch nicht exakt der Aufforderung `OK` entsprach. Das Modell wurde entladen. Das Qwen3.8-Benchmarkprofil wurde nicht geladen: gemeinsame Checkpoint- und Quantisierungsprovenienz bleibt unbelegt, daher kein Benchmarklauf.
+
+Nach einem spaeteren `BrokenPipeError` beim Reference-Laden wurde ein zurueckgelassener vLLM-XPU-Bridge-Prozess festgestellt, der Port 8000 belegte. Nach seinem Ende war der Port frei; ein erneuter Load desselben Reference-Profils war erfolgreich. Die Runtime-Telemetrie zeigte `Ready`, das Backend-Log meldete `vLLM Intel XPU is ready`, und der Chat lieferte erneut eine Antwort (16 Tokens, 54,5 Decode-Tokens/s, TTFT 92 ms). Die Antwort war wieder nicht exakt `OK` (`OK, ich werde Ihre Frage beantworten. Was benötigen Sie?`), daher besteht das exakte Prompt-Kriterium weiterhin nicht. Das Modell wurde anschliessend entladen; Studio zeigte `0 active` / `No models loaded`. Das Qwen3.8-Benchmarkprofil blieb unveraendert und wurde wegen fehlender gemeinsamer Provenienz nicht geladen.
+
+SGLang und DotLlm waren in der damaligen Studio-Registrierung keine startbaren Runtime-Varianten. Ein optimierter vLLM-XPU-Lauf mit MTP4 ist ein separater Modus und ist nicht Teil der Baseline-Messwerte dieses Archivs.
+
+### 128k-Laufstatus am 2026-10-20
+
+Studio war bereit (Session `9c750bfb-aacf-4779-ac06-8369b39cc2c8`), und es waren keine Modelle geladen. Die sechs Uncensored-Testprofile und ihre IDs, Artefakte sowie `AutoLaunch=false` wurden in der Studio-Oberflaeche bestaetigt. Der dokumentierte unabhaengige Funktionsnachweis wurde fuer Llama CUDA12 gestartet; er lieferte HTTP 200 und einen vollstaendigen Usage-Chunk, verfehlte aber das vorgeschriebene Abschlusskriterium. Der Runner meldete `finishReason=stop` statt `length`, daher `completionLengthMatchesLimit=false`; gemaess Ablauf wurde die Sequenz beendet und nicht blind wiederholt. Die uebrigen Varianten sind deshalb nicht gelaufen. Die Modelle und Quantisierungen unterscheiden sich; Ergebnisse sind keine backenduebergreifende Rangliste.
+
+Nach Abschluss der asynchronen Diagnostik meldeten LLama Vulkan/CUDA/SYCL sowie vLLM CUDA/XPU Ready; je vLLM-Variante wurde ein passendes Geraet erkannt. Bei SYCL fehlen optionale oneAPI-Buildwerkzeuge, bei OpenVINO ist nur die optionale NPU-Route nicht verfuegbar. Vulkan hat zwei Geraete erkannt, aber fuer dieses Profil ist kein erfolgreicher Qwen3.8-Modellstart belegt. OpenVINO hatte bei einem frueheren 128k-Lauf Swap-Wachstum.
+
+| Backend-Variante / Route | Benchmark-ID | Artefakt | Profilpruefung | Live-Readiness | Ergebnis |
+|---|---|---|---|---|---|
+| `llama.vulkan` / Intel BMG `Vulkan1` | `961df005-45f6-4492-a4c4-37b74d01ca3e` | `Qwen3.8-27B-Uncensored-Q4_K_M.gguf` | neues separates Profil, AutoLaunch aus, Kontext 131072, nur Vulkan1 gewaehlt | Ready; Modell-Load auf Vulkan1 gelang, danach entladen | BLOCKED: Swap stieg waehrend des Loads um rund 7.4 GB; kein 128k-Request gestartet |
+| `llama.cuda12` / RTX 4070 `CUDA0` | `edb7b971-2e55-4b1a-8137-e393a62c4bcf` | `Qwen3.8-4B-Distill-heretic-Q4_K_M.gguf` | bestaetigt, AutoLaunch aus | Ready; Modell mit 131072 Kontext geladen und danach entladen | PASS nach Finish-Reason-Fix; der historische Vorfix-Lauf bleibt fehlgeschlagen |
+| `llama.sycl` / Intel BMG `SYCL0` | `70abb949-f930-4e73-b2de-6d5093f39318` | `Qwen3.8-27B-Uncensored-Q4_K_M.gguf` | bestaetigt, AutoLaunch aus | Zuletzt Ready; fehlende oneAPI-Buildwerkzeuge sind optional | NOT RUN: Sequenz nach Vulkan-Speichergate gestoppt |
+| `openvino` / Intel BMG `GPU.1` | `cc293401-ec43-4409-8904-f7cde7bd0c13` | `Qwen3.8-27B-Uncensored-int4-awq-g128-ov` | bestaetigt, AutoLaunch aus | Zuletzt Ready fuer GPU.1; NPU ist optional und nicht verfuegbar | NOT RUN: Sequenz nach Vulkan-Speichergate gestoppt; frueherer 128k-Lauf zeigte Swap-Wachstum |
+| `vllm.cuda12` / RTX 4070 `cuda:0` | `377c60c4-005c-4a24-94c1-9ee34f59605a` | `Qwen3.8-4B-Heretic-BF16` | bestaetigt, AutoLaunch aus | Zuletzt Ready; CUDA-Umgebung und RTX 4070 erkannt | NOT RUN: Sequenz nach Vulkan-Speichergate gestoppt |
+| `vllm.xpu` / Intel BMG `xpu:0` | `dc760211-a0de-4881-8538-b6476dada33b` | `Qwen3.8-27B-Uncensored-GPTQ-Int4-sym-G128-MTP-BF16` | bestaetigt, AutoLaunch aus | Zuletzt Ready; XPU-Umgebung und Arc Pro B70 erkannt | NOT RUN: Sequenz nach Vulkan-Speichergate gestoppt |
+
+Messung Llama CUDA12: Run-ID `QWEN38-BENCH-V1-01`; Prompt 128011 Tokens, Completion 128 Tokens, TTFT 60677.92 ms, clientseitige Decode-Rate 51.56 Tokens/s, Wall-Zeit 63592.33 ms, Finish-Reason `stop`; `completionLengthMatchesLimit=false`, `fits131072Context=true`. Vor dem Request waren 18 GiB RAM verfuegbar und 3.6 GiB Swap belegt; nach dem Entladen waren 18 GiB RAM verfuegbar und 3.6 GiB Swap belegt. Waerend des Laufs wurde kein Swap-Wachstum beobachtet.
+
+Das GGUF-Artefakt hatte SHA-256 `1c372d2c9b48ce9a959e07d9c44bc6ed4f8594ccc97adc9e87cd5e88d77a2867`; Format/Quantisierung: GGUF Q4_K_M. Gepinnter Artefaktstand: `mradermacher/Qwen3.8-4B-Distill-heretic-GGUF@a1dce4577c0bba6be0ad5bd9a141e27b9458d49c`. Das Artefakt ist damit reproduzierbar identifiziert; eine separate Revision des zugrundeliegenden Basis-Checkpoints ist in den vorhandenen Nachweisen nicht angegeben.
+
+Nach dem ungueltigen Messlauf wurde das Modell entladen. Studio blieb bereit und zeigte `0 active` / `No models loaded`. Der Runner wurde nicht erneut aufgerufen. Die restlichen Varianten blieben gemaess Stop-Regel `NOT RUN`.
+
+### Finish-Reason-Fix am 2026-10-21
+
+Die Ursache fuer `finishReason=stop` trotz exakt ausgeschöpftem Completion-Limit lag in der Normalisierung des OpenAI-kompatiblen Backend-Ergebnisses: Adapter, die keinen Grund liefern, verwenden den Standardwert `stop`. Die Middleware meldet nun `length`, wenn die gemeldete Completion-Tokenzahl das positive `MaxTokens`-Limit erreicht und kein Tool-Call vorliegt. Der Studio-Build und der Neustart ueber EsiMCP waren erfolgreich; die Host-Readiness wurde bestaetigt.
+
+Seit diesem Fix wurde kein neuer Benchmark-Request ausgefuehrt. Der bisherige CUDA12-Lauf bleibt ein fehlgeschlagener historischer Messwert; die fuenf weiteren Varianten bleiben `NOT RUN`. Die gespeicherten Artefakte belegen keine gemeinsame Checkpoint-/Quantisierungs-Provenienz fuer alle sechs Profile.
+
+### Post-Fix-Rerun-Pruefung am 2026-10-21
+
+Studio war bereit (Session `c7d777b0-ab4d-4122-a0e1-0312be1708b6`), und es waren keine Modelle geladen. Der Rerun wurde vor dem Laden gestoppt: `MemAvailable` betrug 16,322,203,648 Bytes (rund 15.2 GiB) und lag damit unter der geforderten Schwelle von 16 GiB. Der belegte Swap betrug 3,730,038,784 Bytes (rund 3.5 GiB); die spaeteren `vmstat`-Intervalle zeigten keinen weiteren Swap-Ein-/Ausgang. Es wurde kein Backend geladen und kein Runner aufgerufen. Der Post-Fix-Rerun bleibt `BLOCKED`; der historische CUDA12-Fehllauf und die fuenf `NOT RUN`-Ergebnisse bleiben unveraendert.
+
+Eine erneute RAM-Pruefung um 07:59 CEST ergab 16,189,972,480 Bytes (rund 15.1 GiB) verfuegbar und 3,729,362,944 Bytes Swap belegt. Die Mindestschwelle blieb unterschritten; weiterhin wurde kein Modell geladen.
+
+Zur sicheren Freigabe wurden nur die Datei-Caches der gespeicherten Benchmark-Gewichtsdateien per `POSIX_FADV_DONTNEED` adressiert; Modelldateien wurden nicht veraendert. Eine weitere Pruefung um 08:01 CEST ergab 16,865,628,160 Bytes (rund 15.7 GiB) verfuegbar und 3,727,523,840 Bytes Swap belegt. Auch dieser Wert liegt unter 16 GiB; daher blieb der CUDA12-Post-Fix-Lauf ungestartet.
+
+### Fortsetzung am 2026-10-21: Post-Fix-CUDA-PASS und Vulkan-Speichergate
+
+Der Post-Fix-Lauf auf `llama.cuda12` wurde spaeter mit dem exakt gespeicherten Profil `edb7b971-2e55-4b1a-8137-e393a62c4bcf` abgeschlossen. Run-ID `QWEN38-BENCH-V1-01`: HTTP 200, Prompt/Completion 128011/128 Tokens, Finish-Reason `length`, TTFT 60530.31 ms, clientseitige Decode-Rate 51.32 Tokens/s, Wall-Zeit 63466.52 ms und Serverrate rund 2.07 Tokens/s. `completionLengthMatchesLimit=true` und `fits131072Context=true`; dieser Lauf ist PASS. Die Vorfix-Messung bleibt als historischer FAIL dokumentiert. Das Modell wurde entladen; Studio war bereit und zeigte keine geladenen Modelle.
+
+Das CUDA-Artefakt ist `Qwen3.8-4B-Distill-heretic-Q4_K_M.gguf`, SHA-256 `1c372d2c9b48ce9a959e07d9c44bc6ed4f8594ccc97adc9e87cd5e88d77a2867`, aus `mradermacher/Qwen3.8-4B-Distill-heretic-GGUF@a1dce4577c0bba6be0ad5bd9a141e27b9458d49c`. Die genaue Revision des Basis-Checkpoints ist nicht dokumentiert. Beim Start des Laeufs war die RAM-Schwelle von 16 GiB erfuellt; der exakte Bytewert des Pre-Run-Snapshots wurde nicht in den erhaltenen Messdaten protokolliert. Nach dem Entladen wurden 17,659,752,448 Bytes verfuegbarer RAM und rund 3.73 GB belegter Swap gemeldet; spaetere `vmstat`-Intervalle zeigten keine weitere Swap-Aktivitaet.
+
+Der anschliessende Vulkan-Versuch im selben Studio-Prozess, in dem zuvor CUDA initialisiert worden war, scheiterte beim Laden mit `InvalidOperationException`: LLamaSharp kann seine prozessweite `NativeLibraryConfig` nach dem Laden nicht mehr von CUDA auf Vulkan umstellen. Die Debug-Pause wurde untersucht und die Session gestoppt. Ein frischer Studio-Prozess wurde danach ueber `debug.launchProject` gestartet (Session `fc98c752-f966-4b0d-8d87-a39ca51760c8`); Build und Host-Readiness waren erfolgreich und es waren keine Modelle geladen. Damit ist der erkannte native Konflikt auf denselben Prozess beschraenkt; fuer weitere LLama-Varianten ist jeweils ein frischer Studio-Prozess erforderlich.
+
+Das urspruengliche Vulkanprofil `174a9acb-46d6-4103-a514-fa8f832bbee0` hatte weder Vulkan1 noch Vulkan2 explizit ausgewaehlt. Es blieb unveraendert. Stattdessen wurde ein separates, exakt geroutetes Benchmarkprofil erstellt: `961df005-45f6-4492-a4c4-37b74d01ca3e`, Name `Benchmark - Qwen3.8 - Llama Vulkan Uncensored Vulkan1`, Modell `/home/llm/models/Qwen3.8-27B-Uncensored-Q4_K_M.gguf`, Variante `llama.vulkan`, Kontext 131072, `AutoLaunch=false`, `Vulkan1=1` und `Vulkan2=0`. Die Runtime war Ready und der Modell-Load im frischen Studio-Prozess gelang auf Vulkan1; der native CUDA-zu-Vulkan-Konflikt trat nach dem Neustart nicht erneut auf.
+
+Vor dem Vulkan-Load waren 17,981,517,824 Bytes RAM verfuegbar und 3,707,895,808 Bytes Swap belegt; die 16-GiB-Schwelle war erfuellt und die letzten `vmstat`-Intervalle zeigten keine Swap-Ausgaenge. Beim Load stieg der belegte Swap auf 11,130,998,784 Bytes (Zunahme 7,423,102,976 Bytes); `vmstat` bestaetigte starken Swap-I/O. Der 128k-Runner wurde gemaess Stop-Regel nicht gestartet. Das Modell wurde anschliessend entladen; Studio meldete 0 geladene Modelle und blieb bereit. Danach waren 24,807,993,344 Bytes RAM verfuegbar und 10,974,314,496 Bytes Swap belegt. Die folgenden `vmstat`-Intervalle zeigten Swap-Ein- aber keine weiteren Swap-Ausgaenge. Vulkan bleibt fuer den Benchmark BLOCKED; SYCL, OpenVINO und beide vLLM-Varianten bleiben nach dem Stop der Sequenz NOT RUN.
+
+**Gesamtstatus: BLOCKED / nicht abgeschlossen.** CUDA12 ist als Einzelbackend-Funktionsnachweis PASS. Vulkan, SYCL und OpenVINO sind wegen Swap-Wachstum beim Modellstart BLOCKED; vLLM CUDA12 ist wegen eines Model-Load-Fehlers vor Inferenz BLOCKED; vLLM XPU wurde nach der Stop-Regel nicht gestartet. Die Artefakte belegen keine gemeinsame Checkpoint-Revision und Quantisierung fuer alle sechs Varianten; die CUDA-Probe ist daher keine backenduebergreifende Vergleichsreihe.
+
+### Fortsetzung am 2026-10-21: Live-Pruefung und SYCL-Stop
+
+Studio wurde ueber `debug.launchProject` mit `src/Esi.AI/Esi.AI.Studio/Esi.AI.Studio.csproj` gestartet. Build und Start waren erfolgreich; Session `492b8a67-bd30-47e1-bcdf-96b932347d45` wurde bestaetigt und `debug.check.host.readyness` meldete Ready. Die `/v1/models`-Antwort listete die gespeicherten Profile; vor dem SYCL-Load waren keine Modelle geladen und alle angezeigten Benchmarkprofile hatten `AutoLaunch=false`. Die Profile sind nicht gleichbedeutend mit Runtime-Readiness.
+
+Die Live-Readiness-Pruefung auf der Backends-Seite meldete fuer alle sechs Varianten Ready: Llama Vulkan erkannte Vulkan1 (Intel BMG), Llama CUDA12 erkannte CUDA0 (RTX 4070), Llama SYCL erkannte SYCL0 (Arc Pro B70), OpenVINO meldete GPU.1 (Arc Pro B70; die optionale NPU fehlte), vLLM CUDA12 erkannte `cuda:0` (RTX 4070) und vLLM XPU `xpu:0` (Arc Pro B70). Vor jedem Load blieb der Host ohne geladene Modelle.
+
+| Variante / Route | Profil-ID und Artefakt | Profilpruefung / Live-Readiness | Ergebnis dieser Fortsetzung |
+|---|---|---|---|
+| `llama.vulkan` / Vulkan1 | `961df005-45f6-4492-a4c4-37b74d01ca3e`; `Qwen3.8-27B-Uncensored-Q4_K_M.gguf` | Separates Profil, Vulkan1 an/Vulkan2 aus, Kontext 131072, AutoLaunch aus. Runtime Ready; frueherer Load in frischer Session gelang. | BLOCKED: frueherer Load erhoehte Swap um 7,423,102,976 Bytes. Kein 128k-Request. |
+| `llama.cuda12` / CUDA0 | `edb7b971-2e55-4b1a-8137-e393a62c4bcf`; `Qwen3.8-4B-Distill-heretic-Q4_K_M.gguf` | Profil bestaetigt; Runtime Ready, RTX 4070 erkannt. | PASS als Einzelbackend-Funktionsnachweis; Messdaten und Hash stehen im vorherigen Ergebnisabschnitt. Nicht erneut ausgefuehrt. |
+| `llama.sycl` / SYCL0 | `70abb949-f930-4e73-b2de-6d5093f39318`; `Qwen3.8-27B-Uncensored-Q4_K_M.gguf` | Profil im UI ausgewaehlt und bestaetigt, AutoLaunch aus, Kontext 131072; Route SYCL0, Arc Pro B70; Runtime Ready. | BLOCKED beim Modellstart: belegter Swap stieg von 1,240,367,104 auf 1,241,935,872 Bytes (+1,568,768 Bytes, ca. 1.5 MiB). Studio wurde sofort ueber `debug.stop` beendet; kein Runner und kein 128k-Request. |
+| `openvino` / GPU.1 | `cc293401-ec43-4409-8904-f7cde7bd0c13`; `Qwen3.8-27B-Uncensored-int4-awq-g128-ov` | Profil bestaetigt; Runtime Ready, GPU.1 Arc Pro B70 verfuegbar; NPU optional/nicht verfuegbar. | NOT RUN: Folge der SYCL-Swap-Stop-Regel; Studio beendet. |
+| `vllm.cuda12` / `cuda:0` | `377c60c4-005c-4a24-94c1-9ee34f59605a`; `Qwen3.8-4B-Heretic-BF16` | Profil bestaetigt; Runtime Ready, RTX 4070 verfuegbar. | NOT RUN: Folge der SYCL-Swap-Stop-Regel; Studio beendet. |
+| `vllm.xpu` / `xpu:0` | `dc760211-a0de-4881-8538-b6476dada33b`; `Qwen3.8-27B-Uncensored-GPTQ-Int4-sym-G128-MTP-BF16` | Profil bestaetigt; Runtime Ready, Arc Pro B70 verfuegbar. | NOT RUN: Folge der SYCL-Swap-Stop-Regel; Studio beendet. |
+
+SYCL-Ressourcen direkt vor dem Load: 22,539,694,080 Bytes verfuegbarer RAM und 1,240,367,104 Bytes belegter Swap. Beim laufenden Load wurden 22,302,691,328 Bytes verfuegbarer RAM und 1,241,935,872 Bytes Swap gemessen. Wegen der Swap-Zunahme wurde die Sequenz beendet, ohne einen Request zu senden. Nach dem Stop war Port 7010 frei, es gab keine aktive Debugsession, verfuegbarer RAM betrug 22,867,292,160 Bytes und Swap blieb bei 1,241,935,872 Bytes; die vier folgenden `vmstat`-Intervalle zeigten kein Swap-in/-out.
+
+Das SYCL-Artefakt wurde lokal als GGUF Q4_K_M identifiziert. SHA-256: `4c5e2db039e9325ac7724c8846c71356a24ad1cdfa28002d73ecb6be645f9675`. Fuer diesen lokalen Hash ist in den vorhandenen Nachweisen keine exakte Quellcheckpoint-Revision samt quantisierungserhaltender Konvertierungsprovenienz belegt. Die Laufdaten koennen daher nur als getrennte Einzelbackend-Funktionsnachweise verstanden werden; eine gemeinsame Rangliste der sechs Backends bleibt blockiert.
+
+**Aktueller Status:** CUDA12 PASS; Vulkan, SYCL, OpenVINO und vLLM CUDA12 BLOCKED; vLLM XPU NOT RUN. Aufgabe und Backendvergleich bleiben unvollstaendig, bis die Swap-Stop-Ursache sicher beherrscht und die geforderte gemeinsame Artefaktprovenienz belegt ist.
+
+### Fortsetzung am 2026-10-21: OpenVINO-Load durch Swap-Anstieg gestoppt
+
+Studio wurde nach einer erneuten Freigabepruefung in Session `09ea1483-c739-4a8a-8a2a-508a552f3dd5` gestartet und meldete Host Ready. Die Live-API bestaetigte die sechs exakten Benchmark-IDs als entladen. OpenVINO meldete nach vollstaendiger Requirements-Pruefung GPU.1 (Arc Pro B70) als verfuegbar; die optionale NPU fehlte. Das ausgewählte Profil war `cc293401-ec43-4409-8904-f7cde7bd0c13`, `Benchmark - Qwen3.8 - OpenVINO Uncensored AWQ`, Artefakt `/home/llm/models/Qwen3.8-27B-Uncensored-int4-awq-g128-ov`, Kontext 131072, AutoLaunch aus. Der Load wurde auf GPU.1 gestartet; die UI zeigte die exakte Profil-ID und `Loading on GPU.1`.
+
+Direkt vor dem Load: 21,959,282,688 Bytes RAM verfuegbar und 1,241,935,872 Bytes Swap belegt. Beim Load/cancel-Versuch meldete `free -b` 25,808,175,104 Bytes RAM verfuegbar und 5,879,291,904 Bytes Swap belegt, ein Swap-Anstieg um 4,637,356,032 Bytes. `Cancel loading` wurde betaetigt, die UI meldete danach weiterhin `1 loading`; daher wurde Studio ueber `debug.stop` beendet. EsiMCP bestaetigte die Session-Termination. Es wurde weder der Benchmark-Runner gestartet noch eine Inferenzanfrage gesendet.
+
+Nach dem Stop: keine aktive Debugsession, Port 7010 frei, 25,934,610,432 Bytes RAM verfuegbar und 5,327,212,544 Bytes Swap belegt. Fuenf nachfolgende `vmstat`-Samples zeigten Swap-in, aber keinen weiteren Swap-out; die Swap-Belegung sank dabei geringfuegig. Das ist kein Freigabenachweis fuer weitere Modellstarts: Die Ausfuehrungssequenz bleibt nach dem OpenVINO-Swap-Anstieg gestoppt.
+
+OpenVINO ist damit BLOCKED durch Swap-Wachstum waehrend des Modellstarts. vLLM CUDA12 und vLLM XPU bleiben NOT RUN. Die aktualisierte Statusfolge ueber sechs Varianten lautet: CUDA12 PASS (Einzelbackend-Funktionsnachweis), Vulkan BLOCKED, SYCL BLOCKED, OpenVINO BLOCKED, vLLM CUDA12 NOT RUN, vLLM XPU NOT RUN. Gemeinsame Checkpoint-/Quantisierungsprovenienz ist weiterhin nicht belegt; die Benchmark und ein direkter Vergleich sind nicht abgeschlossen.
+
+### Fortsetzung am 2026-10-21: vLLM CUDA12 Load-Fehler
+
+Nach dem OpenVINO-Stopp wurde ein neuer Ressourcencheck durchgefuehrt. Eine bereits aktive Studio-Session `70a166cb-83c4-4baa-87db-28280d6a9244` meldete Host Ready; Port 7010 gehoerte zum Studio-Prozess. Die Backends-Seite zeigte keine geladenen Modelle. Verfuegbarer RAM lag vor dem vLLM-Schritt bei 25,354,797,056 Bytes, belegter Swap bei 4,585,525,248 Bytes. `vmstat` zeigte in den Folgeintervallen keinen Swap-out und sinkende Swap-Nutzung.
+
+Die Live-Readiness fuer `vllm.cuda12` meldete `vllm-requirements.txt` vorhanden, Python-Umgebung `/home/llm/.venvs/esi-ai-vllm/bin/python`, importierbare Pakete `grpc`, `google.protobuf` und `vllm`, sowie einen von PyTorch erkannten CUDA-Beschleuniger. Eine RTX 4070 auf `cuda:0` war verfuegbar. Profil `377c60c4-005c-4a24-94c1-9ee34f59605a` war exakt ausgewaehlt: `Benchmark - Qwen3.8 - vLLM CUDA12 Uncensored BF16`, Modell `/home/llm/models/Qwen3.8-4B-Heretic-BF16`, `AutoLaunch=false`, max model length 131072, GPU memory utilization 88%, dtype BF16 und KV-Cache FP8.
+
+Der UI-Ladebefehl startete das Profil; die UI bestaetigte die exakte Profil-ID und `Loading on vLLM CUDA 12`. Der Load endete vor einer Inferenz mit `System.InvalidOperationException`: `Engine core initialization failed. See root cause above. Failed core proc(s): {}`. Die enthaltene Python-Traceback fuehrte ueber `vllm/v1/engine/core_client.py` `launch_core_engines` und `wait_for_engine_startup`; die eigentliche Root-Cause-Zeile war in der Exception nicht enthalten. Der pausierte Debug-Event wurde untersucht: `reason=exception`, Stack in `VllmCuda12Runtime.LoadAsync` (Zeilen 150 und 164), keine InnerException. Der Exception-Frame stellte keine lokalen Variablen zur Verfuegung; ein Fortsetzen waere daher nicht begruendet gewesen. Es wurde nicht fortgesetzt und der Fehler nicht wiederholt.
+
+Waehrend der Ladephase blieb Swap laut `free`/`vmstat` stabil bis leicht fallend; verfuegbarer RAM blieb ueber 16 GiB. Nach dem Load-Fehler und Studio-Stopp: keine aktive Debugsession, Port 7010 frei, 25,385,152,512 Bytes RAM verfuegbar, 4,539,957,248 Bytes Swap belegt. Die folgenden `vmstat`-Intervalle zeigten Swap-in, aber keinen weiteren Swap-out. Es wurde kein Benchmark-Runner und keine Inferenzanfrage gestartet. `vllm.cuda12` ist BLOCKED durch den fehlgeschlagenen Model-Load vor der Probe; `vllm.xpu` bleibt nach dem Fehler-Stop NOT RUN.
+
+Die sechs aktuellen Ergebnisse sind damit: `llama.cuda12` PASS als Einzelbackend-Funktionsnachweis; `llama.vulkan`, `llama.sycl`, `openvino` und `vllm.cuda12` BLOCKED (Model-Load-Swap-Anstieg bzw. Load-Fehler vor Inferenz); `vllm.xpu` NOT RUN. Es gibt keine fertigen 128k-Messwerte fuer diese vier blockierten/ungetesteten Backends und keine gemeinsame Checkpoint-/Quantisierungsprovenienz fuer einen direkten Vergleich.
+
+### Provenienz-Nachpruefung am 2026-10-21
+
+Die lokalen Artefaktmanifeste und Modellkonfigurationen wurden nach der vLLM-CUDA12-Load-Exception erneut schreibgeschuetzt geprueft; es wurden keine Gewichte geladen oder geaendert. Der OpenVINO-`conversion_manifest.json` belegt `JonathanColetti/Qwen3.8-27B-Uncensored@5bb7aa90f0efef548e87005b1fb7658e522b6b7f` als Quelle und `Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0` als Basisrevision, konvertiert in asymmetrisches AWQ INT4, Gruppe 128. Das lokale GPTQ-`quantize_config.json` belegt GPTQ INT4, symmetrisch, Gruppe 128, `desc_act=false` und `gptqmodel:7.3.2`; es nennt keine Quellrepository- oder Basisrevision. Die dazugehoerige lokale `README.md` fehlt. Das lokale BF16-4B-`config.json` meldet `model_type=qwen3_5` und `Qwen3_5ForConditionalGeneration`, aber weder `_name_or_path` noch Quellrepository oder Revision; auch in diesem Modellordner liegt keine `README.md`.
+
+Die ausgewaehlten LLama-Artefakte sind ausserdem nicht dieselbe Modellvariante: CUDA12 verwendet Qwen3.8-4B-Distill-Heretic GGUF Q4_K_M, Vulkan und SYCL verwenden Qwen3.8-27B-Uncensored GGUF Q4_K_M. vLLM CUDA12 verwendet das BF16-4B-Heretic-Verzeichnis; vLLM XPU verwendet das 27B-GPTQ-Artefakt; OpenVINO verwendet das 27B-AWQ-Artefakt. Damit unterscheiden sich ueber die sechs Profile Modellgroesse/-variante und Quantisierung/Fertigungsweg (Q4_K_M GGUF, BF16, symmetrisches GPTQ INT4 und asymmetrisches AWQ INT4). Eine fehlende Revisionsangabe allein waere bereits unzureichend; die nachgewiesenen Varianten- und Quantisierungsunterschiede schliessen eine gemeinsame Modell-/Quantisierungs-Vergleichsreihe mit diesen bestehenden Dateien zusaetzlich aus.
+
+Die gepinnten Upstream-Modellkarten wurden ebenfalls geprueft. Die [27B-GGUF-Karte](https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/tree/45d0fc0ad6cfcf9eeee6008ddaea925536409b18) nennt `Qwen/Qwen3.8-27B` als Base und llama.cpp `a94d563ed`, pinnt aber keine Revision des Base- oder des abliterierten BF16-Checkpoints. Die [vLLM-XPU-GPTQ-Karte](https://huggingface.co/kernelogic/Qwen3.8-27B-Uncensored-GPTQ-Int4-sym-G128-MTP-BF16/tree/bd3f8d56b9dc617c995ec5a3ececa486d1d064be) beschreibt die Kette `Qwen/Qwen3.8-27B` -> `JonathanColetti/Qwen3.8-27B-Uncensored` (BF16 abliteration) -> GPTQ mit gptqmodel 7.3.2; sie pinnt keinen exakten Quellcommit. Die [vLLM-CUDA12-Heretic-Karte](https://huggingface.co/hakergeniusz/Qwen3.8-4B-Heretic/tree/e4ab412fbdfd59af65cc5fe2bd82a37f5781f4f3) nennt `empero-ai/Qwen3.8-4B-Distill` als Base und Heretic Trial 23, ohne exakte Base-Revision. Diese Distillation-Karte wiederum nennt [Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B) als Architektur-Base und Qwen3.8 2.4T als Teacher; sie ist ein eigenstaendiges 4B-Distillmodell und nicht der Qwen3.8-27B-Checkpoint. Die [CUDA12-GGUF-Karte](https://huggingface.co/mradermacher/Qwen3.8-4B-Distill-heretic-GGUF/tree/a1dce4577c0bba6be0ad5bd9a141e27b9458d49c) verweist auf `valiolla/Qwen3.8-4B-Distill-heretic`; die lokale CUDA-Probe hatte dieselbe Artefakt-SHA-256 wie das dortige Q4_K_M-LFS-Objekt, doch die upstream Heretic-/Distill-Quellrevision ist nicht gepinnt. Nur das OpenVINO-Manifest pinnt sowohl die 27B-Uncensored-Quellrevision als auch die offizielle 27B-Basisrevision. Commits der herunterladbaren Modellrepos pinnen die jeweilige Artefaktversion, nicht automatisch deren Quellcheckpoint-Revision.
+
+**Ergebnis der Anforderung:** Fuer die vorhandene Sechser-Profilgruppe kann gemeinsame Checkpoint- und Quantisierungsprovenienz nicht belegt werden und ist anhand der Artefaktunterschiede auch nicht als gemeinsame Vergleichsgruppe gegeben. Ein Ersatz durch neue, passend konvertierte Artefakte waere ein neuer Benchmarkaufbau, nicht eine Dokumentationskorrektur. In dieser Fortsetzung wurden gemaess Benchmark-Regeln keine Modelle geladen, keine Runtime-Abhaengigkeiten installiert oder repariert und kein weiterer Backendlauf versucht: die vorherigen Swap-Stopps und der vLLM-CUDA12-Load-Fehler beenden die laufende Sequenz. Daher bleibt der Gesamtstatus `BLOCKED / nicht abgeschlossen`; ein PASS oder direkter Backendvergleich waere nicht vertretbar.
+
+| Profil-ID / Backend | Aktuell verwendetes Artefakt und belegte Lineage | Provenienz-Gap | Laufstatus |
+|---|---|---|---|
+| `edb7b971-2e55-4b1a-8137-e393a62c4bcf` / Llama CUDA12 | 4B Distill-Heretic, GGUF Q4_K_M; Datei-SHA `1c372d2c9b48ce9a959e07d9c44bc6ed4f8594ccc97adc9e87cd5e88d77a2867`; [gepinntes GGUF-Repo](https://huggingface.co/mradermacher/Qwen3.8-4B-Distill-heretic-GGUF/tree/a1dce4577c0bba6be0ad5bd9a141e27b9458d49c) verweist auf `valiolla/Qwen3.8-4B-Distill-heretic`; dessen Heretic-Modell stammt aus der Qwen3.8-4B-Distillation in die Qwen3.5-4B-Basisarchitektur. | Exakte Distill-/Heretic-Quellcommits fehlen; anderer 4B-Distill-Zweig und andere Quantisierung als die 27B-Profile. | PASS, nur individueller Funktionsnachweis. |
+| `961df005-45f6-4492-a4c4-37b74d01ca3e` / Llama Vulkan | Qwen3.8-27B-Uncensored GGUF Q4_K_M; [gepinntes 27B-GGUF-Repo](https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/tree/45d0fc0ad6cfcf9eeee6008ddaea925536409b18), llama.cpp `a94d563ed`, Base `Qwen/Qwen3.8-27B`. | Repo-Karte nennt keine exakte Base-/Uncensored-BF16-Revision; kein ueberlieferter lokaler Dateihash fuer diese Vulkan-Probe. | BLOCKED: Swap-Anstieg um rund 7.42 GB beim Load; keine Inferenz. |
+| `70abb949-f930-4e73-b2de-6d5093f39318` / Llama SYCL | Qwen3.8-27B-Uncensored GGUF Q4_K_M, gleicher 27B-GGUF-Kandidat wie Vulkan. | Gleiche fehlende Quellrevision wie Vulkan; andere Modellgroesse/Variante als CUDA12 und andere Quantisierung als GPTQ/AWQ. | BLOCKED: Swap-Anstieg beim Load; keine Inferenz. |
+| `cc293401-ec43-4409-8904-f7cde7bd0c13` / OpenVINO | 27B-Uncensored OpenVINO IR, asymmetrisches AWQ INT4 g128; Manifest pinnt `JonathanColetti/Qwen3.8-27B-Uncensored@5bb7aa90f0efef548e87005b1fb7658e522b6b7f` und Basis `Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`. | Diese Revisionen belegen nur den OpenVINO-Zweig; AWQ ist nicht die GGUF-, BF16- oder GPTQ-Quantisierung der anderen Profile. | BLOCKED: Swap-Anstieg um rund 4.64 GB beim Load; keine Inferenz. |
+| `377c60c4-005c-4a24-94c1-9ee34f59605a` / vLLM CUDA12 | 4B Heretic BF16; [gepinntes Modell-Repo](https://huggingface.co/hakergeniusz/Qwen3.8-4B-Heretic/tree/e4ab412fbdfd59af65cc5fe2bd82a37f5781f4f3) nennt `empero-ai/Qwen3.8-4B-Distill` als Base und Heretic Trial 23; das Distill-Modell basiert architektonisch auf Qwen3.5-4B und nutzt Qwen3.8 als Teacher. | Exakte Distill-/Heretic-Quellrevision fehlt; separates 4B-Distillmodell, nicht derselbe 27B-Checkpoint oder Q4_K_M quantisierte CUDA-Probe. | BLOCKED: Engine-Core-Loadfehler vor Inferenz. |
+| `dc760211-a0de-4881-8538-b6476dada33b` / vLLM XPU | 27B-Uncensored GPTQ INT4 symmetrisch g128, MTP-Tensoren BF16; [gepinntes GPTQ-Repo](https://huggingface.co/kernelogic/Qwen3.8-27B-Uncensored-GPTQ-Int4-sym-G128-MTP-BF16/tree/bd3f8d56b9dc617c995ec5a3ececa486d1d064be) beschreibt `Qwen/Qwen3.8-27B` -> Uncensored BF16 -> GPTQ mit gptqmodel 7.3.2. | Artefakt-Repo-Commit ist bekannt, aber Quellcheckpoint- und Uncensored-BF16-Commits fehlen; GPTQ bleibt verschieden von GGUF Q4_K_M und OpenVINO AWQ. | NOT RUN nach Sequenzstopp. |
+
+Die Matrix schliesst den Nachweisversuch fuer die **bestehenden** Profile ab: nicht alle sechs haben eine gemeinsame Modellvariante, einen gemeinsamen Quellcheckpoint oder dieselbe Quantisierung. Ein gemeinsamer Benchmark waere erst nach Auswahl eines einzelnen gepinnten Quellartefakts, Erstellung sechs dokumentierter backendgerechter Ableitungen mit erhaltenen Invarianten und separater erneuter Sicherheits-/Readiness-Freigabe moeglich. Diese neuen Artefakte und Laeufe wurden in dieser Fortsetzung nicht begonnen.
+
+### Abschlussbericht der ausgefuehrten Sequenz am 2026-10-21
+
+| Profil-ID | Variante / Route | Status | Lauf-/Stop-Ergebnis |
+|---|---|---|---|
+| `edb7b971-2e55-4b1a-8137-e393a62c4bcf` | Llama CUDA12 / RTX 4070 `CUDA0` | PASS, individueller Funktionsnachweis | Prompt/Completion 128011/128; TTFT 60530.31 ms; Decode 51.32 Tokens/s; Wall 63466.52 ms; Finish `length`; beide Pflichtflags `true`. Vorlauf-RAM mindestens 16 GiB (exakter Snapshot fehlt); nach Unload 17,659,752,448 Bytes RAM verfuegbar und rund 3.73 GB Swap belegt. SHA-256 oben dokumentiert. |
+| `961df005-45f6-4492-a4c4-37b74d01ca3e` | Llama Vulkan / Intel BMG `Vulkan1` | BLOCKED | Modell-Load verursachte +7,423,102,976 Bytes Swap; kein 128k-Request. Vorher 17,981,517,824 Bytes RAM verfuegbar / 3,707,895,808 Bytes Swap; nach Entladen 24,807,993,344 Bytes RAM / 10,974,314,496 Bytes Swap. |
+| `70abb949-f930-4e73-b2de-6d5093f39318` | Llama SYCL / Intel BMG `SYCL0` | BLOCKED | Beim Modell-Load stieg Swap um 1,568,768 Bytes; kein Request. Vorher 22,539,694,080 Bytes RAM / 1,240,367,104 Bytes Swap; nach Stop 22,867,292,160 Bytes RAM / 1,241,935,872 Bytes Swap. |
+| `cc293401-ec43-4409-8904-f7cde7bd0c13` | OpenVINO / Intel BMG `GPU.1` | BLOCKED | Modell-Load/cancel zeigte +4,637,356,032 Bytes Swap; kein Request. Vorher 21,959,282,688 Bytes RAM / 1,241,935,872 Bytes Swap; nach Stop 25,934,610,432 Bytes RAM / 5,327,212,544 Bytes Swap. |
+| `377c60c4-005c-4a24-94c1-9ee34f59605a` | vLLM CUDA12 / RTX 4070 `cuda:0` | BLOCKED | Modell-Load endete vor Inferenz mit `Engine core initialization failed`; Root-Cause-Zeile nicht im Exception-Frame verfuegbar; nicht blind wiederholt. Vorher 25,354,797,056 Bytes RAM / 4,585,525,248 Bytes Swap; nach Stop 25,385,152,512 Bytes RAM / 4,539,957,248 Bytes Swap. |
+| `dc760211-a0de-4881-8538-b6476dada33b` | vLLM XPU / Intel BMG `xpu:0` | NOT RUN | Kein Load und keine Inferenz nach dem vLLM CUDA12 Load-Fehler und dem Sequenzstopp. |
+
+**Abschlussstatus: BLOCKED / Benchmark nicht abgeschlossen.** Von sechs Profilen liegt ein gueltiger 128k-Funktionsnachweis vor; drei andere Modellstarts stoppten wegen Swap-Wachstum, der vLLM-CUDA12-Load scheiterte vor Inferenz, und vLLM XPU wurde nach der Stop-Regel nicht gestartet. Es gibt keine Messwerte fuer die fuenf nicht bestandenen/nicht gestarteten Proben und keine gemeinsame Artefaktprovenienz fuer einen direkten Sechs-Backend-Vergleich. Diese Status- und Messwertzusammenfassung ist der Abschlussbericht der tatsaechlich ausgefuehrten Sequenz; sie behauptet keinen erfolgreichen Abschluss des urspruenglich geplanten Sechs-Backend-Benchmarks.

@@ -1,7 +1,3 @@
-[submodule "origins/litellm"]
-	path = origins/litellm
-	url = https://github.com/BerriAI/litellm.git
-
 [submodule "origins/localai"]
 	path = origins/localai
 	url = https://github.com/mudler/LocalAI.git

@@ -1,0 +1,209 @@
+.inference-logs {
+    display: grid;
+    gap: 1rem;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 1.5rem 0 3rem;
+}
+
+.inference-logs-header,
+.inference-log-heading,
+.inference-log-title,
+.inference-log-correlation,
+.inference-log-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: .8rem;
+}
+
+.inference-logs-header {
+    align-items: end;
+}
+
+.inference-logs-header h1 {
+    margin: 0;
+}
+
+.inference-logs-header p:last-child {
+    max-width: 48rem;
+    margin: .5rem 0 0;
+    color: #665f54;
+    line-height: 1.5;
+}
+
+.inference-logs-eyebrow {
+    margin: 0 0 .4rem;
+    color: #b65b38;
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+}
+
+.inference-logs-button {
+    min-height: 2.4rem;
+    padding: .5rem .8rem;
+    border: 1px solid #236b70;
+    background: #236b70;
+    color: white;
+    cursor: pointer;
+    font: inherit;
+    font-size: .82rem;
+    font-weight: 700;
+}
+
+.inference-logs-button:disabled {
+    cursor: wait;
+    opacity: .65;
+}
+
+.inference-logs-button-secondary {
+    min-height: 2rem;
+    border-color: #c9c3b8;
+    background: transparent;
+    color: #665f54;
+}
+
+.inference-logs-alert,
+.inference-logs-empty {
+    padding: 1rem;
+    border: 1px solid #d9d4ca;
+    background: #fbfaf6;
+    color: #665f54;
+}
+
+.inference-logs-alert {
+    border-color: #d9a99e;
+    border-left: 3px solid #8b3f2f;
+    color: #8b3f2f;
+}
+
+.inference-log-list {
+    display: grid;
+    gap: .75rem;
+}
+
+.inference-log-card {
+    min-width: 0;
+    padding: 1rem;
+    border: 1px solid #d9d4ca;
+    background: #fbfaf6;
+}
+
+.inference-log-heading {
+    align-items: start;
+}
+
+.inference-log-title {
+    justify-content: start;
+    flex-wrap: wrap;
+}
+
+.inference-log-title strong {
+    overflow-wrap: anywhere;
+}
+
+.inference-log-heading time,
+.inference-log-correlation,
+.inference-log-metrics {
+    color: #756f65;
+    font-size: .78rem;
+}
+
+.inference-log-correlation {
+    justify-content: start;
+    flex-wrap: wrap;
+    margin-top: .7rem;
+}
+
+.inference-log-correlation code {
+    overflow-wrap: anywhere;
+    color: #236b70;
+}
+
+.inference-log-status {
+    padding: .25rem .45rem;
+    border: 1px solid #c9c3b8;
+    color: #665f54;
+    font-size: .67rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+.inference-log-status-succeeded {
+    border-color: #a6c7c7;
+    color: #236b70;
+}
+
+.inference-log-status-failed,
+.inference-log-status-timedout,
+.inference-log-status-interrupted {
+    border-color: #d9a99e;
+    color: #8b3f2f;
+}
+
+.inference-log-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .75rem 1.5rem;
+    margin: .9rem 0 0;
+}
+
+.inference-log-metrics div {
+    display: grid;
+    gap: .2rem;
+}
+
+.inference-log-metrics dt {
+    font-size: .68rem;
+    text-transform: uppercase;
+}
+
+.inference-log-metrics dd {
+    margin: 0;
+    color: #302d28;
+    font-weight: 600;
+}
+
+.inference-log-error {
+    margin-top: .8rem;
+    padding: .6rem .75rem;
+    border-left: 3px solid #8b3f2f;
+    background: #f7e9e5;
+    color: #8b3f2f;
+}
+
+.inference-log-error summary {
+    cursor: pointer;
+    font-weight: 700;
+}
+
+.inference-log-error p {
+    margin: .5rem 0 0;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+}
+
+.inference-log-actions {
+    justify-content: end;
+    margin-top: .75rem;
+}
+
+@media (max-width: 650px) {
+    .inference-logs-header,
+    .inference-log-heading {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .inference-logs-header .inference-logs-button {
+        width: 100%;
+    }
+
+    .inference-log-metrics {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}

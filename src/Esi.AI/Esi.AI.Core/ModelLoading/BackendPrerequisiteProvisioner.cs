@@ -127,6 +127,7 @@ public sealed class BackendPrerequisiteProvisioner
         switch (route)
         {
             case "cuda":
+                BackendRuntimePaths.PrependCudaLibraryPaths();
                 var cudaCheck = CreateNativeCheck(
                     "cuda12-runtime",
                     "CUDA 12 runtime",
@@ -136,6 +137,14 @@ public sealed class BackendPrerequisiteProvisioner
                 checks.Add(canInstall && !cudaCheck.IsAvailable
                     ? cudaCheck with { CanSolve = true, Detail = $"{cudaCheck.Detail} A verified CUDA 12 package is available in the backend gallery." }
                     : cudaCheck);
+                if (cudaCheck.IsAvailable)
+                {
+                    checks.Add(CreateNativeDependencyCheck(
+                        "cuda-runtime-dependencies",
+                        "CUDA 12 runtime dependencies",
+                        Path.Combine(nativeRoot, "cuda12", "libggml-cuda.so"),
+                        "The CUDA 12 runtime dependencies are available to the dynamic linker."));
+                }
                 checks.Add(CreateCommandCheck(
                     "cuda-driver",
                     "NVIDIA driver",

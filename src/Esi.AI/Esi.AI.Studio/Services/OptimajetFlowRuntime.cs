@@ -29,6 +29,7 @@ public sealed class OptimajetFlowRuntime(IConfiguration configuration) : IOptima
 {
     private readonly ConcurrentDictionary<string, Lazy<Task>> preparedSchemes = new(StringComparer.Ordinal);
     private readonly RouteActionProvider actionProvider = new();
+    private IWorkflowBuilder? workflowBuilder;
     private WorkflowRuntime? workflowRuntime;
     private SqliteProvider? persistenceProvider;
 
@@ -50,6 +51,7 @@ public sealed class OptimajetFlowRuntime(IConfiguration configuration) : IOptima
             .AsSingleServer()
             .Start();
 
+        workflowBuilder = builder;
         persistenceProvider = provider;
         workflowRuntime = runtime;
         return Task.CompletedTask;
@@ -75,12 +77,18 @@ public sealed class OptimajetFlowRuntime(IConfiguration configuration) : IOptima
             throw new ArgumentException("A workflow route target is required.", nameof(routeTarget));
 
         var runtime = workflowRuntime ?? throw new InvalidOperationException("The Optimajet workflow runtime has not started.");
+        var builder = workflowBuilder ?? throw new InvalidOperationException("The Optimajet workflow builder has not started.");
         var provider = persistenceProvider ?? throw new InvalidOperationException("The Optimajet persistence provider has not started.");
         var schemeCode = CreateSchemeCode(definition, routeTarget);
         var saveTask = preparedSchemes.GetOrAdd(
             schemeCode,
             _ => new Lazy<Task>(
-                () => provider.SaveSchemeAsync(schemeCode, false, [], CreateSchemeXml(schemeCode, routeTarget), []),
+                async () =>
+                {
+                    await provider.SaveSchemeAsync(schemeCode, false, [], CreateSchemeXml(schemeCode, routeTarget), [])
+                        .ConfigureAwait(false);
+                    await builder.CreateNewProcessSchemeAsync(schemeCode, null).ConfigureAwait(false);
+                },
                 LazyThreadSafetyMode.ExecutionAndPublication)).Value;
         await saveTask.WaitAsync(cancellationToken).ConfigureAwait(false);
 

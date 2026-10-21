@@ -1,6 +1,10 @@
+using System.Diagnostics;
+using System.Text;
 using Esi.AI.Core.Chat;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Esi.AI.Studio.Services;
 
@@ -49,26 +53,156 @@ public sealed class InferenceScheduler : IInferenceScheduler, IDisposable
 public sealed class InferenceService(
     ModelRuntime modelRuntime,
     IInferenceScheduler scheduler,
-    IInferenceFailureCoordinator? failureCoordinator = null) : IInferenceService
+    IInferenceFailureCoordinator? failureCoordinator = null,
+    ILogger<InferenceService>? logger = null,
+    InferenceLogService? inferenceLogService = null) : IInferenceService
 {
     private readonly IInferenceFailureCoordinator effectiveFailureCoordinator = failureCoordinator ?? NoOpInferenceFailureCoordinator.Instance;
+    private readonly ILogger<InferenceService> effectiveLogger = logger ?? NullLogger<InferenceService>.Instance;
 
     /// <inheritdoc />
-    public Task<GenerationResult> GenerateAsync(
+    public async Task<GenerationResult> GenerateAsync(
         PersistedChat chat,
         ChatExchangeRequest request,
         string backend,
         Func<string, Task>? onDelta = null,
-        CancellationToken cancellationToken = default) =>
-        scheduler.RunAsync(
-            () => GenerateCoreAsync(chat, request, backend, onDelta, cancellationToken),
-            cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var inferenceId = $"inf-{Guid.NewGuid():N}";
+        var imageCount = request.Images?.Count ?? 0;
+        var messageCount = chat.Messages.Count + 1;
+        var modelName = string.IsNullOrWhiteSpace(request.ModelPath) ? "unknown" : Path.GetFileNameWithoutExtension(request.ModelPath);
+        using var scope = effectiveLogger.BeginScope(new Dictionary<string, object?>
+        {
+            ["InferenceId"] = inferenceId,
+            ["InferencePath"] = "SignalR",
+            ["Backend"] = backend,
+            ["Model"] = modelName,
+            ["BackendVariantId"] = request.BackendVariantId,
+            ["MessageCount"] = messageCount,
+            ["ImageCount"] = imageCount,
+            ["ToolCount"] = 0,
+            ["Streaming"] = onDelta is not null
+        });
+        var stopwatch = Stopwatch.StartNew();
+        effectiveLogger.LogInformation(
+            "Inference {InferenceId} started via SignalR for backend {Backend}, model {Model}, {MessageCount} messages, {ImageCount} images, {ToolCount} tools; streaming={Streaming}.",
+            inferenceId,
+            backend,
+            modelName,
+            messageCount,
+            imageCount,
+            0,
+            onDelta is not null);
+
+        InferenceLog? inferenceLog = null;
+        Exception? fatalBackendFailure = null;
+        GenerationResult result;
+        try
+        {
+            if (inferenceLogService is not null)
+            {
+                var text = string.Join("\n", chat.Messages.Select(message => message.Content).Append(request.Content));
+                var estimatedPrefillTokens = Math.Max(1, (Encoding.UTF8.GetByteCount(text) + 3) / 4);
+                inferenceLog = await inferenceLogService.InferenceLog_CreateAsync(
+                    new InferenceLog(
+                        Guid.NewGuid(),
+                        inferenceId,
+                        DateTimeOffset.UtcNow,
+                        "SignalR",
+                        backend,
+                        modelName,
+                        request.BackendVariantId,
+                        messageCount,
+                        imageCount,
+                        0,
+                        onDelta is not null,
+                        InferenceLogStatus.Running,
+                        estimatedPrefillTokens),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            result = await scheduler.RunAsync(
+                () => GenerateCoreAsync(chat, request, backend, onDelta, inferenceId, exception => fatalBackendFailure = exception, cancellationToken),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            effectiveLogger.LogInformation("Inference {InferenceId} canceled after {ElapsedMilliseconds} ms.", inferenceId, stopwatch.ElapsedMilliseconds);
+            if (inferenceLog is not null && inferenceLogService is not null)
+            {
+                await inferenceLogService.InferenceLog_UpdateAsync(
+                    inferenceLog with
+                    {
+                        Status = InferenceLogStatus.Canceled,
+                        CompletedAtUtc = DateTimeOffset.UtcNow,
+                        DurationMilliseconds = stopwatch.ElapsedMilliseconds,
+                        ErrorType = nameof(OperationCanceledException),
+                        ErrorMessage = "The caller cancelled the inference request."
+                    },
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+        catch (Exception exception)
+        {
+            effectiveLogger.LogError(exception, "Inference {InferenceId} failed after {ElapsedMilliseconds} ms.", inferenceId, stopwatch.ElapsedMilliseconds);
+            try
+            {
+                if (inferenceLog is not null && inferenceLogService is not null)
+                {
+                    await inferenceLogService.InferenceLog_UpdateAsync(
+                        inferenceLog with
+                        {
+                            Status = InferenceLogStatus.Failed,
+                            CompletedAtUtc = DateTimeOffset.UtcNow,
+                            DurationMilliseconds = stopwatch.ElapsedMilliseconds,
+                            ErrorType = exception.GetType().FullName ?? exception.GetType().Name,
+                            ErrorMessage = exception.Message
+                        },
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                if (fatalBackendFailure is not null)
+                    await effectiveFailureCoordinator.FailAsync(fatalBackendFailure, inferenceId).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+
+        if (inferenceLog is not null && inferenceLogService is not null)
+        {
+            await inferenceLogService.InferenceLog_UpdateAsync(
+                inferenceLog with
+                {
+                    Status = InferenceLogStatus.Succeeded,
+                    OutputTokenCount = result.TokenCount,
+                    FinishReason = result.FinishReason,
+                    CompletedAtUtc = DateTimeOffset.UtcNow,
+                    DurationMilliseconds = stopwatch.ElapsedMilliseconds
+                },
+                CancellationToken.None).ConfigureAwait(false);
+        }
+
+        effectiveLogger.LogInformation(
+            "Inference {InferenceId} completed after {ElapsedMilliseconds} ms with {TokenCount} tokens and finish reason {FinishReason}.",
+            inferenceId,
+            stopwatch.ElapsedMilliseconds,
+            result.TokenCount,
+            result.FinishReason);
+        return result;
+    }
 
     private async Task<GenerationResult> GenerateCoreAsync(
         PersistedChat chat,
         ChatExchangeRequest request,
         string backend,
         Func<string, Task>? onDelta,
+        string inferenceId,
+        Action<Exception> markFatalBackendFailure,
         CancellationToken cancellationToken)
     {
         var content = request.Content.Trim();
@@ -161,7 +295,7 @@ public sealed class InferenceService(
         }
         catch (Exception exception)
         {
-            await effectiveFailureCoordinator.FailAsync(exception).ConfigureAwait(false);
+            markFatalBackendFailure(exception);
             throw;
         }
     }

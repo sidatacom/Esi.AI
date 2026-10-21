@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using Esi.AI.Backend.Abstractions;
 using Esi.AI.Backend.Vllm.Cuda12;
@@ -31,6 +32,17 @@ public sealed class VllmCuda12BackendTests
 
         Assert.IsInstanceOfType<VllmCuda12Runtime>(runtime);
         Assert.AreEqual("vllm.cuda12", runtime.Descriptor.Id);
+    }
+
+    [TestMethod]
+    public void ConfigurePythonEnvironment_WhenCuda12BridgeStarts_UsesNativeSampler()
+    {
+        var startInfo = new ProcessStartInfo();
+        startInfo.Environment["VLLM_USE_FLASHINFER_SAMPLER"] = "1";
+
+        VllmCuda12Runtime.ConfigurePythonEnvironment(startInfo, "python3");
+
+        Assert.AreEqual("0", startInfo.Environment["VLLM_USE_FLASHINFER_SAMPLER"]);
     }
 
     [TestMethod]

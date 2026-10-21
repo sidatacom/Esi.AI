@@ -35,3 +35,10 @@ These reports are not local Studio measurements and are not directly comparable 
 - Local model path: `/home/llm/.cache/esi-ai/models/Qwen3.8-27B-GPTQ-Int4-sym-G128-MTP-BF16`
 
 Only local measurements from this Esi.AI session are listed above. External reference measurements are intentionally excluded from this overview. Studio was not running during the recorded local tests.
+
+## Archived backend test evidence
+
+The backend test record is historical evidence, not an active execution plan. It preserves the recorded provenance checks, runtime outcomes, and blockers.
+
+- [Backend test evidence archive](backend-test-plan.md)
+- [Qwen3.8 backend benchmark results and provenance](../../../../benchmarks/qwen38-backend-benchmark.md)

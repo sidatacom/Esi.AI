@@ -6,23 +6,24 @@ description: Prepare and validate the common backend reference model family.
 Prepare the reference artifacts before running any active backend variant.
 
 Canonical rule:
-- Use one logical Qwen2.5 Instruct reference-model family and the same revision where the backend supports it.
-- The physical artifact is backend-specific: GGUF for LLama, OpenVINO IR for OpenVINO, and Transformers/Safetensors for vLLM.
-- Do not silently substitute the existing SmolLM2 or Qwen 1.5B artifact and call it the common reference model. Record any migration gap as BLOCKED.
+- This prompt validates each saved Reference profile as an independent functional smoke test. It does not certify artifacts for cross-backend performance comparison.
+- Each backend may use its own model artifact, format, checkpoint, variant, revision, and quantization. Differences in those artifacts do not block load/chat/unload testing.
+- Record the exact profile ID, model path, and artifact format actually tested. Do not describe the artifacts as a common reference family or compare their performance unless their provenance is independently verified.
+- Do not silently substitute an artifact during a test. Use the model path saved in the Reference profile and report that exact artifact.
 
 Required artifact matrix:
 
-| Consumer | Required format | Required identity | Required setting |
-|---|---|---|---|
-| LLama Vulkan/CUDA/SYCL | GGUF | Qwen2.5 Instruct GGUF, pinned revision | `ESI_LLAMA_MODEL_PATH` |
-| OpenVINO | OpenVINO IR | Qwen2.5 Instruct INT4, pinned revision | `ESI_OPENVINO_MODEL_PATH` |
-| vLLM CUDA/XPU | Transformers/Safetensors | Qwen2.5 Instruct, pinned revision | `ESI_VLLM_REFERENCE_MODEL` |
+| Consumer | Example format | Profile-specific setting |
+|---|---|---|
+| LLama Vulkan/CUDA/SYCL | GGUF | `ESI_LLAMA_MODEL_PATH` or the saved profile path |
+| OpenVINO | OpenVINO IR | `ESI_OPENVINO_MODEL_PATH` or the saved profile path |
+| vLLM CUDA/XPU | Transformers/Safetensors | `ESI_VLLM_REFERENCE_MODEL` or the saved profile path |
 
 Checks:
-1. Verify each artifact exists, is readable, and has the expected format.
-2. Verify all artifacts identify the same Qwen2.5 Instruct family and record revision/hash where available.
-3. Verify the GGUF path is accepted by the local model scanner and the Transformers id is resolvable by the configured Python environment.
-4. Verify no download occurs without explicit approval; missing artifacts are BLOCKED.
-5. Record model path/id, format, revision, size, and source without exposing credentials.
+1. Verify the exact artifact path saved in each profile exists, is readable, and is accepted by that backend.
+2. Run the existing profile without silently substituting a different model or downloading an artifact.
+3. A missing path, incompatible format, unavailable runtime, or failed load/chat/unload is BLOCKED or FAIL for that backend; it does not block independent tests of other profiles.
+4. Record the profile ID, backend variant, device route, model path, artifact format, and load/chat/unload outcome. Record checkpoint, revision, quantization, conversion details, and hashes when available, but missing provenance does not block a functional smoke test.
+5. Do not claim cross-backend artifact equivalence or performance comparability without verified provenance. SGLang and dotLLM artifacts are not required for this plan and remain DEFERRED.
 
-Result is PASS only when every active backend row has its required artifact. SGLang and dotLLM artifacts are not required for this plan and remain DEFERRED.
+Result is PASS only when every active backend's own Reference profile loads, returns a non-empty response, and unloads successfully. Each result applies only to the exact artifact tested.

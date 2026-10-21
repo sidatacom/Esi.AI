@@ -1,8 +1,11 @@
+using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using Esi.AI.Core.Chat;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Esi.AI.Studio.Services;
 
@@ -11,13 +14,16 @@ public sealed class OpenAiCompatibleBackendMiddleware(
     ModelRuntime modelRuntime,
     IInferenceScheduler scheduler,
     IInferenceFailureCoordinator? failureCoordinator = null,
-    InferenceTimeoutPolicy? timeoutPolicy = null)
+    InferenceTimeoutPolicy? timeoutPolicy = null,
+    ILogger<OpenAiCompatibleBackendMiddleware>? logger = null,
+    InferenceLogService? inferenceLogService = null)
 {
     private const int MaximumImageBytes = 20 * 1024 * 1024;
     private const int MaximumOpenVinoTools = 32;
     private const int MaximumOpenVinoOutputTokens = 4096;
     private readonly IInferenceFailureCoordinator effectiveFailureCoordinator = failureCoordinator ?? NoOpInferenceFailureCoordinator.Instance;
     private readonly InferenceTimeoutPolicy effectiveTimeoutPolicy = timeoutPolicy ?? new();
+    private readonly ILogger<OpenAiCompatibleBackendMiddleware> effectiveLogger = logger ?? NullLogger<OpenAiCompatibleBackendMiddleware>.Instance;
 
     /// <summary>Converts an OpenAI request into the shared backend-neutral request.</summary>
     public OpenAiBackendChatRequest Prepare(OpenAiChatRequest request, ModelLoadStatus status)
@@ -55,25 +61,184 @@ public sealed class OpenAiCompatibleBackendMiddleware(
     }
 
     /// <summary>Runs a normalized request through the selected backend and preserves streaming semantics.</summary>
+    /// <param name="request">The normalized backend request.</param>
+    /// <param name="onDelta">The optional callback for generated text deltas.</param>
+    /// <param name="cancellationToken">The caller cancellation token.</param>
+    /// <param name="inferenceId">The optional correlation ID assigned at the request boundary.</param>
+    /// <param name="isStreaming">Whether the client requested a streamed response.</param>
+    /// <returns>The generation result.</returns>
     public async Task<GenerationResult> GenerateAsync(
         OpenAiBackendChatRequest request,
         Func<string, Task>? onDelta,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        string? inferenceId = null,
+        bool isStreaming = false)
     {
-        var decision = await effectiveTimeoutPolicy.CalculateAsync(request, cancellationToken).ConfigureAwait(false);
-        using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutCancellation.CancelAfter(decision.Timeout);
+        inferenceId = string.IsNullOrWhiteSpace(inferenceId) ? $"inf-{Guid.NewGuid():N}" : inferenceId;
+        var imageCount = request.Messages.Sum(message => message.Images?.Count ?? 0);
+        using var scope = effectiveLogger.BeginScope(new Dictionary<string, object?>
+        {
+            ["InferenceId"] = inferenceId,
+            ["InferencePath"] = "OpenAI",
+            ["Backend"] = request.Backend,
+            ["Model"] = request.Model,
+            ["BackendVariantId"] = request.BackendVariantId,
+            ["MessageCount"] = request.Messages.Count,
+            ["ImageCount"] = imageCount,
+            ["ToolCount"] = request.Tools?.Count ?? 0,
+            ["Streaming"] = isStreaming
+        });
+        var stopwatch = Stopwatch.StartNew();
+        effectiveLogger.LogInformation(
+            "Inference {InferenceId} started via OpenAI on backend {Backend}, model {Model}, variant {BackendVariantId}, {MessageCount} messages, {ImageCount} images, {ToolCount} tools; streaming={Streaming}.",
+            inferenceId,
+            request.Backend,
+            request.Model,
+            request.BackendVariantId,
+            request.Messages.Count,
+            imageCount,
+            request.Tools?.Count ?? 0,
+            isStreaming);
 
+        InferenceLog? inferenceLog = null;
+        Exception? fatalBackendFailure = null;
+        GenerationResult result;
         try
         {
-            return await scheduler.RunAsync(
-                () => GenerateCoreAsync(request, onDelta, timeoutCancellation.Token),
-                timeoutCancellation.Token).ConfigureAwait(false);
+            if (inferenceLogService is not null)
+            {
+                inferenceLog = await inferenceLogService.InferenceLog_CreateAsync(
+                    new InferenceLog(
+                        Guid.NewGuid(),
+                        inferenceId,
+                        DateTimeOffset.UtcNow,
+                        "OpenAI",
+                        request.Backend,
+                        request.Model,
+                        request.BackendVariantId,
+                        request.Messages.Count,
+                        imageCount,
+                        request.Tools?.Count ?? 0,
+                        isStreaming,
+                        InferenceLogStatus.Running),
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            var decision = await effectiveTimeoutPolicy.CalculateAsync(request, cancellationToken).ConfigureAwait(false);
+            if (inferenceLog is not null && inferenceLogService is not null)
+            {
+                inferenceLog = await inferenceLogService.InferenceLog_UpdateAsync(
+                    inferenceLog with { EstimatedPrefillTokens = decision.EstimatedPrefillTokens },
+                    cancellationToken).ConfigureAwait(false);
+            }
+
+            using var timeoutCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCancellation.CancelAfter(decision.Timeout);
+
+            try
+            {
+                result = await scheduler.RunAsync(
+                    () => GenerateCoreAsync(request, onDelta, inferenceId, exception => fatalBackendFailure = exception, timeoutCancellation.Token),
+                    timeoutCancellation.Token).ConfigureAwait(false);
+                result = ApplyCompletionLimitFinishReason(result, request.Options.MaxTokens);
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeoutCancellation.IsCancellationRequested)
+            {
+                throw new InferenceTimeoutException(decision);
+            }
+
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && timeoutCancellation.IsCancellationRequested)
+        catch (InferenceTimeoutException exception)
         {
-            throw new InferenceTimeoutException(decision);
+            effectiveLogger.LogWarning(
+                exception,
+                "Inference {InferenceId} timed out after {ElapsedMilliseconds} ms.",
+                inferenceId,
+                stopwatch.ElapsedMilliseconds);
+            if (inferenceLog is not null && inferenceLogService is not null)
+            {
+                await inferenceLogService.InferenceLog_UpdateAsync(
+                    inferenceLog with
+                    {
+                        Status = InferenceLogStatus.TimedOut,
+                        CompletedAtUtc = DateTimeOffset.UtcNow,
+                        DurationMilliseconds = stopwatch.ElapsedMilliseconds,
+                        ErrorType = exception.GetType().FullName,
+                        ErrorMessage = exception.Message
+                    },
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+
+            throw;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            effectiveLogger.LogInformation("Inference {InferenceId} canceled after {ElapsedMilliseconds} ms.", inferenceId, stopwatch.ElapsedMilliseconds);
+            if (inferenceLog is not null && inferenceLogService is not null)
+            {
+                await inferenceLogService.InferenceLog_UpdateAsync(
+                    inferenceLog with
+                    {
+                        Status = InferenceLogStatus.Canceled,
+                        CompletedAtUtc = DateTimeOffset.UtcNow,
+                        DurationMilliseconds = stopwatch.ElapsedMilliseconds,
+                        ErrorType = nameof(OperationCanceledException),
+                        ErrorMessage = "The caller cancelled the inference request."
+                    },
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+        catch (Exception exception)
+        {
+            effectiveLogger.LogError(exception, "Inference {InferenceId} failed after {ElapsedMilliseconds} ms.", inferenceId, stopwatch.ElapsedMilliseconds);
+            try
+            {
+                if (inferenceLog is not null && inferenceLogService is not null)
+                {
+                    await inferenceLogService.InferenceLog_UpdateAsync(
+                        inferenceLog with
+                        {
+                            Status = InferenceLogStatus.Failed,
+                            CompletedAtUtc = DateTimeOffset.UtcNow,
+                            DurationMilliseconds = stopwatch.ElapsedMilliseconds,
+                            ErrorType = exception.GetType().FullName ?? exception.GetType().Name,
+                            ErrorMessage = exception.Message
+                        },
+                        CancellationToken.None).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                if (fatalBackendFailure is not null)
+                    await effectiveFailureCoordinator.FailAsync(fatalBackendFailure, inferenceId).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+
+        if (inferenceLog is not null && inferenceLogService is not null)
+        {
+            await inferenceLogService.InferenceLog_UpdateAsync(
+                inferenceLog with
+                {
+                    Status = InferenceLogStatus.Succeeded,
+                    OutputTokenCount = result.TokenCount,
+                    FinishReason = result.FinishReason,
+                    CompletedAtUtc = DateTimeOffset.UtcNow,
+                    DurationMilliseconds = stopwatch.ElapsedMilliseconds
+                },
+                CancellationToken.None).ConfigureAwait(false);
+        }
+
+        effectiveLogger.LogInformation(
+            "Inference {InferenceId} completed after {ElapsedMilliseconds} ms with {TokenCount} tokens and finish reason {FinishReason}.",
+            inferenceId,
+            stopwatch.ElapsedMilliseconds,
+            result.TokenCount,
+            result.FinishReason);
+        return result;
     }
 
     internal static ChatMessage ParseMessage(OpenAiChatMessage message)
@@ -128,6 +293,8 @@ public sealed class OpenAiCompatibleBackendMiddleware(
     private async Task<GenerationResult> GenerateCoreAsync(
         OpenAiBackendChatRequest request,
         Func<string, Task>? onDelta,
+        string inferenceId,
+        Action<Exception> markFatalBackendFailure,
         CancellationToken cancellationToken)
     {
         try
@@ -157,9 +324,20 @@ public sealed class OpenAiCompatibleBackendMiddleware(
         }
         catch (Exception exception)
         {
-            await effectiveFailureCoordinator.FailAsync(exception).ConfigureAwait(false);
+            markFatalBackendFailure(exception);
             throw;
         }
+    }
+
+    private static GenerationResult ApplyCompletionLimitFinishReason(GenerationResult result, int maxTokens)
+    {
+        if (maxTokens <= 0 ||
+            result.TokenCount < maxTokens ||
+            result.FinishReason != "stop" ||
+            result.ToolCalls is { Count: > 0 })
+            return result;
+
+        return result with { FinishReason = "length" };
     }
 
     private Task<GenerationResult> GenerateOpenVinoAsync(

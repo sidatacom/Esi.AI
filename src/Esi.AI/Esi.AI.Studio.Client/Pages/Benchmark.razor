@@ -1,0 +1,261 @@
+@page "/benchmark"
+@rendermode InteractiveWebAssembly
+@implements IAsyncDisposable
+@using Esi.AI.Models
+@using Esi.AI.Studio.Client.Services
+@using Esi.AI.Studio.Contracts
+@inject IDataService DataService
+@inject IModelRuntimeEvents RuntimeEvents
+@inject IBenchmarkRunEvents BenchmarkEvents
+@inject HttpClient HttpClient
+@inject ILogger<Benchmark> Logger
+
+<main class="benchmark-page">
+    <header class="benchmark-header">
+        <div>
+            <p class="benchmark-eyebrow">QWEN3.8 / STREAMING PERFORMANCE</p>
+            <h1>Benchmark</h1>
+            <p class="benchmark-lede">Vergleiche geladene Modellprofile mit derselben Streaming-Anfrage. Jeder gestartete Lauf speichert Messwerte und einen Profil- sowie Request-Snapshot. Läufe werden nacheinander ausgeführt; es wird kein Profil automatisch geladen.</p>
+        </div>
+        <div class="benchmark-api"><span aria-hidden="true"></span> OpenAI-kompatible API</div>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <div class="benchmark-alert" role="alert">@errorMessage</div>
+    }
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <div class="benchmark-notice" role="status">@statusMessage</div>
+    }
+
+    <div class="benchmark-layout">
+        <section class="benchmark-panel benchmark-setup" aria-labelledby="setup-heading">
+            <div class="benchmark-section-heading">
+                <span>01</span>
+                <div><p>SETUP</p><h2 id="setup-heading">Profil auswählen</h2></div>
+                <button class="benchmark-refresh" type="button" @onclick="RefreshAsync" disabled="@(isLoading || isRunning)">Aktualisieren</button>
+            </div>
+
+            @if (isLoading)
+            {
+                <p class="benchmark-muted">Profile und Runtime-Status werden geladen ...</p>
+            }
+            else if (BenchmarkProfiles.Count == 0)
+            {
+                <p class="benchmark-muted">Kein Benchmark-Profil gefunden. Erstelle oder wähle unter Backends ein gespeichertes Profil, dessen Name mit „Benchmark“ beginnt.</p>
+            }
+            else
+            {
+                <label class="benchmark-field" for="benchmark-backend">
+                    <span>Backend</span>
+                    <select id="benchmark-backend" value="@(selectedBackend?.ToString() ?? string.Empty)" @onchange="SelectBackend" disabled="@isRunning">
+                        <option value="">Backend auswählen ...</option>
+                        @foreach (var backend in AvailableBackends)
+                        {
+                            <option value="@backend">@GetBackendDisplayName(backend)</option>
+                        }
+                    </select>
+                </label>
+                <label class="benchmark-field" for="benchmark-profile">
+                    <span>Gespeichertes Profil</span>
+                    <select id="benchmark-profile" value="@(selectedProfileId?.ToString() ?? string.Empty)" @onchange="SelectProfile" disabled="@(isRunning || SelectedBackendProfiles.Count == 0)">
+                        <option value="">Profil auswählen ...</option>
+                        @foreach (var profile in SelectedBackendProfiles)
+                        {
+                            <option value="@profile.Id">@profile.Name · @profile.BackendVariantId</option>
+                        }
+                    </select>
+                </label>
+                @if (SelectedProfile is { } selectedProfile)
+                {
+                    <div class="benchmark-profile-card">
+                        <div><span>Backend</span><strong>@selectedProfile.BackendVariantId</strong></div>
+                        <div><span>Model path</span><code title="@selectedProfile.ModelPath">@selectedProfile.ModelPath</code></div>
+                        <div><span>Runtime state</span>
+                            <strong class="@(IsSelectedProfileLoaded ? "benchmark-ready" : "benchmark-not-ready")">
+                                @(IsSelectedProfileLoaded ? "Loaded" : "Not loaded")
+                            </strong>
+                        </div>
+                    </div>
+                    @if (!IsSelectedProfileLoaded)
+                    {
+                        <p class="benchmark-footnote">Lade genau dieses Profil zuerst unter <a href="/backends">Backends</a>. Benchmark startet oder entlädt keine Modelle.</p>
+                    }
+                }
+            }
+        </section>
+
+        <section class="benchmark-panel benchmark-controls" aria-labelledby="run-heading">
+            <div class="benchmark-section-heading">
+                <span>02</span>
+                <div><p>SEQUENTIAL RUNS</p><h2 id="run-heading">Lauf konfigurieren</h2></div>
+            </div>
+
+            <div class="benchmark-mode">
+                <article>
+                    <div class="benchmark-mode-heading"><span class="mode-mark">S</span><div><h3>Kurzbenchmark</h3><p>Ein Warm-up, danach Messläufe und Median.</p></div></div>
+                    <div class="benchmark-input-grid">
+                        <label class="benchmark-field"><span>Kontext-Wiederholungen</span><input type="number" min="1" max="127850" @bind="shortRepeatCount" @bind:event="oninput" disabled="@isRunning" /></label>
+                        <label class="benchmark-field"><span>Warm-ups</span><input type="number" min="0" max="20" @bind="warmups" @bind:event="oninput" disabled="@isRunning" /></label>
+                        <label class="benchmark-field"><span>Messläufe</span><input type="number" min="1" max="20" @bind="measuredRuns" @bind:event="oninput" disabled="@isRunning" /></label>
+                    </div>
+                    <button class="benchmark-primary" type="button" @onclick="RunShortBenchmarkAsync" disabled="@(!CanStartBenchmark)">
+                        @(isRunning && activeRunKind == "measured" ? $"Lauf {currentRun}/{totalRuns} ..." : "Kurzbenchmark starten")
+                    </button>
+                </article>
+
+                <article class="benchmark-long-mode">
+                    <div class="benchmark-mode-heading"><span class="mode-mark mode-mark-long">128</span><div><h3>128k-Kontextprobe</h3><p>Ein einzelner Lauf, erst nach erfolgreichem Kurzbenchmark.</p></div></div>
+                    <label class="benchmark-field"><span>Kontext-Wiederholungen</span><input type="number" min="1" max="127850" @bind="longRepeatCount" @bind:event="oninput" disabled="@isRunning" /></label>
+                    <button class="benchmark-secondary" type="button" @onclick="RunLongBenchmarkAsync" disabled="@(!CanStartLongBenchmark)">
+                        @(isRunning && activeRunKind == "long" ? "128k-Lauf läuft ..." : "128k-Probe starten")
+                    </button>
+                </article>
+            </div>
+
+            @if (isRunning)
+            {
+                <div class="benchmark-progress" role="status">
+                    <span>@(activeRunKind == "long" ? "128k-Kontextprobe" : $"{activeRunKind} {currentRun} / {totalRuns}")</span>
+                    <button class="benchmark-cancel" type="button" @onclick="CancelRun">Abbrechen</button>
+                </div>
+            }
+            <p class="benchmark-footnote">Jeder Request sendet max_tokens=128, temperature=0, top_p=1, top_k=1, min_p=0, repetition_penalty=1, seed=42, reasoning_effort=none, Streaming und Usage. Keine parallelen Requests, Tools, Bilder oder Chat-Historie.</p>
+        </section>
+    </div>
+
+    <section class="benchmark-panel benchmark-results" aria-labelledby="results-heading">
+        <div class="benchmark-section-heading">
+            <span>03</span>
+            <div><p>MEASUREMENTS</p><h2 id="results-heading">Ergebnisse</h2></div>
+            @if (results.Count > 0)
+            {
+                <button class="benchmark-refresh" type="button" @onclick="ClearResults" disabled="@isRunning">Aktuelle Ansicht leeren</button>
+            }
+        </div>
+        @if (results.Count == 0)
+        {
+            <div class="benchmark-empty">Noch keine Messwerte in der aktuellen Sitzung. Ein Lauf wird erst durch deine Aktion gestartet.</div>
+        }
+        else
+        {
+            @if (shortSummary is { } summary)
+            {
+                <div class="benchmark-summary">
+                    <div><span>Median client decode</span><strong>@FormatRate(summary.MedianClientDecodeTokensPerSecond)</strong></div>
+                    <div><span>Median server rate</span><strong>@FormatRate(summary.MedianServerTokensPerSecond)</strong></div>
+                    <div><span>128-token limit</span><strong>@(summary.AllMeasuredRunsReachedTokenLimit ? "Erreicht" : "Nicht bei allen Läufen")</strong></div>
+                </div>
+            }
+            <div class="benchmark-table-wrap">
+                <table class="benchmark-table">
+                    <thead>
+                        <tr><th>Art</th><th>Run</th><th>Prompt</th><th>Completion</th><th>Finish</th><th>TTFT</th><th>Client decode</th><th>Wall time</th><th>Server rate</th><th>131k fit</th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var result in results)
+                        {
+                            <tr @key="result.RunId">
+                                <td>@(result.Kind == "measured" ? "Messung" : result.Kind == "warmup" ? "Warm-up" : "128k")</td>
+                                <td><code>@result.RunId</code></td>
+                                <td>@(result.PromptTokens?.ToString() ?? "—")</td>
+                                <td>@result.CompletionTokens</td>
+                                <td>@(result.FinishReason ?? "—")</td>
+                                <td>@FormatMilliseconds(result.ClientTimeToFirstTokenMs)</td>
+                                <td>@FormatRate(result.ClientDecodeTokensPerSecond)</td>
+                                <td>@FormatMilliseconds(result.ClientWallTimeMs)</td>
+                                <td>@FormatRate(result.ServerTokensPerSecond)</td>
+                                <td>@(result.Fits131072Context ? "Ja" : "Nein")</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+            @if (results.Any(result => !result.CompletionLengthMatchesLimit || !result.Fits131072Context))
+            {
+                <p class="benchmark-warning" role="status">Mindestens ein Lauf hat das Ausgabelimit nicht erreicht oder passt nicht in 131072 Tokens. Für einen fairen Vergleich den Kurzbenchmark mit weniger Kontext-Wiederholungen für alle Profile erneut ausführen.</p>
+            }
+        }
+    </section>
+
+    <section class="benchmark-panel benchmark-results benchmark-history" aria-labelledby="history-heading">
+        <div class="benchmark-section-heading">
+            <span>04</span>
+            <div><p>PERSISTED HISTORY</p><h2 id="history-heading">Gespeicherte Benchmark-Läufe</h2></div>
+            <button class="benchmark-refresh" type="button" @onclick="RefreshAsync" disabled="@(isLoading || isRunning)">Verlauf aktualisieren</button>
+        </div>
+        <div class="benchmark-history-filters">
+            <label class="benchmark-field" for="history-model">
+                <span>Nach Modell filtern</span>
+                <select id="history-model" value="@historyModelPath" @onchange="SelectHistoryModel">
+                    <option value="">Alle Modelle</option>
+                    @foreach (var modelPath in HistoryModelPaths)
+                    {
+                        <option value="@modelPath">@modelPath</option>
+                    }
+                </select>
+            </label>
+            <label class="benchmark-field" for="history-profile">
+                <span>Nach Profil-ID filtern</span>
+                <select id="history-profile" value="@(historyProfileId?.ToString() ?? string.Empty)" @onchange="SelectHistoryProfile">
+                    <option value="">Alle Profile</option>
+                    @foreach (var profile in HistoryProfiles)
+                    {
+                        <option value="@profile.ProfileId">@profile.ProfileName · @profile.ProfileId</option>
+                    }
+                </select>
+            </label>
+        </div>
+        @if (isLoading)
+        {
+            <div class="benchmark-empty">Gespeicherte Läufe werden geladen ...</div>
+        }
+        else if (FilteredHistory.Count == 0)
+        {
+            <div class="benchmark-empty">Für diesen Filter sind keine gespeicherten Läufe vorhanden.</div>
+        }
+        else
+        {
+            <div class="benchmark-table-wrap">
+                <table class="benchmark-table benchmark-history-table">
+                    <thead>
+                        <tr><th>Gestartet</th><th>Profil-Snapshot</th><th>Backend</th><th>Modell</th><th>Modus / Kontext</th><th>Samples</th><th>Client-Median</th><th>Status</th><th></th></tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var run in FilteredHistory)
+                        {
+                            <tr @key="run.Id">
+                                <td>@FormatTimestamp(run.CreatedAtUtc)</td>
+                                <td>@run.ProfileSnapshot.Name<small>@run.ProfileId</small></td>
+                                <td>@run.ProfileSnapshot.BackendVariantId</td>
+                                <td><code title="@run.ProfileSnapshot.ModelPath">@run.ProfileSnapshot.ModelPath</code></td>
+                                <td>@(run.Settings.Kind == "long" ? "128k-Probe" : "Kurzbenchmark")<small>@run.Settings.RepeatCount Wiederholungen</small></td>
+                                <td>@run.Measurements.Count / @(run.Settings.WarmupCount + run.Settings.MeasuredRunCount)</td>
+                                <td>@FormatRate(CreateSummary(run.Measurements).MedianClientDecodeTokensPerSecond)</td>
+                                <td>@GetRunStateDisplayName(run)</td>
+                                <td><button class="benchmark-delete" type="button" title="Diesen gespeicherten Lauf löschen" @onclick="() => DeleteHistoryRunAsync(run.Id)" disabled="@isRunning">Löschen</button></td>
+                            </tr>
+                            <tr @key="GetSnapshotKey(run.Id)">
+                                <td colspan="9">
+                                    <details class="benchmark-snapshot">
+                                        <summary>Profil- und Request-Einstellungen dieses Laufs</summary>
+                                        <div class="benchmark-snapshot-grid">
+                                            <div><span>Profilbeschreibung</span><p>@(run.ProfileSnapshot.Description ?? "—")</p></div>
+                                            <div><span>Konfiguration (Snapshot)</span><pre>@run.ProfileSnapshot.ConfigurationJson</pre></div>
+                                            <div><span>Benchmark-Request</span><pre>@FormatSettings(run.Settings)</pre></div>
+                                            @if (!string.IsNullOrWhiteSpace(run.ErrorMessage))
+                                            {
+                                                <div><span>Fehler</span><p>@run.ErrorMessage</p></div>
+                                            }
+                                        </div>
+                                    </details>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        }
+    </section>
+</main>

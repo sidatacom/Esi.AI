@@ -162,7 +162,8 @@ public sealed class OpenAiCompatibleControllerTests
             modelPath,
             true,
             1,
-            JsonSerializer.Serialize(new LoadModelRequest(modelPath, "CPU", 0, 4096, new Dictionary<string, float>(), null)),
+            BackendConfigurationJson.Serialize("llama.vulkan",
+                new LoadModelRequest(modelPath, "Vulkan", 0, 4096, new Dictionary<string, float>(), null)),
             default,
             default,
             ConfigurationBackend.Llama));
@@ -309,6 +310,7 @@ public sealed class OpenAiCompatibleControllerTests
             CancellationToken.None);
 
         Assert.IsInstanceOfType<BadRequestObjectResult>(result);
+        Assert.IsTrue(controller.Response.Headers["X-Esi-Inference-Id"].ToString().StartsWith("req-", StringComparison.Ordinal));
     }
 
     [TestMethod]

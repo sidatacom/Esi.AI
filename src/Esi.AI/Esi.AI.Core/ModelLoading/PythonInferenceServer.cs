@@ -75,9 +75,15 @@ public sealed class PythonInferenceServer : IDisposable
             throw new ArgumentOutOfRangeException(nameof(request), "The startup timeout must be positive.");
 
         await StopAsync(cancellationToken).ConfigureAwait(false);
-        var scriptPath = Path.Combine(AppContext.BaseDirectory, "Python", "inference_server.py");
+        var pythonDirectory = Path.Combine(AppContext.BaseDirectory, "Python");
+        var scriptPath = Path.Combine(pythonDirectory, "inference_server.py");
+        var bootstrapScriptPath = Path.Combine(pythonDirectory, "vllm_xpu_bootstrap.py");
+        var devices = NormalizeDeviceRoutes(request.Devices is { Count: > 0 } ? request.Devices : [request.Device]);
+        var isXpu = string.Equals(GetDeviceVendor(devices[0]), "xpu", StringComparison.OrdinalIgnoreCase);
         if (!File.Exists(scriptPath))
             throw new FileNotFoundException("The Python gRPC inference bridge was not deployed.", scriptPath);
+        if (isXpu && !File.Exists(bootstrapScriptPath))
+            throw new FileNotFoundException("The vLLM XPU Python bootstrap was not deployed.", bootstrapScriptPath);
 
         lock (sync)
         {
@@ -90,7 +96,6 @@ public sealed class PythonInferenceServer : IDisposable
 
         try
         {
-            var devices = request.Devices is { Count: > 0 } ? request.Devices : [request.Device];
             var preparation = await provisioner.PrepareAsync(
                 request.Backend,
                 request.PythonExecutable,
@@ -111,14 +116,22 @@ public sealed class PythonInferenceServer : IDisposable
                 RedirectStandardError = true,
                 CreateNoWindow = true
             };
-            foreach (var argument in new[]
+            if (isXpu)
             {
-                scriptPath,
-                "--host", "127.0.0.1",
-                "--grpc-port", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
-            })
-                startInfo.ArgumentList.Add(argument);
-            ApplyDeviceEnvironment(startInfo, devices, pythonExecutable, request.EnableXpuGraph, request.EnableBf16MtpDraft);
+                foreach (var argument in BuildXpuBootstrapArguments(bootstrapScriptPath, scriptPath, request))
+                    startInfo.ArgumentList.Add(argument);
+            }
+            else
+            {
+                foreach (var argument in new[]
+                {
+                    scriptPath,
+                    "--host", "127.0.0.1",
+                    "--grpc-port", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                })
+                    startInfo.ArgumentList.Add(argument);
+                ApplyCudaDeviceEnvironment(startInfo, devices);
+            }
 
             if (!IsExecutable(pythonExecutable))
                 throw new InvalidOperationException($"The Python executable '{pythonExecutable}' was not found or is not executable.");
@@ -340,13 +353,9 @@ public sealed class PythonInferenceServer : IDisposable
             || (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
     }
 
-    private static void ApplyDeviceEnvironment(
-        ProcessStartInfo startInfo,
-        IReadOnlyList<string> devices,
-        string pythonExecutable,
-        bool enableXpuGraph,
-        bool enableBf16MtpDraft)
+    private static string[] NormalizeDeviceRoutes(IReadOnlyList<string> devices)
     {
+        ArgumentNullException.ThrowIfNull(devices);
         var routes = devices
             .Where(device => !string.IsNullOrWhiteSpace(device))
             .Select(device => device.Trim().ToLowerInvariant())
@@ -358,101 +367,46 @@ public sealed class PythonInferenceServer : IDisposable
         var vendors = routes.Select(GetDeviceVendor).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (vendors.Length > 1)
             throw new ArgumentException("CUDA and XPU devices cannot be mixed in one vLLM worker.", nameof(devices));
+        if (!string.Equals(vendors[0], "cuda", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(vendors[0], "xpu", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException($"Unsupported Python device vendor in route '{routes[0]}'.", nameof(devices));
+        foreach (var route in routes)
+            _ = ParseDeviceOrdinal(route, vendors[0], routes);
 
-        if (string.Equals(vendors[0], "cuda", StringComparison.OrdinalIgnoreCase))
-        {
-            var ordinals = routes.Select(route => ParseDeviceOrdinal(route, "cuda", devices)).ToArray();
-            startInfo.Environment["CUDA_VISIBLE_DEVICES"] = string.Join(",", ordinals);
-            startInfo.Environment.Remove("ONEAPI_DEVICE_SELECTOR");
-            startInfo.Environment.Remove("ZE_AFFINITY_MASK");
-            startInfo.Environment.Remove("VLLM_TARGET_DEVICE");
-            return;
-        }
-
-        if (string.Equals(vendors[0], "xpu", StringComparison.OrdinalIgnoreCase))
-        {
-            startInfo.Environment["CUDA_VISIBLE_DEVICES"] = "";
-            startInfo.Environment["ONEAPI_DEVICE_SELECTOR"] = "level_zero:gpu";
-            startInfo.Environment["ZE_FLAT_DEVICE_HIERARCHY"] = "COMPOSITE";
-            startInfo.Environment["ZE_AFFINITY_MASK"] = GetXpuAffinityMask(routes);
-            startInfo.Environment["PYTORCH_ALLOC_CONF"] = "expandable_segments:True";
-            startInfo.Environment["VLLM_XPU_ENABLE_XPU_GRAPH"] = enableXpuGraph ? "1" : "0";
-            startInfo.Environment["B70_MTP_BF16_DRAFT"] = enableBf16MtpDraft ? "1" : "0";
-            startInfo.Environment["VLLM_TARGET_DEVICE"] = "xpu";
-            startInfo.Environment["CCL_ZE_IPC_EXCHANGE"] = "sockets";
-            startInfo.Environment["CCL_ATL_TRANSPORT"] = "ofi";
-            startInfo.Environment["FI_PROVIDER"] = "tcp";
-            startInfo.Environment["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn";
-            ConfigureXpuCommunicationEnvironment(startInfo, pythonExecutable);
-            return;
-        }
-
-        throw new ArgumentException($"Unsupported Python device vendor in route '{routes[0]}'.", nameof(devices));
+        return routes;
     }
 
-    internal static string GetXpuAffinityMask(IReadOnlyList<string> routes) =>
-        string.Join(',', routes.Select(route => ParseDeviceOrdinal(route, "xpu", routes)));
-
-    private static void ConfigureXpuCommunicationEnvironment(ProcessStartInfo startInfo, string pythonExecutable)
+    private static void ApplyCudaDeviceEnvironment(ProcessStartInfo startInfo, IReadOnlyList<string> devices)
     {
-        if (!OperatingSystem.IsLinux())
-            return;
-
-        var pythonDirectory = Path.GetDirectoryName(Path.GetFullPath(pythonExecutable));
-        var environmentRoot = pythonDirectory is null ? null : Directory.GetParent(pythonDirectory)?.FullName;
-        if (string.IsNullOrWhiteSpace(environmentRoot))
-            throw new InvalidOperationException($"Could not determine the Python environment directory for '{pythonExecutable}'.");
-
-        var environmentLibraryDirectory = Path.Combine(environmentRoot, "lib");
-        Directory.CreateDirectory(environmentLibraryDirectory);
-        var loaderPath = FindLevelZeroLoader();
-        if (loaderPath is null)
-            throw new InvalidOperationException("The Intel XPU runtime requires libze_loader.so or libze_loader.so.1 on Linux.");
-
-        var compatibilityLoaderPath = Path.Combine(environmentLibraryDirectory, "libze_loader.so");
-        if (!File.Exists(compatibilityLoaderPath))
-            File.CreateSymbolicLink(compatibilityLoaderPath, loaderPath);
-
-        startInfo.Environment["CCL_ROOT"] = environmentRoot;
-        startInfo.Environment.Remove("ZE_ENABLE_ALT_DRIVERS");
-        startInfo.Environment.Remove("UR_ADAPTERS_FORCE_LOAD");
-        startInfo.Environment.Remove("ZES_ENABLE_SYSMAN");
-        startInfo.Environment["LD_LIBRARY_PATH"] = environmentLibraryDirectory;
-        ConfigureOclocEnvironment(startInfo);
+        startInfo.Environment["CUDA_VISIBLE_DEVICES"] = string.Join(",", devices.Select(route => ParseDeviceOrdinal(route, "cuda", devices)));
+        startInfo.Environment.Remove("ONEAPI_DEVICE_SELECTOR");
+        startInfo.Environment.Remove("ZE_FLAT_DEVICE_HIERARCHY");
+        startInfo.Environment.Remove("ZE_AFFINITY_MASK");
+        startInfo.Environment.Remove("VLLM_TARGET_DEVICE");
     }
 
-    private static void ConfigureOclocEnvironment(ProcessStartInfo startInfo)
+    internal static IReadOnlyList<string> BuildXpuBootstrapArguments(
+        string bootstrapScriptPath,
+        string serverScriptPath,
+        PythonInferenceLoadRequest request)
     {
-        var oclocRoot = Environment.GetEnvironmentVariable("ESI_OCLOC_ROOT");
-        if (string.IsNullOrWhiteSpace(oclocRoot))
-            oclocRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "opt", "intel-ocloc");
-
-        var oclocBinDirectory = Path.Combine(oclocRoot, "usr", "bin");
-        var oclocLibraryDirectory = Path.Combine(oclocRoot, "usr", "lib", "x86_64-linux-gnu");
-        if (!File.Exists(Path.Combine(oclocLibraryDirectory, "libocloc.so")) || !Directory.Exists(oclocBinDirectory))
-            return;
-
-        var currentPath = startInfo.Environment["PATH"] ?? Environment.GetEnvironmentVariable("PATH") ?? string.Empty;
-        startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, oclocBinDirectory, currentPath);
-        var currentLibraryPath = startInfo.Environment["LD_LIBRARY_PATH"] ?? Environment.GetEnvironmentVariable("LD_LIBRARY_PATH") ?? string.Empty;
-        startInfo.Environment["LD_LIBRARY_PATH"] = string.Join(Path.PathSeparator, oclocLibraryDirectory, currentLibraryPath);
-    }
-
-    private static string? FindLevelZeroLoader()
-    {
-        foreach (var candidate in new[]
-        {
-            "/usr/lib/x86_64-linux-gnu/libze_loader.so",
-            "/usr/lib/x86_64-linux-gnu/libze_loader.so.1",
-            "/usr/lib64/libze_loader.so",
-            "/usr/lib64/libze_loader.so.1"
-        })
-        {
-            if (File.Exists(candidate))
-                return candidate;
-        }
-
-        return null;
+        ArgumentException.ThrowIfNullOrWhiteSpace(bootstrapScriptPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(serverScriptPath);
+        ArgumentNullException.ThrowIfNull(request);
+        return
+        [
+            bootstrapScriptPath,
+            "--esi-xpu-settings",
+            JsonSerializer.Serialize(request.XpuRuntimeSettings ?? new VllmXpuRuntimeSettings(), new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            "--esi-xpu-graph",
+            request.EnableXpuGraph ? "1" : "0",
+            "--esi-xpu-bf16-mtp-draft",
+            request.EnableBf16MtpDraft ? "1" : "0",
+            "--",
+            serverScriptPath,
+            "--host", "127.0.0.1",
+            "--grpc-port", request.Port.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        ];
     }
 
     private static string GetDeviceVendor(string route)

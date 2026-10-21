@@ -1,0 +1,212 @@
+@page "/inference-logs"
+@rendermode InteractiveAuto
+@implements IAsyncDisposable
+
+@using Esi.AI.Models
+@inject IDataService DataService
+@inject IInferenceLogEvents InferenceLogEvents
+
+<PageTitle>Inference logs</PageTitle>
+
+<div class="inference-logs">
+    <header class="inference-logs-header">
+        <div>
+            <p class="inference-logs-eyebrow">REQUEST DIAGNOSTICS</p>
+            <h1>Inference logs</h1>
+            <p>Live request history with correlation IDs and payload-free metadata. The latest 500 entries are kept in the local Studio database.</p>
+        </div>
+        <button type="button" class="inference-logs-button" @onclick="RefreshAsync" disabled="@isRefreshing">
+            @(isRefreshing ? "Refreshing ..." : "Refresh")
+        </button>
+    </header>
+
+    @if (!string.IsNullOrWhiteSpace(errorMessage))
+    {
+        <div class="inference-logs-alert" role="alert">@errorMessage</div>
+    }
+
+    @if (isRefreshing && logs.Count == 0)
+    {
+        <p class="inference-logs-empty">Loading inference history ...</p>
+    }
+    else if (logs.Count == 0)
+    {
+        <p class="inference-logs-empty">No inference requests have been recorded yet.</p>
+    }
+    else
+    {
+        <section class="inference-log-list" aria-label="Inference request history" aria-live="polite">
+            @foreach (var log in logs)
+            {
+                <article class="inference-log-card">
+                    <div class="inference-log-heading">
+                        <div class="inference-log-title">
+                            <span class="inference-log-status inference-log-status-@log.Status.ToString().ToLowerInvariant()">@GetStatusLabel(log.Status)</span>
+                            <strong>@log.Backend · @log.Model</strong>
+                        </div>
+                        <time datetime="@log.StartedAtUtc.ToString("O")">@log.StartedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss")</time>
+                    </div>
+
+                    <div class="inference-log-correlation">
+                        <span>@GetPathLabel(log.Path)</span>
+                        <code>@log.InferenceId</code>
+                        @if (!string.IsNullOrWhiteSpace(log.BackendVariantId))
+                        {
+                            <span>Variant: @log.BackendVariantId</span>
+                        }
+                    </div>
+
+                    <dl class="inference-log-metrics">
+                        <div><dt>Input estimate (approx.)</dt><dd>@FormatCount(log.EstimatedPrefillTokens) tokens</dd></div>
+                        <div><dt>Messages</dt><dd>@log.MessageCount</dd></div>
+                        <div><dt>Images</dt><dd>@log.ImageCount</dd></div>
+                        <div><dt>Tools</dt><dd>@log.ToolCount</dd></div>
+                        <div><dt>Output</dt><dd>@FormatCount(log.OutputTokenCount) tokens</dd></div>
+                        <div><dt>Duration</dt><dd>@FormatDuration(log.DurationMilliseconds)</dd></div>
+                        <div><dt>Streaming</dt><dd>@(log.Streaming ? "Yes" : "No")</dd></div>
+                        @if (!string.IsNullOrWhiteSpace(log.FinishReason))
+                        {
+                            <div><dt>Finish reason</dt><dd>@log.FinishReason</dd></div>
+                        }
+                    </dl>
+
+                    @if (!string.IsNullOrWhiteSpace(log.ErrorMessage))
+                    {
+                        <details class="inference-log-error">
+                            <summary>@(log.ErrorType ?? "Request error")</summary>
+                            <p>@log.ErrorMessage</p>
+                        </details>
+                    }
+
+                    <div class="inference-log-actions">
+                        @if (log.Status != InferenceLogStatus.Running)
+                        {
+                            <button type="button" class="inference-logs-button inference-logs-button-secondary" @onclick="() => DeleteAsync(log.Id)">Delete</button>
+                        }
+                    </div>
+                </article>
+            }
+        </section>
+    }
+</div>
+
+@code {
+    private readonly List<InferenceLog> logs = [];
+    private bool isRefreshing;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        InferenceLogEvents.InferenceLog_Read += HandleReadAsync;
+        InferenceLogEvents.InferenceLog_Create += HandleCreatedAsync;
+        InferenceLogEvents.InferenceLog_Update += HandleUpdatedAsync;
+        InferenceLogEvents.InferenceLog_Delete += HandleDeletedAsync;
+        await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        isRefreshing = true;
+        errorMessage = null;
+        try
+        {
+            Merge(await DataService.InferenceLog_ReadAsync());
+        }
+        catch (Exception exception)
+        {
+            errorMessage = exception.Message;
+        }
+        finally
+        {
+            isRefreshing = false;
+        }
+    }
+
+    private async Task DeleteAsync(Guid id)
+    {
+        errorMessage = null;
+        try
+        {
+            await DataService.InferenceLog_DeleteAsync(id);
+        }
+        catch (Exception exception)
+        {
+            errorMessage = exception.Message;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private Task HandleReadAsync(IReadOnlyList<InferenceLog> entries) => InvokeAsync(() =>
+    {
+        logs.Clear();
+        Merge(entries);
+        StateHasChanged();
+    });
+
+    private Task HandleCreatedAsync(InferenceLog entry) => UpdateEntryAsync(entry);
+
+    private Task HandleUpdatedAsync(InferenceLog entry) => UpdateEntryAsync(entry);
+
+    private Task UpdateEntryAsync(InferenceLog entry) => InvokeAsync(() =>
+    {
+        Upsert(entry);
+        StateHasChanged();
+    });
+
+    private Task HandleDeletedAsync(InferenceLog entry) => InvokeAsync(() =>
+    {
+        logs.RemoveAll(existing => existing.Id == entry.Id);
+        StateHasChanged();
+    });
+
+    private void Merge(IEnumerable<InferenceLog> entries)
+    {
+        foreach (var entry in entries)
+            Upsert(entry);
+
+        logs.Sort((left, right) => right.StartedAtUtc.CompareTo(left.StartedAtUtc));
+        if (logs.Count > 500)
+            logs.RemoveRange(500, logs.Count - 500);
+    }
+
+    private void Upsert(InferenceLog entry)
+    {
+        var existingIndex = logs.FindIndex(existing => existing.Id == entry.Id);
+        if (existingIndex >= 0)
+            logs[existingIndex] = entry;
+        else
+            logs.Add(entry);
+    }
+
+    private static string GetStatusLabel(InferenceLogStatus status) => status switch
+    {
+        InferenceLogStatus.Succeeded => "Succeeded",
+        InferenceLogStatus.Failed => "Failed",
+        InferenceLogStatus.Canceled => "Canceled",
+        InferenceLogStatus.TimedOut => "Timed out",
+        InferenceLogStatus.Interrupted => "Interrupted",
+        _ => "Running"
+    };
+
+    private static string GetPathLabel(string path) => path switch
+    {
+        "OpenAI" => "OpenAI-compatible API",
+        "SignalR" => "Studio chat",
+        _ => path
+    };
+
+    private static string FormatCount(int? count) => count?.ToString("N0") ?? "—";
+
+    private static string FormatDuration(long? durationMilliseconds) =>
+        durationMilliseconds is { } duration ? $"{duration:N0} ms" : "In progress";
+
+    public ValueTask DisposeAsync()
+    {
+        InferenceLogEvents.InferenceLog_Read -= HandleReadAsync;
+        InferenceLogEvents.InferenceLog_Create -= HandleCreatedAsync;
+        InferenceLogEvents.InferenceLog_Update -= HandleUpdatedAsync;
+        InferenceLogEvents.InferenceLog_Delete -= HandleDeletedAsync;
+        return ValueTask.CompletedTask;
+    }
+}

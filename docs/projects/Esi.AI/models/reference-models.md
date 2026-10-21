@@ -4,7 +4,13 @@ These models are intentionally small enough for smoke and integration tests. The
 
 ## Active browser-test reference family
 
-The active browser test plan uses one logical Qwen2.5 Instruct reference family. A single physical file cannot serve every runtime: LLama requires GGUF, OpenVINO requires OpenVINO IR, and vLLM requires Transformers/Safetensors. Pin the same model revision where a backend conversion supports it and record the conversion revision for each artifact.
+The active browser smoke-test plan uses the lightweight Qwen2.5 Instruct family. A single physical file may not serve every runtime: LLama uses GGUF, OpenVINO uses OpenVINO IR, and vLLM uses Transformers/Safetensors. Every artifact must derive from the same source checkpoint, model variant, and exact revision, and use the same quantization method with the same material parameters. Backend-specific format conversion is allowed only when its provenance demonstrates that these invariants are preserved.
+
+### Artifact provenance and quantization
+
+For each backend artifact, record the source checkpoint/repository, model variant, exact revision, quantization method and material parameters, format, and SHA-256 for each file. For converted artifacts, also record the conversion tool and version, exact options, and evidence that the conversion preserved the source model identity and quantization. If conversion requantizes the weights, it qualifies only when the same quantization procedure and material parameters are demonstrated. Equal bit width alone (such as INT4) is insufficient. For directory artifacts, record a hash per file or a manifest of relative paths and file hashes.
+
+The current GGUF, OpenVINO IR, and Transformers/Safetensors entries below are candidates only; their published names do not establish a common checkpoint revision or equivalent quantization. Do not report them as one verified reference set until the required provenance is pinned.
 
 | Backend variant | Required format | Test setting |
 | --- | --- | --- |

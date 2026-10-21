@@ -234,6 +234,9 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
     public Task LoadBackendAsync(BackendLoadRequest request, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(request);
+        if (string.Equals(request.VariantId, "llama.cuda12", StringComparison.OrdinalIgnoreCase))
+            BackendRuntimePaths.PreloadCuda12RuntimeDependencies();
+
         var runtime = backendRuntimeResolver?.Resolve(request.VariantId)
             ?? throw new InvalidOperationException("No packaged backend runtime resolver is registered.");
         return TrackPendingModelAsync(request.ModelPath, runtime.Descriptor.Family, runtime.Descriptor.RuntimeName,

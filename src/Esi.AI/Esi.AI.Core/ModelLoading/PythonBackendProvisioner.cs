@@ -43,22 +43,44 @@ public sealed class PythonBackendProvisioner
 
         var environmentPath = ResolveEnvironmentPath(definition.EnvironmentName);
         var environmentPython = GetEnvironmentPythonPath(environmentPath);
+        var environmentConfiguration = Path.Combine(environmentPath, "pyvenv.cfg");
         var environmentCreated = false;
+        var environmentRepaired = false;
         using var preparationTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         preparationTimeout.CancelAfter(timeout);
         await ProvisioningLock.WaitAsync(preparationTimeout.Token).ConfigureAwait(false);
         try
         {
-            if (!File.Exists(environmentPython))
+            if (!CanExecute(environmentPython))
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(environmentPath)!);
+                var existingPythonVersion = ReadEnvironmentPythonVersion(environmentConfiguration);
+                if (existingPythonVersion is not null)
+                {
+                    var configuredPythonVersion = await GetPythonVersionAsync(
+                        configuredExecutable,
+                        timeout,
+                        preparationTimeout.Token).ConfigureAwait(false);
+                    if (!string.Equals(existingPythonVersion, configuredPythonVersion, StringComparison.Ordinal))
+                    {
+                        throw new InvalidOperationException(
+                            $"The existing {definition.DisplayName} Python environment requires Python {existingPythonVersion}, " +
+                            $"but '{configuredExecutable}' is Python {configuredPythonVersion}. Set ESI_VLLM_PYTHON_EXECUTABLE " +
+                            $"to a compatible Python {existingPythonVersion} executable before repairing it.");
+                    }
+                }
+
+                var environmentExists = existingPythonVersion is not null;
                 var createResult = await RunProcessAsync(
                     configuredExecutable,
-                    ["-m", "venv", environmentPath],
+                    environmentExists
+                        ? ["-m", "venv", "--upgrade", environmentPath]
+                        : ["-m", "venv", environmentPath],
                     timeout,
                     preparationTimeout.Token).ConfigureAwait(false);
                 EnsureProcessSucceeded(createResult, $"Creating the {definition.DisplayName} Python environment at '{environmentPath}'");
-                environmentCreated = true;
+                environmentCreated = !environmentExists;
+                environmentRepaired = environmentExists;
             }
 
             if (definition.PackagesToRemoveBeforeInstall.Count > 0)
@@ -70,28 +92,29 @@ public sealed class PythonBackendProvisioner
                     preparationTimeout.Token).ConfigureAwait(false);
             }
 
-            if (!await HasDependenciesAsync(environmentPython, definition, timeout, preparationTimeout.Token, applicationDirectory).ConfigureAwait(false))
+            var installArguments = new List<string>
             {
-                var installArguments = new List<string>
-                {
-                    "-m", "pip", "install", "--disable-pip-version-check"
-                };
-                installArguments.AddRange(["-r", requirementsPath]);
-                var installResult = await RunProcessAsync(
-                    environmentPython,
-                    installArguments,
-                    timeout,
-                    preparationTimeout.Token).ConfigureAwait(false);
-                EnsureProcessSucceeded(installResult, $"Installing {definition.DisplayName} Python dependencies", installResult.Output);
-                await ValidateDependenciesAsync(environmentPython, definition, timeout, preparationTimeout.Token, applicationDirectory).ConfigureAwait(false);
-            }
+                "-m", "pip", "install", "--disable-pip-version-check"
+            };
+            installArguments.AddRange(["-r", requirementsPath]);
+            var installResult = await RunProcessAsync(
+                environmentPython,
+                installArguments,
+                timeout,
+                preparationTimeout.Token).ConfigureAwait(false);
+            EnsureProcessSucceeded(installResult, $"Installing {definition.DisplayName} Python dependencies", installResult.Output);
+            await ValidateDependenciesAsync(environmentPython, definition, timeout, preparationTimeout.Token, applicationDirectory).ConfigureAwait(false);
         }
         finally
         {
             ProvisioningLock.Release();
         }
 
-        var action = environmentCreated ? "Created and prepared" : "Validated";
+        var action = environmentCreated
+            ? "Created and prepared"
+            : environmentRepaired
+                ? "Repaired and prepared"
+                : "Prepared";
         return new(environmentPython, requirementsPath, environmentCreated,
             $"{action} the {definition.DisplayName} Python environment at '{environmentPath}'.");
     }
@@ -176,19 +199,17 @@ public sealed class PythonBackendProvisioner
         CancellationToken cancellationToken,
         string applicationDirectory)
     {
-        var modules = string.Join(",", definition.RequiredModules.Select(module => $"'{module}'"));
-        var pythonDirectory = Path.Combine(applicationDirectory, "Python");
-        var bootstrap = definition.RequiresVllmXpuBootstrap
-            ? $"import sys; sys.path.insert(0, {JsonSerializer.Serialize(pythonDirectory)}); import vllm_xpu_bootstrap; vllm_xpu_bootstrap.disable_cuda_platform_probe(); "
-            : string.Empty;
-        var importCheck = $"{bootstrap}import importlib; [importlib.import_module(name) for name in ({modules})]";
-        var result = await RunProcessAsync(pythonExecutable, ["-c", importCheck], timeout, cancellationToken).ConfigureAwait(false);
-        if (result.ExitCode != 0)
-        {
-            throw new InvalidOperationException(
-                $"The Python executable '{pythonExecutable}' does not provide grpcio, protobuf and {definition.PackageName}. " +
-                $"Import check output: {result.Output} Use Python executable 'python3' for automatic environment preparation or install the backend requirements manually.");
-        }
+        var result = await RunProcessAsync(
+            pythonExecutable,
+            ["-c", BuildDependencyCheck(definition, applicationDirectory)],
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+        if (result.ExitCode == 0)
+            return;
+
+        throw new InvalidOperationException(
+            $"The Python executable '{pythonExecutable}' does not provide the required {definition.DisplayName} packages and versions. " +
+            $"Dependency check output: {result.Output}");
     }
 
     private static async Task<bool> HasDependenciesAsync(
@@ -198,14 +219,107 @@ public sealed class PythonBackendProvisioner
         CancellationToken cancellationToken,
         string applicationDirectory)
     {
-        var modules = string.Join(",", definition.RequiredModules.Select(module => $"'{module}'"));
+        var result = await RunProcessAsync(
+            pythonExecutable,
+            ["-c", BuildDependencyCheck(definition, applicationDirectory)],
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+        return result.ExitCode == 0;
+    }
+
+    private static string BuildDependencyCheck(BackendDefinition definition, string applicationDirectory)
+    {
+        var modules = string.Join(",", definition.RequiredModules.Select(module => JsonSerializer.Serialize(module)));
         var pythonDirectory = Path.Combine(applicationDirectory, "Python");
         var bootstrap = definition.RequiresVllmXpuBootstrap
             ? $"import sys; sys.path.insert(0, {JsonSerializer.Serialize(pythonDirectory)}); import vllm_xpu_bootstrap; vllm_xpu_bootstrap.disable_cuda_platform_probe(); "
             : string.Empty;
-        var importCheck = $"{bootstrap}import importlib; [importlib.import_module(name) for name in ({modules})]";
-        var result = await RunProcessAsync(pythonExecutable, ["-c", importCheck], timeout, cancellationToken).ConfigureAwait(false);
-        return result.ExitCode == 0;
+        var importCheck = $"import importlib; [importlib.import_module(name) for name in [{modules}]]";
+        var pinnedRequirements = ReadPinnedRequirements(Path.Combine(pythonDirectory, definition.RequirementsFileName));
+        if (pinnedRequirements.Count == 0)
+            return $"{bootstrap}{importCheck}";
+
+        var expectedVersions = string.Join(",", pinnedRequirements.Select(requirement =>
+            $"({JsonSerializer.Serialize(requirement.Name)}, {JsonSerializer.Serialize(requirement.Version)})"));
+        var versionCheck =
+            $"import importlib.metadata as metadata, sys; expected=[{expectedVersions}]; " +
+            "sys.exit(0 if all(metadata.version(name) == version for name, version in expected) else 1)";
+        return $"{bootstrap}{importCheck}; {versionCheck}";
+    }
+
+    private static IReadOnlyList<(string Name, string Version)> ReadPinnedRequirements(string requirementsPath)
+    {
+        if (!File.Exists(requirementsPath))
+            return [];
+
+        var requirements = new List<(string Name, string Version)>();
+        foreach (var rawLine in File.ReadLines(requirementsPath))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith('#') || line.StartsWith('-'))
+                continue;
+
+            var commentIndex = line.IndexOf(" #", StringComparison.Ordinal);
+            if (commentIndex >= 0)
+                line = line[..commentIndex].Trim();
+
+            var markerIndex = line.IndexOf(';');
+            if (markerIndex >= 0)
+                line = line[..markerIndex].Trim();
+
+            var separatorIndex = line.IndexOf("==", StringComparison.Ordinal);
+            if (separatorIndex <= 0)
+                continue;
+
+            var name = line[..separatorIndex].Trim();
+            var extrasIndex = name.IndexOf('[');
+            if (extrasIndex >= 0)
+                name = name[..extrasIndex];
+
+            var version = line[(separatorIndex + 2)..].Trim();
+            if (name.Length > 0 && version.Length > 0)
+                requirements.Add((name, version));
+        }
+
+        return requirements;
+    }
+
+    private static async Task<string> GetPythonVersionAsync(
+        string pythonExecutable,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        var result = await RunProcessAsync(
+            pythonExecutable,
+            ["-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+            timeout,
+            cancellationToken).ConfigureAwait(false);
+        EnsureProcessSucceeded(result, $"Inspecting Python version for '{pythonExecutable}'");
+        return result.Output.Trim();
+    }
+
+    private static string? ReadEnvironmentPythonVersion(string configurationPath)
+    {
+        if (!File.Exists(configurationPath))
+            return null;
+
+        foreach (var line in File.ReadLines(configurationPath))
+        {
+            var separatorIndex = line.IndexOf('=');
+            if (separatorIndex < 0)
+                continue;
+
+            var key = line[..separatorIndex].Trim();
+            if (key is not ("version_info" or "version"))
+                continue;
+
+            var value = line[(separatorIndex + 1)..].Trim();
+            var parts = value.Split('.', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (parts.Length >= 2 && int.TryParse(parts[0], out var major) && int.TryParse(parts[1], out var minor))
+                return $"{major}.{minor}";
+        }
+
+        return null;
     }
 
     private static async Task<bool> HasAcceleratorAsync(
@@ -330,11 +444,29 @@ public sealed class PythonBackendProvisioner
     private static bool CanExecute(string executable)
     {
         if (Path.IsPathFullyQualified(executable))
-            return File.Exists(executable) && (!OperatingSystem.IsLinux() || (File.GetUnixFileMode(executable) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0);
+            return IsExecutableFile(executable);
 
         return Environment.GetEnvironmentVariable("PATH")?.Split(Path.PathSeparator)
             .Select(directory => Path.Combine(directory, executable))
-            .Any(path => File.Exists(path) && (!OperatingSystem.IsLinux() || (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0)) == true;
+            .Any(IsExecutableFile) == true;
+    }
+
+    private static bool IsExecutableFile(string path)
+    {
+        try
+        {
+            return File.Exists(path) &&
+                (!OperatingSystem.IsLinux() ||
+                 (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0);
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
     }
 
     private static void EnsureProcessSucceeded(ProcessResult result, string operation, string? additionalOutput = null)

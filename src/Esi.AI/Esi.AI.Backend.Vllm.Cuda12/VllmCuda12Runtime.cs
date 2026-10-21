@@ -114,7 +114,7 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
                     RedirectStandardError = true,
                     CreateNoWindow = true,
                 };
-                ConfigurePythonPath(startInfo, python.Executable);
+                ConfigurePythonEnvironment(startInfo, python.Executable);
                 startInfo.ArgumentList.Add(scriptPath);
                 startInfo.ArgumentList.Add("--host");
                 startInfo.ArgumentList.Add("127.0.0.1");
@@ -175,15 +175,15 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
         }
     }
 
-    private static void ConfigurePythonPath(ProcessStartInfo startInfo, string pythonExecutable)
+    internal static void ConfigurePythonEnvironment(ProcessStartInfo startInfo, string pythonExecutable)
     {
         var pathEntries = new List<string>();
         if (Path.IsPathFullyQualified(pythonExecutable))
             pathEntries.Add(Path.GetDirectoryName(pythonExecutable)!);
 
-        var cudaHome = startInfo.Environment["CUDA_HOME"];
+        startInfo.Environment.TryGetValue("CUDA_HOME", out var cudaHome);
         if (string.IsNullOrWhiteSpace(cudaHome))
-            cudaHome = startInfo.Environment["CUDA_PATH"];
+            startInfo.Environment.TryGetValue("CUDA_PATH", out cudaHome);
         if (!string.IsNullOrWhiteSpace(cudaHome))
             pathEntries.Add(Path.Combine(cudaHome, "bin"));
 
@@ -191,6 +191,8 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
             pathEntries.AddRange(currentPath.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries));
 
         startInfo.Environment["PATH"] = string.Join(Path.PathSeparator, pathEntries.Distinct(StringComparer.Ordinal));
+        // FlashInfer's sampling JIT requires nvcc, which is not part of the managed CUDA runtime.
+        startInfo.Environment["VLLM_USE_FLASHINFER_SAMPLER"] = "0";
     }
 
     /// <inheritdoc />
@@ -482,8 +484,18 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
 
         var pythonRoot = Environment.GetEnvironmentVariable("ESI_PYTHON_ENV_ROOT");
         if (string.IsNullOrWhiteSpace(pythonRoot))
-            pythonRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".venvs");
-        var environmentPath = Path.Combine(Path.GetFullPath(pythonRoot), "esi-ai-vllm-cuda12");
+        {
+            var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            pythonRoot = Path.Combine(
+                string.IsNullOrWhiteSpace(userProfile) ? AppContext.BaseDirectory : userProfile,
+                ".venvs");
+        }
+        else
+        {
+            pythonRoot = Environment.ExpandEnvironmentVariables(pythonRoot.Trim());
+        }
+
+        var environmentPath = Path.Combine(Path.GetFullPath(pythonRoot), "esi-ai-vllm");
         var environmentPython = Path.Combine(environmentPath, OperatingSystem.IsWindows() ? "Scripts" : "bin", OperatingSystem.IsWindows() ? "python.exe" : "python");
 
         using var installTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

@@ -3,7 +3,7 @@ using Esi.AI.Studio.Contracts;
 
 namespace Esi.AI.Studio.Services;
 
-internal sealed class ServerModelDownloadEvents : IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents, IApplicationSettingsEvents, ITrainingRunEvents
+internal sealed class ServerModelDownloadEvents : IModelDownloadEvents, IModelRuntimeEvents, IBackendRequirementEvents, IBackendRuntimeEvents, IApplicationSettingsEvents, ITrainingRunEvents, IBenchmarkRunEvents
 {
     public event Func<IReadOnlyList<ModelDownloadUpdate>, Task>? ModelDownload_Read
     {
@@ -114,6 +114,30 @@ internal sealed class ServerModelDownloadEvents : IModelDownloadEvents, IModelRu
     }
 
     public event Func<TrainingRunStatus, Task>? TrainingRun_Delete
+    {
+        add { }
+        remove { }
+    }
+
+    public event Func<IReadOnlyList<BenchmarkRun>, Task>? BenchmarkRun_Read
+    {
+        add { }
+        remove { }
+    }
+
+    public event Func<BenchmarkRun, Task>? BenchmarkRun_Create
+    {
+        add { }
+        remove { }
+    }
+
+    public event Func<BenchmarkRun, Task>? BenchmarkRun_Update
+    {
+        add { }
+        remove { }
+    }
+
+    public event Func<BenchmarkRun, Task>? BenchmarkRun_Delete
     {
         add { }
         remove { }
