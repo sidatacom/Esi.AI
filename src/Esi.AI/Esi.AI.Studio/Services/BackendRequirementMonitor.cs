@@ -130,20 +130,6 @@ public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequi
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        try
-        {
-            var settings = await applicationSettings.ReadAsync(stoppingToken).ConfigureAwait(false);
-            await RefreshAsync(GetEnabledBackendIds(settings.EnabledBackendIds), stoppingToken).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-            return;
-        }
-        catch (Exception exception)
-        {
-            logger.LogError(exception, "Initial backend requirement refresh failed.");
-        }
-
         await foreach (var request in refreshRequests.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
         {
             try
@@ -217,7 +203,8 @@ public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequi
                 route.Vendor,
                 route.Devices,
                 new(route.Backend, "OpenVINO", result.IsGpuReady || result.IsNpuReady, checks, result.Error),
-                route.BackendId);
+                route.BackendId,
+                result);
         }
 
         var diagnostics = await sandbox.DiagnoseRequirementsAsync(

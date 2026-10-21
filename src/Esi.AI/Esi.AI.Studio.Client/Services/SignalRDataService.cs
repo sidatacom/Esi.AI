@@ -10,6 +10,7 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
 {
     private readonly HubConnection connection;
     private readonly IClientStateStore stateStore;
+    private readonly ILogger<SignalRDataService> logger;
 
     public event Func<ModelDownloadUpdate, Task>? ModelDownload_Create;
     public event Func<ModelDownloadUpdate, Task>? ModelDownload_Update;
@@ -44,15 +45,20 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     public event Func<BenchmarkRun, Task>? BenchmarkRun_Update;
     public event Func<BenchmarkRun, Task>? BenchmarkRun_Delete;
 
-    public SignalRDataService(NavigationManager navigationManager, IClientStateStore stateStore)
+    public SignalRDataService(
+        NavigationManager navigationManager,
+        IClientStateStore stateStore,
+        ILogger<SignalRDataService> logger)
     {
         this.stateStore = stateStore ?? throw new ArgumentNullException(nameof(stateStore));
+        this.logger = logger ?? throw new ArgumentNullException(nameof(logger));
         connection = new HubConnectionBuilder()
             .WithUrl(navigationManager.ToAbsoluteUri("/hubs/data"))
             .WithAutomaticReconnect()
             .WithServerTimeout(TimeSpan.FromMinutes(15))
             .WithKeepAliveInterval(TimeSpan.FromSeconds(10))
             .Build();
+        connection.Reconnected += HandleReconnectedAsync;
         connection.On<ModelDownloadUpdate>("ModelDownload_Create", async update =>
         {
             stateStore.ModelDownload_Create(update);
@@ -351,7 +357,12 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     public async Task<IReadOnlyList<InferenceLog>> InferenceLog_ReadAsync(CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
-        return await connection.InvokeAsync<IReadOnlyList<InferenceLog>>("InferenceLog_Read", cancellationToken);
+        var logs = await connection.InvokeAsync<IReadOnlyList<InferenceLog>>("InferenceLog_Read", cancellationToken);
+        var handler = InferenceLog_Read;
+        if (handler is not null)
+            await handler(logs);
+
+        return logs;
     }
 
     public async Task<InferenceLog> InferenceLog_UpdateAsync(InferenceLog log, CancellationToken cancellationToken = default)
@@ -529,6 +540,10 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         await EnsureConnectedAsync(cancellationToken);
         var statuses = await connection.InvokeAsync<IReadOnlyList<VulkanLogStatus>>("VulkanLog_Read", cancellationToken);
         stateStore.VulkanLog_Read(statuses);
+        var handler = VulkanLog_Read;
+        if (handler is not null)
+            await handler(statuses);
+
         return statuses;
     }
 
@@ -551,15 +566,23 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         await EnsureConnectedAsync(cancellationToken);
         var state = await connection.InvokeAsync<BackendRequirementState>("BackendRequirement_Read", cancellationToken);
         stateStore.BackendRequirement_Read(state);
+        var handler = BackendRequirement_Read;
+        if (handler is not null)
+            await handler(state);
+
         return state;
+    }
+
+    public async Task BackendRequirement_InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        await connection.InvokeAsync("BackendRequirement_Initialize", cancellationToken);
     }
 
     public async Task<BackendRequirementState> BackendRequirement_UpdateAsync(CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
-        var state = await connection.InvokeAsync<BackendRequirementState>("BackendRequirement_Update", cancellationToken);
-        stateStore.BackendRequirement_Read(state);
-        return state;
+        return await connection.InvokeAsync<BackendRequirementState>("BackendRequirement_Update", cancellationToken);
     }
 
     public async Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null)
@@ -705,7 +728,14 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
     public async Task<IReadOnlyList<DownloadStatus>> ModelDownload_ReadAsync(CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);
-        return await connection.InvokeAsync<IReadOnlyList<DownloadStatus>>("ModelDownload_Read", cancellationToken);
+        var downloads = await connection.InvokeAsync<IReadOnlyList<DownloadStatus>>("ModelDownload_Read", cancellationToken);
+        var updates = downloads.Select(download => new ModelDownloadUpdate(download)).ToArray();
+        stateStore.ModelDownload_Read(updates);
+        var handler = ModelDownload_Read;
+        if (handler is not null)
+            await handler(updates);
+
+        return downloads;
     }
 
     public async Task<ModelStatus> SelectModelAsync(SelectModelRequest request, CancellationToken cancellationToken = default)
@@ -731,6 +761,10 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         await EnsureConnectedAsync(cancellationToken);
         var statuses = await connection.InvokeAsync<IReadOnlyList<TrainingRunStatus>>("TrainingRun_Read", cancellationToken);
         stateStore.TrainingRun_Read(statuses);
+        var handler = TrainingRun_Read;
+        if (handler is not null)
+            await handler(statuses);
+
         return statuses;
     }
 
@@ -783,6 +817,35 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
             yield return update;
     }
 
+    private async Task HandleReconnectedAsync(string? connectionId)
+    {
+        if (ModelDownload_Read is not null)
+            await RefreshAfterReconnectAsync("model downloads", () => ModelDownload_ReadAsync());
+        if (InferenceLog_Read is not null)
+            await RefreshAfterReconnectAsync("inference logs", () => InferenceLog_ReadAsync());
+        if (VulkanLog_Read is not null)
+            await RefreshAfterReconnectAsync("Vulkan logs", () => VulkanLog_ReadAsync());
+        if (BackendRequirement_Read is not null || BackendRequirement_Update is not null)
+            await RefreshAfterReconnectAsync("backend requirements", () => BackendRequirement_ReadAsync());
+        if (TrainingRun_Read is not null ||
+            TrainingRun_Create is not null ||
+            TrainingRun_Update is not null ||
+            TrainingRun_Delete is not null)
+            await RefreshAfterReconnectAsync("training runs", () => TrainingRun_ReadAsync());
+    }
+
+    private async Task RefreshAfterReconnectAsync<T>(string collection, Func<Task<T>> refreshAsync)
+    {
+        try
+        {
+            await refreshAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "Failed to refresh {Collection} after the data connection reconnected.", collection);
+        }
+    }
+
     private async Task EnsureConnectedAsync(CancellationToken cancellationToken)
     {
         Exception? lastStartException = null;
@@ -815,6 +878,7 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
 
     public async ValueTask DisposeAsync()
     {
+        connection.Reconnected -= HandleReconnectedAsync;
         await connection.DisposeAsync();
     }
 }

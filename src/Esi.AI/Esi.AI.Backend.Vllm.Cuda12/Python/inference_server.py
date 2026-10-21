@@ -75,6 +75,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
     def __init__(self) -> None:
         self._engine = None
         self._model_id = ""
+        self._speculative_decoding_enabled = False
         self._load_lock = asyncio.Lock()
 
     async def CheckReadiness(self, request, context):
@@ -122,6 +123,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                     engine_options["gpu_memory_utilization"] = request.gpu_memory_utilization
                 self._engine = AsyncLLMEngine.from_engine_args(AsyncEngineArgs(**engine_options))
                 self._model_id = request.model_path
+                self._speculative_decoding_enabled = bool(request.speculative_config_json)
                 return inference_pb2.ModelOperationResponse(succeeded=True, model_id=self._model_id)
             except ImportError as exception:
                 return inference_pb2.ModelOperationResponse(
@@ -159,7 +161,8 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 temperature=request.temperature,
                 top_p=request.top_p,
                 top_k=request.top_k or -1,
-                min_p=request.min_p,
+                # vLLM does not support nonzero min_p with speculative decoding.
+                min_p=0.0 if self._speculative_decoding_enabled else request.min_p,
                 repetition_penalty=request.repetition_penalty or 1.0,
                 seed=request.seed or None,
                 stop=list(request.stop_sequences) or None,
@@ -246,6 +249,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 await self._engine.abort(request_id)
 
     async def _unload_model(self) -> None:
+        self._speculative_decoding_enabled = False
         if self._engine is None:
             return
         engine = self._engine

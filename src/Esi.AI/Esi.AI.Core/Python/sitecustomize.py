@@ -9,3 +9,4 @@ if os.environ.get("VLLM_TARGET_DEVICE", "").lower() == "xpu":
     vllm_xpu_bootstrap.disable_cuda_platform_probe()
     vllm_xpu_bootstrap.enable_xpu_memory_probe_fallback()
     vllm_xpu_bootstrap.install_vllm_memory_probe_hook()
+    vllm_xpu_bootstrap.enable_xpu_graph_dynamo_compatibility()

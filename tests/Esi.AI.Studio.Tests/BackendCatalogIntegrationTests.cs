@@ -284,6 +284,16 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
+    public void PythonState_WhenCreated_LeavesQuantizationToModelConfig()
+    {
+        var state = new PythonState();
+
+        var request = state.ToRequest(ConfigurationBackend.Vllm, "vllm.xpu");
+
+        Assert.AreEqual(string.Empty, request.Quantization);
+    }
+
+    [TestMethod]
     public void PythonState_Load_WhenXpuProfileHasExplicitCudaRoute_PreservesConflict()
     {
         var state = new PythonState();

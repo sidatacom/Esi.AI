@@ -11,8 +11,7 @@ namespace Esi.AI.Studio.Hubs;
 public sealed class DataHub(
     DataService dataService,
     IBackendDiagnosticsService backendDiagnostics,
-    IModelDirectoryCatalog modelDirectories,
-    IBackendRequirementState requirementMonitor) : Hub
+    IModelDirectoryCatalog modelDirectories) : Hub
 {
     public const string LocalTrainingClientsGroup = "local-training-clients";
 
@@ -25,18 +24,7 @@ public sealed class DataHub(
             await Clients.Caller.SendAsync("TrainingRun_Read", await dataService.TrainingRun_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
         }
 
-        await Clients.Caller.SendAsync("ModelDownload_Read", dataService.ModelDownload_Read().Select(download => new ModelDownloadUpdate(download)).ToArray(), Context.ConnectionAborted);
-        await Clients.Caller.SendAsync("VulkanLog_Read", await dataService.VulkanLog_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
-        await Clients.Caller.SendAsync("InferenceLog_Read", await dataService.InferenceLog_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
         await Clients.Caller.SendAsync("LoadedModel_Read", await dataService.LoadedModel_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
-        try
-        {
-            await Clients.Caller.SendAsync("BackendRuntime_Read", await dataService.BackendRuntime_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
-        }
-        catch (OperationCanceledException)
-        {
-            // A reconnect can cancel the optional runtime catalog refresh; keep the SignalR connection usable.
-        }
     }
 
     public Task<IReadOnlyList<ModelSettings>> ModelSettings_Read() => dataService.ModelSettings_ReadAsync(Context.ConnectionAborted);
@@ -169,7 +157,10 @@ public sealed class DataHub(
         dataService.VulkanLog_DeleteAsync(id, Context.ConnectionAborted);
 
     public Task<BackendRequirementState> BackendRequirement_Read() =>
-        Task.FromResult(requirementMonitor.Current);
+        dataService.BackendRequirement_ReadAsync(Context.ConnectionAborted);
+
+    public Task BackendRequirement_Initialize() =>
+        dataService.BackendRequirement_InitializeAsync(Context.ConnectionAborted);
 
     public Task<BackendRequirementState> BackendRequirement_Update() =>
         dataService.BackendRequirement_UpdateAsync(Context.ConnectionAborted);
@@ -209,9 +200,7 @@ public sealed class DataHub(
         if (backend is not (ConfigurationBackend.Llama or ConfigurationBackend.Vllm))
             return new(false, "This backend has no preparation action from this tile.", string.Empty);
 
-        var result = await dataService.PrepareBackendAsync(backend, pythonExecutable, Context.ConnectionAborted, devices);
-        requirementMonitor.RequestRefresh(backend, devices);
-        return result;
+        return await dataService.PrepareBackendAsync(backend, pythonExecutable, Context.ConnectionAborted, devices);
     }
 
     public async Task<OpenVinoSolveResultDto> SolveOpenVinoDiagnostic(string checkId)

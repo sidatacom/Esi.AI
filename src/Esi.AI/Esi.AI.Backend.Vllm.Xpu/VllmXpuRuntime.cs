@@ -48,7 +48,7 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         {
             var isRunning = process is { HasExited: false } && client is not null && modelPath is not null;
             var hasActivity = isLoading || isRunning;
-            var loadedModels = isRunning && modelId is not null
+            var loadedModels = isRunning && !isLoading && !string.IsNullOrWhiteSpace(modelId)
                 ? new[]
                 {
                     new LoadedModelStatus(
@@ -172,11 +172,13 @@ public sealed class VllmXpuRuntime : IBackendRuntime
             using var loadCall = newClient.LoadModelAsync(VllmXpuGrpcMapper.ToGrpcRequest(configuration),
                 cancellationToken: startupCancellation.Token);
             var response = await loadCall.ResponseAsync.ConfigureAwait(false);
-            if (!response.Succeeded)
-                throw new InvalidOperationException(response.Error);
-            lock (sync)
-                modelId = response.ModelId;
-            await WaitUntilModelReadyAsync(newClient, newProcess, startupTimeout, startupCancellation.Token).ConfigureAwait(false);
+            var loadedModelId = GetLoadedModelId(response);
+            await WaitUntilModelReadyAsync(
+                newClient,
+                newProcess,
+                loadedModelId,
+                startupTimeout,
+                startupCancellation.Token).ConfigureAwait(false);
         }
         catch (Exception exception)
         {
@@ -321,6 +323,36 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         };
     }
 
+    internal static string GetLoadedModelId(ModelOperationResponse response)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        if (!response.Succeeded)
+        {
+            var error = string.IsNullOrWhiteSpace(response.Error)
+                ? "The vLLM XPU model load failed without an error message."
+                : response.Error;
+            throw new InvalidOperationException(error);
+        }
+        if (string.IsNullOrWhiteSpace(response.ModelId))
+            throw new InvalidOperationException("The vLLM XPU model load succeeded without returning a model ID.");
+
+        return response.ModelId;
+    }
+
+    internal static string GetReadyModelId(ReadinessResponse response, string expectedModelId)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        ArgumentException.ThrowIfNullOrWhiteSpace(expectedModelId);
+        if (!response.Ready || !response.ModelLoaded)
+            throw new InvalidOperationException("The vLLM XPU runtime has not finished loading the model.");
+        if (string.IsNullOrWhiteSpace(response.ModelId))
+            throw new InvalidOperationException("The vLLM XPU readiness response did not include a model ID.");
+        if (!string.Equals(response.ModelId, expectedModelId, StringComparison.Ordinal))
+            throw new InvalidOperationException(
+                $"The vLLM XPU runtime reported model '{response.ModelId}' as loaded instead of '{expectedModelId}'.");
+
+        return response.ModelId;
+    }
 
     internal static IReadOnlyList<string> BuildBootstrapArguments(
         string bootstrapScriptPath,
@@ -374,6 +406,7 @@ public sealed class VllmXpuRuntime : IBackendRuntime
     private async Task WaitUntilModelReadyAsync(
         Inference.InferenceClient activeClient,
         Process activeProcess,
+        string expectedModelId,
         TimeSpan startupTimeout,
         CancellationToken cancellationToken)
     {
@@ -390,8 +423,9 @@ public sealed class VllmXpuRuntime : IBackendRuntime
                 var response = await call.ResponseAsync.ConfigureAwait(false);
                 if (response.Ready && response.ModelLoaded)
                 {
+                    var readyModelId = GetReadyModelId(response, expectedModelId);
                     lock (sync)
-                        modelId = string.IsNullOrWhiteSpace(response.ModelId) ? modelId : response.ModelId;
+                        modelId = readyModelId;
                     return;
                 }
             }

@@ -176,7 +176,8 @@ public sealed record BackendRequirementSnapshot(
     string Vendor,
     IReadOnlyList<string> Devices,
     BackendPrerequisiteDiagnostics Diagnostics,
-    string BackendId = "");
+    string BackendId = "",
+    OpenVinoDiagnosticsDto? OpenVinoDiagnostics = null);
 
 /// <summary>Contains the result and output of a backend preparation action.</summary>
 public sealed record BackendPrerequisiteSolveResult(

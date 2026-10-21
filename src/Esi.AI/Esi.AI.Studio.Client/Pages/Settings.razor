@@ -7,6 +7,7 @@
 @using Esi.AI.Studio.Contracts
 @inject IDataService DataService
 @inject IApplicationSettingsEvents ApplicationSettingsEvents
+@inject IVulkanLogEvents VulkanLogEvents
 @inject IClientStateStore ClientStateStore
 
 <div class="settings-shell">
@@ -221,6 +222,7 @@
     protected override async Task OnInitializedAsync()
     {
         ApplicationSettingsEvents.ApplicationSettings_Update += OnSettingsUpdatedAsync;
+        VulkanLogEvents.VulkanLog_Read += HandleVulkanLogReadAsync;
         ClientStateStore.Changed += OnClientStateChanged;
         await LoadAsync();
     }
@@ -237,7 +239,7 @@
             Apply(await settingsTask);
             runtimeOptions.Apply(await runtimeTask);
             flowDefinitions = await EnsureDefaultFlowDefinitionsAsync(await flowTask);
-            ClientStateStore.VulkanLog_Read(await vulkanLogsTask);
+            await vulkanLogsTask;
         }
         catch (Exception exception)
         {
@@ -351,6 +353,8 @@
         return InvokeAsync(StateHasChanged);
     }
 
+    private Task HandleVulkanLogReadAsync(IReadOnlyList<VulkanLogStatus> _) => InvokeAsync(StateHasChanged);
+
     private void Apply(ApplicationSettings settings)
     {
         form.Apply(settings);
@@ -363,6 +367,7 @@
     public ValueTask DisposeAsync()
     {
         ApplicationSettingsEvents.ApplicationSettings_Update -= OnSettingsUpdatedAsync;
+        VulkanLogEvents.VulkanLog_Read -= HandleVulkanLogReadAsync;
         ClientStateStore.Changed -= OnClientStateChanged;
         return ValueTask.CompletedTask;
     }

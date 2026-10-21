@@ -15,7 +15,7 @@ public sealed class PythonState : IBackendTabConfigurationData
     public int MaxModelLength { get; set; } = 2048;
     public int TensorParallelSize { get; set; } = 1;
     public bool TrustRemoteCode { get; set; } = true;
-    public string Quantization { get; set; } = "gptq";
+    public string Quantization { get; set; } = string.Empty;
     public string DType { get; set; } = "float16";
     public string KvCacheDType { get; set; } = "fp8";
     public int MtpTokens { get; set; }

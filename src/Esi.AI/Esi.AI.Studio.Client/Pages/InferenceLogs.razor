@@ -110,7 +110,7 @@
         errorMessage = null;
         try
         {
-            Merge(await DataService.InferenceLog_ReadAsync());
+            await DataService.InferenceLog_ReadAsync();
         }
         catch (Exception exception)
         {

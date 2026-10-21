@@ -23,7 +23,7 @@ public sealed class DataService(
     OpenVinoDriverInstaller openVinoInstaller,
     ModelRuntime modelRuntime,
     BackendPrerequisiteProvisioner? backendPrerequisites = null,
-    BackendRequirementMonitor? requirementMonitor = null,
+    IBackendRequirementState? requirementMonitor = null,
     BackendRuntimeInstaller? backendRuntimeInstaller = null,
     IBackendRuntimeStatusPublisher? backendRuntimePublisher = null,
     IInferenceService? inferenceService = null,
@@ -59,9 +59,24 @@ public sealed class DataService(
     public Task<BackendRequirementState> BackendRequirement_ReadAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(requirementMonitor?.Current ?? new BackendRequirementState([], DateTimeOffset.MinValue));
 
-    public Task<BackendRequirementState> BackendRequirement_UpdateAsync(CancellationToken cancellationToken = default) =>
-        requirementMonitor?.RefreshAsync(cancellationToken) ??
-        Task.FromResult(new BackendRequirementState([], DateTimeOffset.MinValue));
+    public Task BackendRequirement_InitializeAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (requirementMonitor is not null && !requirementMonitor.Current.IsRefreshing)
+            requirementMonitor.RequestRefresh();
+
+        return Task.CompletedTask;
+    }
+
+    public Task<BackendRequirementState> BackendRequirement_UpdateAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (requirementMonitor is null)
+            return Task.FromResult(new BackendRequirementState([], DateTimeOffset.MinValue));
+
+        requirementMonitor.RequestRefresh();
+        return Task.FromResult(requirementMonitor.Current);
+    }
 
     public Task<IReadOnlyList<ProviderTraceEntry>> ProviderTrace_ReadAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(providerTraceStore?.Read() ?? (IReadOnlyList<ProviderTraceEntry>)[]);
@@ -1757,6 +1772,7 @@ public sealed class DataService(
         try
         {
             var result = await (backendPrerequisites ?? new BackendPrerequisiteProvisioner()).PrepareAsync(backend, pythonExecutable, AppContext.BaseDirectory, cancellationToken: cancellationToken, devices: devices);
+            requirementMonitor?.RequestRefresh(backend, devices);
             return new(true, result.Message, $"Python executable: {result.PythonExecutable}{Environment.NewLine}Requirements: {result.RequirementsPath}");
         }
         catch (Exception exception)

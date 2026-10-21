@@ -93,6 +93,30 @@ class _VllmImportLoader(importlib.abc.Loader):
         enable_xpu_memory_probe_fallback()
 
 
+def enable_xpu_graph_dynamo_compatibility() -> None:
+    """Treat XPU compute-unit lookup as a compile-time constant for vLLM graphs."""
+    if os.environ.get("VLLM_XPU_ENABLE_XPU_GRAPH") != "1":
+        return
+
+    import torch
+
+    platform_utils = importlib.import_module("vllm.utils.platform_utils")
+    original = platform_utils.num_compute_units
+    if getattr(original, "_esi_xpu_graph_dynamo_compatible", False):
+        return
+
+    compute_units = getattr(original, "__wrapped__", original)
+    compatible = torch._dynamo.assume_constant_result(compute_units)
+    compatible._esi_xpu_graph_dynamo_compatible = True
+    platform_utils.num_compute_units = compatible
+
+    layernorm_guard = sys.modules.get("vllm.third_party.flash_linear_attention.ops.layernorm_guard")
+    if layernorm_guard is not None:
+        layernorm_guard.num_compute_units = compatible
+
+    print("Enabled Dynamo compatibility for vLLM XPU graph device-property lookup.", file=sys.stderr, flush=True)
+
+
 def _find_level_zero_loader() -> Path | None:
     for candidate in (
         Path("/usr/lib/x86_64-linux-gnu/libze_loader.so"),

@@ -336,14 +336,14 @@
         <div class="driver-validation-content">
             @if (activeBackend != BackendTab.OpenVino && backendRequirementState is null)
             {
-                <button class="profile-button" type="button" @onclick="RefreshBackendRequirementsAsync" disabled="@isCheckingBackendRequirements">
-                    @(isCheckingBackendRequirements ? "Checking..." : "Check backend requirements")
+                <button class="profile-button" type="button" @onclick="RefreshBackendRequirementsAsync" disabled="@IsRefreshingBackendRequirements">
+                    @(IsRefreshingBackendRequirements ? "Checking..." : "Check backend requirements")
                 </button>
             }
             @if (activeBackend == BackendTab.OpenVino)
             {
-                <button class="profile-button" type="button" @onclick="RefreshOpenVinoDiagnosticsAsync" disabled="@isCheckingOpenVino">
-                    @(isCheckingOpenVino ? "Checking..." : "Recheck")
+                <button class="profile-button" type="button" @onclick="RefreshBackendRequirementsAsync" disabled="@IsRefreshingBackendRequirements">
+                    @(IsRefreshingBackendRequirements ? "Checking..." : "Recheck")
                 </button>
                 @if (openVinoDiagnostics is null)
                 {
@@ -402,8 +402,8 @@
             }
             else
             {
-                <button class="profile-button" type="button" @onclick="RefreshBackendPrerequisitesAsync" disabled="@isCheckingPrerequisites">
-                    @(isCheckingPrerequisites ? "Checking..." : "Recheck")
+                <button class="profile-button" type="button" @onclick="RefreshBackendRequirementsAsync" disabled="@IsRefreshingBackendRequirements">
+                    @(IsRefreshingBackendRequirements ? "Checking..." : "Recheck")
                 </button>
                 <ol class="validation-steps">
                     @for (var index = 0; index < backendPrerequisites.Checks.Count; index++)
@@ -1084,6 +1084,7 @@ else if (activeBackend == BackendTab.OpenVino)
     private bool isOpenVinoProfilePathDirty;
     private bool isCheckingOpenVino;
     private bool isCheckingBackendRequirements;
+    private bool isDisposed;
     private bool isCheckingPrerequisites;
     private bool isPreparingPrerequisites;
     private string? prerequisiteOutput;
@@ -1118,6 +1119,7 @@ else if (activeBackend == BackendTab.OpenVino)
         .Select(check => $"{check.Name}: {check.Detail}") ?? []);
     private bool IsBackendPrerequisitesReady => backendPrerequisites?.IsReady == true;
     private bool IsBackendRequirementsReady => activeBackend == BackendTab.OpenVino ? IsOpenVinoValidationReady : IsBackendPrerequisitesReady;
+    private bool IsRefreshingBackendRequirements => isCheckingBackendRequirements || backendRequirementState?.IsRefreshing == true;
     private bool AreMatrixChecksReady => backendRequirementState is not null &&
         !backendRequirementState.IsRefreshing &&
         matrixRequirementActions.Count > 0 &&
@@ -1178,14 +1180,14 @@ else if (activeBackend == BackendTab.OpenVino)
 
     private async Task RefreshBackendRequirementsAsync()
     {
-        if (isCheckingBackendRequirements)
+        if (IsRefreshingBackendRequirements)
             return;
 
         isCheckingBackendRequirements = true;
+        await InvokeAsync(StateHasChanged);
         try
         {
-            ApplyBackendRequirementState(await DataService.BackendRequirement_UpdateAsync());
-            await RefreshMatrixRequirementActionsAsync();
+            await DataService.BackendRequirement_UpdateAsync();
         }
         catch (Exception exception)
         {
@@ -1194,6 +1196,8 @@ else if (activeBackend == BackendTab.OpenVino)
         finally
         {
             isCheckingBackendRequirements = false;
+            if (!isDisposed)
+                await InvokeAsync(StateHasChanged);
         }
     }
 
@@ -1362,10 +1366,20 @@ else if (activeBackend == BackendTab.OpenVino)
         backendRequirementState = state;
         _ = RefreshMatrixRequirementActionsAsync();
 
+        var backendId = BackendTabOptions.Single(option => option.Backend == activeBackend).Id;
+        var matchingEntry = state.Entries.FirstOrDefault(entry =>
+            entry.BackendId.Equals(backendId, StringComparison.OrdinalIgnoreCase));
+        if (activeBackend == BackendTab.OpenVino)
+        {
+            openVinoDiagnostics = matchingEntry?.OpenVinoDiagnostics;
+            SyncOpenVinoDevices();
+            return;
+        }
+
         var currentDevices = IsLlamaBackendTab(activeBackend)
             ? GetLlamaPrerequisiteDevices(llamaState.Backend)
             : pythonForm.SelectedDevices;
-        var currentEntry = state.Entries.FirstOrDefault(entry =>
+        var currentEntry = matchingEntry ?? state.Entries.FirstOrDefault(entry =>
             entry.Backend == CurrentPrerequisiteBackend &&
             entry.Devices.SequenceEqual(currentDevices, StringComparer.OrdinalIgnoreCase));
         if (currentEntry is not null)
@@ -1723,6 +1737,44 @@ else if (activeBackend == BackendTab.OpenVino)
         }
     }
 
+    private async Task RefreshLlamaRoutingDevicesAsync()
+    {
+        if (IsVllmBackendTab(activeBackend))
+        {
+            var vllmVariantId = BackendTabOptions.Single(option => option.Backend == activeBackend).Id;
+            try
+            {
+                var devices = await DataService.BackendDevice_ReadAsync(vllmVariantId);
+                SyncVllmDevices(devices);
+            }
+            catch (Exception exception)
+            {
+                pythonDeviceRoutes = [];
+                statusMessage = $"Device discovery failed: {exception.Message}";
+            }
+            return;
+        }
+
+        if (!IsLlamaBackendTab(activeBackend))
+        {
+            llamaRoutingDevices = [];
+            return;
+        }
+
+        var variantId = BackendTabOptions.Single(option => option.Backend == activeBackend).Id;
+        try
+        {
+            llamaRoutingDevices = await DataService.BackendDevice_ReadAsync(variantId);
+            if (GetLlamaRoutingDevices().Count > 0)
+                SyncEnabledDevices();
+        }
+        catch (Exception exception)
+        {
+            llamaRoutingDevices = [];
+            statusMessage = $"Device discovery failed: {exception.Message}";
+        }
+    }
+
     private async Task RefreshOpenVinoDiagnosticsAsync()
     {
         isCheckingOpenVino = true;
@@ -1759,44 +1811,6 @@ else if (activeBackend == BackendTab.OpenVino)
         finally
         {
             isCheckingPrerequisites = false;
-        }
-    }
-
-    private async Task RefreshLlamaRoutingDevicesAsync()
-    {
-        if (IsVllmBackendTab(activeBackend))
-        {
-            var vllmVariantId = BackendTabOptions.Single(option => option.Backend == activeBackend).Id;
-            try
-            {
-                var devices = await DataService.BackendDevice_ReadAsync(vllmVariantId);
-                SyncVllmDevices(devices);
-            }
-            catch (Exception exception)
-            {
-                pythonDeviceRoutes = [];
-                statusMessage = $"Device discovery failed: {exception.Message}";
-            }
-            return;
-        }
-
-        if (!IsLlamaBackendTab(activeBackend))
-        {
-            llamaRoutingDevices = [];
-            return;
-        }
-
-        var variantId = BackendTabOptions.Single(option => option.Backend == activeBackend).Id;
-        try
-        {
-            llamaRoutingDevices = await DataService.BackendDevice_ReadAsync(variantId);
-            if (GetLlamaRoutingDevices().Count > 0)
-                SyncEnabledDevices();
-        }
-        catch (Exception exception)
-        {
-            llamaRoutingDevices = [];
-            statusMessage = $"Device discovery failed: {exception.Message}";
         }
     }
 
@@ -2028,9 +2042,11 @@ else if (activeBackend == BackendTab.OpenVino)
 
     public ValueTask DisposeAsync()
     {
+        isDisposed = true;
         RuntimeEvents.LoadedModel_Create -= HandleLoadedModelChangedAsync;
         RuntimeEvents.LoadedModel_Update -= HandleLoadedModelChangedAsync;
         RuntimeEvents.LoadedModel_Delete -= HandleLoadedModelChangedAsync;
+        RequirementEvents.BackendRequirement_Read -= HandleBackendRequirementUpdateAsync;
         RequirementEvents.BackendRequirement_Update -= HandleBackendRequirementUpdateAsync;
         return ValueTask.CompletedTask;
     }
@@ -2224,11 +2240,14 @@ else if (activeBackend == BackendTab.OpenVino)
         RuntimeEvents.LoadedModel_Create += HandleLoadedModelChangedAsync;
         RuntimeEvents.LoadedModel_Update += HandleLoadedModelChangedAsync;
         RuntimeEvents.LoadedModel_Delete += HandleLoadedModelChangedAsync;
+        RequirementEvents.BackendRequirement_Update += HandleBackendRequirementUpdateAsync;
+        RequirementEvents.BackendRequirement_Read += HandleBackendRequirementUpdateAsync;
         await InitializeAsync();
     }
 
     private async Task InitializeAsync()
     {
+        var refreshRoutingDevicesAfterInitialization = false;
         try
         {
             loadStatus = await DataService.LoadedModel_ReadAsync();
@@ -2315,12 +2334,7 @@ else if (activeBackend == BackendTab.OpenVino)
                 TryApplyProfile(preferredProfile);
             else
                 selectedProfileId = null;
-            if (IsPythonBackendTab(activeBackend))
-                await RefreshBackendPrerequisitesAsync();
-            if (IsLlamaBackendTab(activeBackend) || IsVllmBackendTab(activeBackend))
-                await RefreshLlamaRoutingDevicesAsync();
-            if (activeBackend == BackendTab.OpenVino)
-                await RefreshOpenVinoDiagnosticsAsync();
+            refreshRoutingDevicesAfterInitialization = IsLlamaBackendTab(activeBackend) || IsVllmBackendTab(activeBackend);
 
             var savedRoutingSettings = savedSettings.FirstOrDefault(item =>
                 item.Backend == CurrentProfileBackend &&
@@ -2334,8 +2348,8 @@ else if (activeBackend == BackendTab.OpenVino)
                 openVinoState.ModelPath = openVinoModelStatus.ModelPath;
             if (openVinoModelStatus.IsModelLoaded && !string.IsNullOrWhiteSpace(openVinoModelStatus.Device))
                 openVinoState.Device = openVinoModelStatus.Device;
-            RequirementEvents.BackendRequirement_Update += HandleBackendRequirementUpdateAsync;
-            ApplyBackendRequirementState(await DataService.BackendRequirement_ReadAsync());
+            await DataService.BackendRequirement_ReadAsync();
+            await DataService.BackendRequirement_InitializeAsync();
             await RefreshMatrixRequirementActionsAsync();
             isBackendRequirementsExpanded = !IsBackendRequirementsReady;
 
@@ -2350,6 +2364,15 @@ else if (activeBackend == BackendTab.OpenVino)
         }
         isInitializing = false;
         await InvokeAsync(StateHasChanged);
+        if (refreshRoutingDevicesAfterInitialization)
+            _ = RefreshRoutingDevicesAndRenderAsync();
+    }
+
+    private async Task RefreshRoutingDevicesAndRenderAsync()
+    {
+        await RefreshLlamaRoutingDevicesAsync();
+        if (!isDisposed)
+            await InvokeAsync(StateHasChanged);
     }
 
     private async Task<bool> LoadModelAsync()

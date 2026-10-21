@@ -73,6 +73,74 @@ public sealed class VllmXpuBackendTests
     }
 
     [TestMethod]
+    public void GetLoadedModelId_WhenLoadFails_ThrowsBridgeError()
+    {
+        var response = new ModelOperationResponse
+        {
+            Succeeded = false,
+            Error = "model initialization failed"
+        };
+
+        var exception = Assert.ThrowsExactly<InvalidOperationException>(
+            () => VllmXpuRuntime.GetLoadedModelId(response));
+
+        Assert.AreEqual("model initialization failed", exception.Message);
+    }
+
+    [TestMethod]
+    public void GetLoadedModelId_WhenSuccessResponseHasNoModelId_Throws()
+    {
+        var response = new ModelOperationResponse { Succeeded = true };
+
+        var exception = Assert.ThrowsExactly<InvalidOperationException>(
+            () => VllmXpuRuntime.GetLoadedModelId(response));
+
+        Assert.AreEqual("The vLLM XPU model load succeeded without returning a model ID.", exception.Message);
+    }
+
+    [TestMethod]
+    public void GetLoadedModelId_WhenLoadSucceeds_ReturnsModelId()
+    {
+        var response = new ModelOperationResponse { Succeeded = true, ModelId = "org/model" };
+
+        var modelId = VllmXpuRuntime.GetLoadedModelId(response);
+
+        Assert.AreEqual("org/model", modelId);
+    }
+
+    [TestMethod]
+    public void GetReadyModelId_WhenModelIsNotReady_Throws()
+    {
+        var response = new ReadinessResponse { Ready = true, ModelLoaded = false, ModelId = "org/model" };
+
+        var exception = Assert.ThrowsExactly<InvalidOperationException>(
+            () => VllmXpuRuntime.GetReadyModelId(response, "org/model"));
+
+        Assert.AreEqual("The vLLM XPU runtime has not finished loading the model.", exception.Message);
+    }
+
+    [TestMethod]
+    public void GetReadyModelId_WhenModelIsReady_ReturnsModelId()
+    {
+        var response = new ReadinessResponse { Ready = true, ModelLoaded = true, ModelId = "org/model" };
+
+        var modelId = VllmXpuRuntime.GetReadyModelId(response, "org/model");
+
+        Assert.AreEqual("org/model", modelId);
+    }
+
+    [TestMethod]
+    public void GetReadyModelId_WhenRuntimeReportsDifferentModel_Throws()
+    {
+        var response = new ReadinessResponse { Ready = true, ModelLoaded = true, ModelId = "other/model" };
+
+        var exception = Assert.ThrowsExactly<InvalidOperationException>(
+            () => VllmXpuRuntime.GetReadyModelId(response, "org/model"));
+
+        Assert.Contains("instead of 'org/model'", exception.Message);
+    }
+
+    [TestMethod]
     public void BuildBootstrapArguments_WhenXpuSettingsAreProvided_ForwardsTypedSettingsAndServerArguments()
     {
         var settings = new VllmXpuRuntimeSettings(CclZeIpcExchange: "disabled");

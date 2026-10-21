@@ -131,6 +131,8 @@ public interface IDataService
     Task<BackendPrerequisiteDiagnostics> GetBackendPrerequisitesAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null);
     Task<BackendRequirementState> BackendRequirement_ReadAsync(CancellationToken cancellationToken = default);
 
+    Task BackendRequirement_InitializeAsync(CancellationToken cancellationToken = default);
+
     Task<BackendRequirementState> BackendRequirement_UpdateAsync(CancellationToken cancellationToken = default);
     Task<BackendPrerequisiteSolveResult> PrepareBackendAsync(ConfigurationBackend backend, string pythonExecutable = "python3", CancellationToken cancellationToken = default, IReadOnlyList<string>? devices = null);
     Task<IReadOnlyList<BackendRuntimeStatus>> BackendRuntime_ReadAsync(CancellationToken cancellationToken = default);
