@@ -29,26 +29,6 @@ if os.environ.get("VLLM_TARGET_DEVICE", "").lower() == "xpu":
     vllm_xpu_bootstrap.install_vllm_memory_probe_hook()
 
 
-def _extract_root_error(output: str) -> str:
-    lines = output.splitlines()
-    for index in range(len(lines) - 1, -1, -1):
-        candidate = lines[index].strip()
-        separator = candidate.find(": ")
-        if separator <= 0:
-            continue
-        exception_type = candidate[:separator]
-        if exception_type.endswith(("Error", "Exception", "Failure")):
-            details = [candidate]
-            for following in lines[index + 1:]:
-                line = following.strip()
-                if line.startswith("["):
-                    break
-                if line:
-                    details.append(line)
-            return "\n".join(details)
-    return next((line.strip() for line in reversed(lines) if line.strip()), "vLLM exited without an error message.")
-
-
 def _enable_b70_bf16_mtp_draft() -> None:
     """Enable unquantized Qwen3.5-family MTP layers for preserved-BF16 checkpoints."""
     import vllm
@@ -163,7 +143,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 )
             except Exception as exception:
                 return inference_pb2.ModelOperationResponse(
-                    error=_extract_root_error(f"{exception}\n{traceback.format_exc()}")
+                    error=f"{exception}\n{traceback.format_exc()}"
                 )
 
     async def UnloadModel(self, request, context):

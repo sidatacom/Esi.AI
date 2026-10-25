@@ -75,16 +75,17 @@ public sealed class VllmXpuBackendTests
     [TestMethod]
     public void GetLoadedModelId_WhenLoadFails_ThrowsBridgeError()
     {
+        const string bridgeError = "BrokenPipeError: [Errno 32] Broken pipe\nTraceback (most recent call last):\n  File \"inference_server.py\", line 1, in LoadModel\nBrokenPipeError: [Errno 32] Broken pipe";
         var response = new ModelOperationResponse
         {
             Succeeded = false,
-            Error = "model initialization failed"
+            Error = bridgeError
         };
 
         var exception = Assert.ThrowsExactly<InvalidOperationException>(
             () => VllmXpuRuntime.GetLoadedModelId(response));
 
-        Assert.AreEqual("model initialization failed", exception.Message);
+        Assert.AreEqual(bridgeError, exception.Message);
     }
 
     [TestMethod]

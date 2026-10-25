@@ -182,7 +182,7 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         }
         catch (Exception exception)
         {
-            var failure = ExtractRootCause(exception.Message);
+            var failure = exception.Message;
             lock (sync)
                 loadLog = string.IsNullOrWhiteSpace(loadLog)
                     ? failure
