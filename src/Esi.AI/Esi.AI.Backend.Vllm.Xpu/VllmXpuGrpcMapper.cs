@@ -56,7 +56,8 @@ internal static class VllmXpuGrpcMapper
             TopK = options.TopK,
             MinP = options.MinP,
             RepetitionPenalty = options.RepetitionPenalty,
-            Seed = options.Seed ?? 0
+            Seed = options.Seed ?? 0,
+            StructuredOutputJsonSchema = options.StructuredOutputJsonSchema ?? string.Empty
         };
         request.StopSequences.AddRange(options.StopSequences ?? []);
         if (options.Tools is { Count: > 0 })

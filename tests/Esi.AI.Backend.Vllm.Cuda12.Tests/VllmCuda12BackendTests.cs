@@ -108,7 +108,8 @@ public sealed class VllmCuda12BackendTests
                 Seed: 42,
                 StopSequences: ["END"],
                 Tools: [new OpenAiToolDefinition("function", new OpenAiToolFunction("weather", "Look up weather", parameters.RootElement))],
-                ToolChoice: toolChoice.RootElement),
+                ToolChoice: toolChoice.RootElement,
+                StructuredOutputJsonSchema: """{"type":"object"}"""),
             null);
 
         var mapped = VllmCuda12GrpcMapper.ToGrpcRequest(request, "model-id", "request-id");
@@ -121,5 +122,6 @@ public sealed class VllmCuda12BackendTests
         Assert.AreEqual("\"auto\"", mapped.ToolChoiceJson);
         Assert.AreEqual(42, mapped.Seed);
         Assert.AreEqual("END", mapped.StopSequences[0]);
+        Assert.AreEqual("""{"type":"object"}""", mapped.StructuredOutputJsonSchema);
     }
 }

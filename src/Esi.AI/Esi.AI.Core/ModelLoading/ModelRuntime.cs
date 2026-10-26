@@ -35,7 +35,8 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
     private readonly OpenVinoLoadGate openVinoLoadGate;
     private readonly IBackendRuntimeResolver? backendRuntimeResolver;
     private readonly ILogger<ModelRuntime> logger;
-    private readonly ConcurrentDictionary<string, PendingModel> pendingModels = new(StringComparer.OrdinalIgnoreCase);
+    private readonly SemaphoreSlim backendStartupLock = new(1, 1);
+    private readonly ConcurrentDictionary<Guid, PendingModel> pendingModels = new();
     private int stopStarted;
 
     public ModelRuntime()
@@ -185,7 +186,7 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
                 cancellationToken: cancellationToken,
                 devices: [$"{request.Backend.ToLowerInvariant()}:0"]).ConfigureAwait(false);
             await llamaAdapter.LoadAsync(request, cancellationToken).ConfigureAwait(false);
-        });
+        }, cancellationToken: cancellationToken);
     }
 
     public Task LoadAsync(
@@ -205,7 +206,7 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         {
             await prerequisites.PrepareAsync(ConfigurationBackend.OpenVino, cancellationToken: cancellationToken).ConfigureAwait(false);
             await openVinoAdapter.LoadAsync(request, cancellationToken).ConfigureAwait(false);
-        }));
+        }, cancellationToken: cancellationToken));
     }
 
     public Task LoadAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default)
@@ -228,7 +229,8 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         }
 
         return TrackPendingModelAsync(request.ModelPath, request.Backend, "vLLM",
-            () => pythonAdapter.LoadAsync(request, cancellationToken));
+            () => pythonAdapter.LoadAsync(request, cancellationToken),
+            cancellationToken: cancellationToken);
     }
 
     public Task LoadBackendAsync(BackendLoadRequest request, CancellationToken cancellationToken = default)
@@ -240,7 +242,7 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         var runtime = backendRuntimeResolver?.Resolve(request.VariantId)
             ?? throw new InvalidOperationException("No packaged backend runtime resolver is registered.");
         return TrackPendingModelAsync(request.ModelPath, runtime.Descriptor.Family, runtime.Descriptor.RuntimeName,
-            () => runtime.LoadAsync(request, cancellationToken), request.VariantId);
+            () => runtime.LoadAsync(request, cancellationToken), request.VariantId, cancellationToken);
     }
 
     public bool HasBackendRuntime(string variantId) => TryResolveBackendRuntime(variantId) is not null;
@@ -292,7 +294,12 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         IReadOnlyDictionary<string, float>? vulkanDeviceWeights,
         LlamaLoadOptions? advanced,
         CancellationToken cancellationToken = default) =>
-        llama.LoadAsync(modelPath, backend, gpuLayerCount, contextSize, vulkanDeviceWeights, advanced, cancellationToken);
+        TrackPendingModelAsync(
+            modelPath,
+            ConfigurationBackend.Llama,
+            backend,
+            () => llama.LoadAsync(modelPath, backend, gpuLayerCount, contextSize, vulkanDeviceWeights, advanced, cancellationToken),
+            cancellationToken: cancellationToken);
 
     public async Task StopLlamaAsync(CancellationToken cancellationToken = default)
     {
@@ -358,7 +365,12 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         OpenVinoGenerationOptions? generationOptions,
         string? cacheDirectory,
         OpenVinoNpuOptions? npuOptions) =>
-        ExecuteOpenVinoLoadAsync(() => openVino.LoadAsync(modelPath, device, cancellationToken, generationOptions, cacheDirectory, npuOptions));
+        ExecuteOpenVinoLoadAsync(() => TrackPendingModelAsync(
+            modelPath,
+            ConfigurationBackend.OpenVino,
+            device,
+            () => openVino.LoadAsync(modelPath, device, cancellationToken, generationOptions, cacheDirectory, npuOptions),
+            cancellationToken: cancellationToken));
 
     public OpenVinoChatSession CreateOpenVinoChatSession() => openVino.CreateChatSession();
 
@@ -434,18 +446,29 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         ConfigurationBackend backend,
         string runtime,
         Func<Task> load,
-        string backendVariantId = "")
+        string backendVariantId = "",
+        CancellationToken cancellationToken = default)
     {
-        var key = $"{backend}|{backendVariantId}|{modelPath}";
-        pendingModels[key] = new PendingModel(modelPath, backend, runtime, backendVariantId);
-        lifecycleCoordinator.Begin(modelPath, backend, runtime);
+        var key = Guid.NewGuid();
+        var pendingRegistered = false;
+        var startupLockHeld = false;
         var completed = false;
         Exception? loadFailure = null;
         try
         {
+            await backendStartupLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            startupLockHeld = true;
+            pendingModels[key] = new PendingModel(modelPath, backend, runtime, backendVariantId);
+            pendingRegistered = true;
+            lifecycleCoordinator.Begin(modelPath, backend, runtime);
             await PublishStatusAsync(
                 "LoadedModel_Create",
                 () => statusPublisher.LoadedModel_CreateAsync(LoadedModel_Read())).ConfigureAwait(false);
+
+            await StopUnusedBackendsAsync(key, backend, backendVariantId, cancellationToken).ConfigureAwait(false);
+            backendStartupLock.Release();
+            startupLockHeld = false;
+
             await load().ConfigureAwait(false);
             completed = true;
         }
@@ -456,23 +479,94 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         }
         finally
         {
-            pendingModels.TryRemove(key, out _);
-            if (completed)
-                lifecycleCoordinator.Complete(modelPath, backend, runtime);
-            else if (loadFailure is not null)
-                lifecycleCoordinator.Fail(modelPath, backend, runtime, loadFailure.Message);
-            var status = LoadedModel_Read();
-            await PublishStatusAsync(
-                "LoadedModel_Update",
-                () => statusPublisher.LoadedModel_UpdateAsync(status)).ConfigureAwait(false);
-            if (!completed)
+            if (startupLockHeld)
+                backendStartupLock.Release();
+            if (pendingRegistered)
             {
+                pendingModels.TryRemove(key, out _);
+                if (completed)
+                    lifecycleCoordinator.Complete(modelPath, backend, runtime);
+                else if (loadFailure is not null)
+                    lifecycleCoordinator.Fail(modelPath, backend, runtime, loadFailure.Message);
+                var status = LoadedModel_Read();
                 await PublishStatusAsync(
-                    "LoadedModel_Delete",
-                    () => statusPublisher.LoadedModel_DeleteAsync(status)).ConfigureAwait(false);
+                    "LoadedModel_Update",
+                    () => statusPublisher.LoadedModel_UpdateAsync(status)).ConfigureAwait(false);
+                if (!completed)
+                {
+                    await PublishStatusAsync(
+                        "LoadedModel_Delete",
+                        () => statusPublisher.LoadedModel_DeleteAsync(status)).ConfigureAwait(false);
+                }
             }
         }
     }
+
+    private async Task StopUnusedBackendsAsync(
+        Guid currentOperationId,
+        ConfigurationBackend requestedBackend,
+        string requestedBackendVariantId,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var failures = new List<Exception>();
+
+        if (backendRuntimeResolver is not null)
+        {
+            foreach (var runtime in backendRuntimeResolver.Runtimes)
+            {
+                var descriptor = runtime.Descriptor;
+                if (string.Equals(descriptor.Id, requestedBackendVariantId, StringComparison.OrdinalIgnoreCase) ||
+                    runtime.GetStatus().IsModelLoaded ||
+                    HasPendingBackendLoad(currentOperationId, descriptor.Family, descriptor.Id))
+                    continue;
+
+                await StopRuntimeAsync(
+                    descriptor.Id,
+                    () => runtime.StopAsync(CancellationToken.None),
+                    failures).ConfigureAwait(false);
+            }
+        }
+
+        if (!(requestedBackend == ConfigurationBackend.Llama && string.IsNullOrWhiteSpace(requestedBackendVariantId)) &&
+            !llama.GetStatus().IsModelLoaded &&
+            !HasPendingLegacyBackendLoad(currentOperationId, ConfigurationBackend.Llama))
+        {
+            await StopRuntimeAsync("LLama", () => llama.StopAsync(CancellationToken.None), failures).ConfigureAwait(false);
+        }
+
+        if (!(requestedBackend == ConfigurationBackend.OpenVino && string.IsNullOrWhiteSpace(requestedBackendVariantId)) &&
+            !openVino.GetStatus().IsModelLoaded &&
+            !HasPendingLegacyBackendLoad(currentOperationId, ConfigurationBackend.OpenVino))
+        {
+            await StopRuntimeAsync("OpenVINO", () => openVino.UnloadAsync(CancellationToken.None), failures).ConfigureAwait(false);
+        }
+
+        if (!(requestedBackend == ConfigurationBackend.Vllm && string.IsNullOrWhiteSpace(requestedBackendVariantId)) &&
+            !python.GetStatus().IsModelLoaded &&
+            !HasPendingLegacyBackendLoad(currentOperationId, ConfigurationBackend.Vllm))
+        {
+            await StopRuntimeAsync("Python", () => python.StopAsync(CancellationToken.None), failures).ConfigureAwait(false);
+        }
+
+        if (failures.Count > 0)
+            throw new AggregateException("Could not stop unused backend runtimes before starting a backend.", failures);
+
+        cancellationToken.ThrowIfCancellationRequested();
+    }
+
+    private bool HasPendingBackendLoad(Guid currentOperationId, ConfigurationBackend backend, string backendVariantId) =>
+        pendingModels.Any(pending =>
+            pending.Key != currentOperationId &&
+            pending.Value.Backend == backend &&
+            (string.IsNullOrWhiteSpace(pending.Value.BackendVariantId) ||
+                string.Equals(pending.Value.BackendVariantId, backendVariantId, StringComparison.OrdinalIgnoreCase)));
+
+    private bool HasPendingLegacyBackendLoad(Guid currentOperationId, ConfigurationBackend backend) =>
+        pendingModels.Any(pending =>
+            pending.Key != currentOperationId &&
+            pending.Value.Backend == backend &&
+            string.IsNullOrWhiteSpace(pending.Value.BackendVariantId));
 
     private async Task ExecuteOpenVinoLoadAsync(Func<Task> load)
         => await ExecuteOpenVinoOperationAsync(load).ConfigureAwait(false);

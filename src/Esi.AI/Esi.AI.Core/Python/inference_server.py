@@ -225,6 +225,12 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 seed=request.seed or None,
                 stop=list(request.stop_sequences) or None,
             )
+            if request.structured_output_json_schema:
+                from vllm.sampling_params import StructuredOutputsParams
+
+                sampling_params.structured_outputs = StructuredOutputsParams(
+                    json=json.loads(request.structured_output_json_schema)
+                )
             async for output in self._engine.generate(prompt, sampling_params, request_id):
                 if context.cancelled():
                     await self._abort(request_id)

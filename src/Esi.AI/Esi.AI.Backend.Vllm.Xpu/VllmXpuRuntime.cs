@@ -389,7 +389,7 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         {
             timeout.Token.ThrowIfCancellationRequested();
             if (activeProcess.HasExited)
-                throw new InvalidOperationException(ExtractRootCause(loadLog));
+                throw new InvalidOperationException(ExtractPythonFailureDetails(loadLog));
             try
             {
                 using var call = activeClient.CheckReadinessAsync(new ReadinessRequest(), cancellationToken: timeout.Token);
@@ -416,7 +416,7 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         {
             timeout.Token.ThrowIfCancellationRequested();
             if (activeProcess.HasExited)
-                throw new InvalidOperationException(ExtractRootCause(loadLog));
+                throw new InvalidOperationException(ExtractPythonFailureDetails(loadLog));
             try
             {
                 using var call = activeClient.CheckReadinessAsync(new ReadinessRequest(), cancellationToken: timeout.Token);
@@ -494,7 +494,7 @@ public sealed class VllmXpuRuntime : IBackendRuntime
             (File.GetUnixFileMode(path) & (UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute)) != 0;
     }
 
-    private static string ExtractRootCause(string message)
+    internal static string ExtractPythonFailureDetails(string message)
     {
         var lines = message.Split(["\r\n", "\n"], StringSplitOptions.None);
         for (var index = lines.Length - 1; index >= 0; index--)
@@ -509,7 +509,14 @@ public sealed class VllmXpuRuntime : IBackendRuntime
                 !exceptionType.EndsWith("Failure", StringComparison.Ordinal))
                 continue;
 
-            var errorLines = new List<string> { candidate };
+            var tracebackStart = index;
+            while (tracebackStart >= 0 &&
+                !lines[tracebackStart].Trim().StartsWith("Traceback (most recent call last):", StringComparison.Ordinal))
+                tracebackStart--;
+
+            var errorLines = tracebackStart >= 0
+                ? lines[tracebackStart..(index + 1)].ToList()
+                : new List<string> { candidate };
             for (var following = index + 1; following < lines.Length; following++)
             {
                 var line = lines[following].Trim();

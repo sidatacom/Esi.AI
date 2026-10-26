@@ -283,7 +283,8 @@ public sealed record ChatGenerationOptions(
     IReadOnlyList<string>? StopSequences = null,
     string? ReasoningEffort = null,
     IReadOnlyList<OpenAiToolDefinition>? Tools = null,
-    JsonElement? ToolChoice = null);
+    JsonElement? ToolChoice = null,
+    string? StructuredOutputJsonSchema = null);
 
 /// <summary>Contains normalized text, usage, timing, and tool-call data returned by a backend.</summary>
 public sealed record GenerationResult(
@@ -361,6 +362,7 @@ public sealed record OpenAiChatRequest(
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public OpenAiStreamOptions? StreamOptions { get; init; }
 
+    /// <summary>Requests constrained JSON-object output; currently supported by vLLM backends.</summary>
     [JsonPropertyName("response_format")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public JsonElement? ResponseFormat { get; init; }
@@ -431,7 +433,13 @@ public sealed record OpenAiModel(
     bool Loaded = false,
     Guid? ConfigurationId = null,
     ConfigurationBackend? ConfigurationBackend = null,
-    bool AutoLaunch = true);
+    bool AutoLaunch = true)
+{
+    /// <summary>Gets the configured or active context length in tokens, when known.</summary>
+    [JsonPropertyName("context_length")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public uint? ContextLength { get; init; }
+}
 
 public sealed record OpenAiChatCompletionResponse(
     string Id,

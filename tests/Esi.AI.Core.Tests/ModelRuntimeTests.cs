@@ -94,6 +94,83 @@ public sealed class ModelRuntimeTests
     }
 
     [TestMethod]
+    public async Task LoadBackendAsync_WhenStartingAnotherBackend_StopsInactiveRuntimesAndKeepsLoadedRuntimes()
+    {
+        var activeRuntime = new RecordingBackendRuntime("llama.vulkan");
+        var inactiveRuntime = new RecordingBackendRuntime("vllm.xpu", ConfigurationBackend.Vllm);
+        var requestedRuntime = new RecordingBackendRuntime("llama.cuda12");
+        using var modelRuntime = new ModelRuntime(
+            new LlamaModelLoader(),
+            new OpenVinoModelLoader(),
+            new PythonInferenceServer(),
+            backendRuntimeResolver: new BackendRuntimeResolver([activeRuntime, inactiveRuntime, requestedRuntime]));
+        using var configuration = JsonDocument.Parse("{}");
+
+        await modelRuntime.LoadBackendAsync(new BackendLoadRequest("/models/active.gguf", activeRuntime.Descriptor.Id, configuration.RootElement));
+        await modelRuntime.LoadBackendAsync(new BackendLoadRequest("/models/requested.gguf", requestedRuntime.Descriptor.Id, configuration.RootElement));
+
+        Assert.AreEqual(2, inactiveRuntime.StopCount);
+        Assert.AreEqual(0, activeRuntime.StopCount);
+        Assert.IsTrue(activeRuntime.GetStatus().IsModelLoaded);
+        Assert.IsTrue(requestedRuntime.GetStatus().IsModelLoaded);
+    }
+
+    [TestMethod]
+    public async Task LoadBackendAsync_WhenInactiveRuntimeCannotStop_DoesNotStartRequestedRuntime()
+    {
+        var inactiveRuntime = new RecordingBackendRuntime("vllm.xpu", ConfigurationBackend.Vllm)
+        {
+            ThrowOnStop = true
+        };
+        var requestedRuntime = new RecordingBackendRuntime("llama.cuda12");
+        using var modelRuntime = new ModelRuntime(
+            new LlamaModelLoader(),
+            new OpenVinoModelLoader(),
+            new PythonInferenceServer(),
+            backendRuntimeResolver: new BackendRuntimeResolver([inactiveRuntime, requestedRuntime]));
+        using var configuration = JsonDocument.Parse("{}");
+
+        var exception = await Assert.ThrowsExceptionAsync<AggregateException>(() =>
+            modelRuntime.LoadBackendAsync(new BackendLoadRequest("/models/requested.gguf", requestedRuntime.Descriptor.Id, configuration.RootElement)));
+
+        Assert.Contains("Could not stop unused backend runtimes", exception.Message);
+        Assert.AreEqual(0, requestedRuntime.LoadCount);
+    }
+
+    [TestMethod]
+    public async Task LoadBackendAsync_WhenAnotherBackendIsLoading_DoesNotStopItsRuntime()
+    {
+        var loadingRuntime = new RecordingBackendRuntime("llama.vulkan")
+        {
+            WaitForLoadRelease = true
+        };
+        var requestedRuntime = new RecordingBackendRuntime("vllm.xpu", ConfigurationBackend.Vllm);
+        using var modelRuntime = new ModelRuntime(
+            new LlamaModelLoader(),
+            new OpenVinoModelLoader(),
+            new PythonInferenceServer(),
+            backendRuntimeResolver: new BackendRuntimeResolver([loadingRuntime, requestedRuntime]));
+        using var configuration = JsonDocument.Parse("{}");
+
+        var pendingLoad = modelRuntime.LoadBackendAsync(
+            new BackendLoadRequest("/models/loading.gguf", loadingRuntime.Descriptor.Id, configuration.RootElement));
+        await loadingRuntime.LoadStarted.Task;
+
+        try
+        {
+            await modelRuntime.LoadBackendAsync(
+                new BackendLoadRequest("/models/requested.gguf", requestedRuntime.Descriptor.Id, configuration.RootElement));
+
+            Assert.AreEqual(0, loadingRuntime.StopCount);
+        }
+        finally
+        {
+            loadingRuntime.ReleaseLoad.TrySetResult(true);
+            await pendingLoad;
+        }
+    }
+
+    [TestMethod]
     public void SupportsImageInput_WhenBackendIsUnknown_ReturnsFalse()
     {
         using var loader = new ModelRuntime();
@@ -235,13 +312,15 @@ public sealed class ModelRuntimeTests
         }
     }
 
-    private sealed class RecordingBackendRuntime(string variantId = "llama.test") : IBackendRuntime
+    private sealed class RecordingBackendRuntime(
+        string variantId = "llama.test",
+        ConfigurationBackend backend = ConfigurationBackend.Llama) : IBackendRuntime
     {
         private string? modelPath;
 
         public BackendVariantDescriptor Descriptor { get; } = new(
             variantId,
-            ConfigurationBackend.Llama,
+            backend,
             variantId,
             $"Test {variantId}",
             "CUDA");
@@ -250,20 +329,33 @@ public sealed class ModelRuntimeTests
 
         public bool ThrowOnStop { get; init; }
 
+        public bool WaitForLoadRelease { get; init; }
+
+        public int LoadCount { get; private set; }
+
+        public int StopCount { get; private set; }
+
+        public TaskCompletionSource<bool> LoadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> ReleaseLoad { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
         public ModelLoadStatus GetStatus()
         {
             var loadedModels = modelPath is null
                 ? Array.Empty<LoadedModelStatus>()
-                : [new LoadedModelStatus(modelPath, ConfigurationBackend.Llama, Descriptor.RuntimeName, 0, 0, 0, [], null, BackendVariantId: Descriptor.Id)];
+                : [new LoadedModelStatus(modelPath, backend, Descriptor.RuntimeName, 0, 0, 0, [], null, BackendVariantId: Descriptor.Id)];
             return new ModelLoadStatus(modelPath, Descriptor.Route, 0, 0, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), loadedModels.Length > 0, loadedModels, Descriptor.Id);
         }
 
         public bool SupportsImageInput(string? path) => false;
 
-        public Task LoadAsync(BackendLoadRequest request, CancellationToken cancellationToken = default)
+        public async Task LoadAsync(BackendLoadRequest request, CancellationToken cancellationToken = default)
         {
+            LoadCount++;
+            LoadStarted.TrySetResult(true);
+            if (WaitForLoadRelease)
+                await ReleaseLoad.Task.WaitAsync(cancellationToken);
             modelPath = request.ModelPath;
-            return Task.CompletedTask;
         }
 
         public Task UnloadAsync(string path, CancellationToken cancellationToken = default)
@@ -274,6 +366,7 @@ public sealed class ModelRuntimeTests
 
         public Task StopAsync(CancellationToken cancellationToken = default)
         {
+            StopCount++;
             modelPath = null;
             return ThrowOnStop
                 ? Task.FromException(new InvalidOperationException("stop failed"))

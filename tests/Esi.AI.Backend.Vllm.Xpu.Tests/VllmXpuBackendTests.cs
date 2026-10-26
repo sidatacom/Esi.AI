@@ -89,6 +89,17 @@ public sealed class VllmXpuBackendTests
     }
 
     [TestMethod]
+    public void ExtractPythonFailureDetails_WhenBridgeExitsWithTraceback_PreservesStackFrames()
+    {
+        const string traceback = "Traceback (most recent call last):\n  File \"inference_server.py\", line 42, in LoadModel\n    initialize_engine()\nRuntimeError: Engine core initialization failed";
+        const string output = "Starting vLLM bridge\n" + traceback;
+
+        var details = VllmXpuRuntime.ExtractPythonFailureDetails(output);
+
+        Assert.AreEqual(traceback, details);
+    }
+
+    [TestMethod]
     public void GetLoadedModelId_WhenSuccessResponseHasNoModelId_Throws()
     {
         var response = new ModelOperationResponse { Succeeded = true };

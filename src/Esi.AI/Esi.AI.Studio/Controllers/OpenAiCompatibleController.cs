@@ -49,7 +49,9 @@ public sealed class OpenAiCompatibleController(
                     string.Equals(model.Path, configuration.ModelPath, StringComparison.OrdinalIgnoreCase));
                 var loadedModel = loadedConfigurationModels.FirstOrDefault(model =>
                     string.Equals(model.ModelPath, configuration.ModelPath, StringComparison.OrdinalIgnoreCase) &&
-                    model.Backend == configuration.Backend);
+                    model.Backend == configuration.Backend &&
+                    (string.IsNullOrWhiteSpace(configuration.BackendVariantId) ||
+                     string.Equals(model.BackendVariantId, configuration.BackendVariantId, StringComparison.OrdinalIgnoreCase)));
                 var capabilities = localModel?.Capabilities ?? new ModelCapabilities();
                 if (loadedModel is not null && modelRuntime.SupportsImageInput(loadedModel.Runtime, loadedModel.ModelPath))
                     capabilities = capabilities with { ImageInput = true };
@@ -64,7 +66,10 @@ public sealed class OpenAiCompatibleController(
                     loadedModel is not null,
                     configuration.Id,
                     configuration.Backend,
-                    configuration.AutoLaunch);
+                    configuration.AutoLaunch)
+                {
+                    ContextLength = GetModelContextLength(configuration, loadedModel?.ContextSize)
+                };
             }).ToArray();
 
             return Ok(new OpenAiModelListResponse("list", apiConfigurations));
@@ -75,6 +80,13 @@ public sealed class OpenAiCompatibleController(
             .ToArray();
         bool IsLoaded(string modelPath) => loadedModels.Any(loadedModel =>
             string.Equals(modelPath, loadedModel.ModelPath, StringComparison.OrdinalIgnoreCase));
+        uint? GetRuntimeContextLength(string modelPath)
+        {
+            var contextLength = loadedModels.FirstOrDefault(loadedModel =>
+                string.Equals(modelPath, loadedModel.ModelPath, StringComparison.OrdinalIgnoreCase))?.ContextSize;
+            return contextLength is > 0 ? contextLength : null;
+        }
+
         ModelCapabilities GetCapabilities(string modelPath, ModelCapabilities? storedCapabilities)
         {
             var capabilities = storedCapabilities ?? new ModelCapabilities();
@@ -87,10 +99,16 @@ public sealed class OpenAiCompatibleController(
         }
         var apiModels = dataService is null
             ? (await localModelCatalog.ScanLocalModelsAsync(cancellationToken).ConfigureAwait(false))
-                .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, GetCapabilities(model.Path, null), IsLoaded(model.Path)))
+                .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, GetCapabilities(model.Path, null), IsLoaded(model.Path))
+                {
+                    ContextLength = GetRuntimeContextLength(model.Path)
+                })
                 .ToList()
             : (await dataService.LocalModel_ReadAsync(cancellationToken).ConfigureAwait(false))
-                .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, GetCapabilities(model.Path, model.Capabilities), IsLoaded(model.Path)))
+                .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, GetCapabilities(model.Path, model.Capabilities), IsLoaded(model.Path))
+                {
+                    ContextLength = GetRuntimeContextLength(model.Path)
+                })
                 .ToList();
         foreach (var loadedModel in loadedModels.Where(loadedModel => apiModels.All(model => !string.Equals(model.Id, loadedModel.ModelPath, StringComparison.OrdinalIgnoreCase))))
             apiModels.Add(new OpenAiModel(
@@ -100,9 +118,33 @@ public sealed class OpenAiCompatibleController(
                 "esi-ai",
                 Path.GetFileName(loadedModel.ModelPath),
                 new ModelCapabilities(ImageInput: modelRuntime.SupportsImageInput(loadedModel.Runtime, loadedModel.ModelPath)),
-                Loaded: true));
+                Loaded: true)
+            {
+                ContextLength = loadedModel.ContextSize is > 0 ? loadedModel.ContextSize : null
+            });
 
         return Ok(new OpenAiModelListResponse("list", apiModels));
+    }
+
+    internal static uint? GetModelContextLength(ModelConfiguration configuration, uint? runtimeContextLength)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var contextLength = runtimeContextLength is > 0
+            ? runtimeContextLength
+            : configuration.Backend switch
+            {
+                ConfigurationBackend.Llama => BackendConfigurationJson.Deserialize<LoadModelRequest>(
+                    configuration.ConfigurationJson,
+                    configuration.BackendVariantId).ContextSize,
+                ConfigurationBackend.Vllm or ConfigurationBackend.Sglang =>
+                    BackendConfigurationJson.Deserialize<PythonInferenceLoadRequest>(
+                        configuration.ConfigurationJson,
+                        configuration.BackendVariantId).MaxModelLength,
+                _ => null
+            };
+
+        return contextLength is > 0 ? contextLength : null;
     }
 
     /// <summary>Returns the currently loaded and loading application models.</summary>

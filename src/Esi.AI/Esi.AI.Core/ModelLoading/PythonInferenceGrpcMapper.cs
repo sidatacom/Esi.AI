@@ -57,7 +57,8 @@ internal static class PythonInferenceGrpcMapper
             TopK = generationOptions.TopK,
             MinP = generationOptions.MinP,
             RepetitionPenalty = generationOptions.RepetitionPenalty,
-            Seed = generationOptions.Seed ?? 0
+            Seed = generationOptions.Seed ?? 0,
+            StructuredOutputJsonSchema = generationOptions.StructuredOutputJsonSchema ?? string.Empty
         };
         request.StopSequences.AddRange(generationOptions.StopSequences ?? []);
         if (generationOptions.Tools is { Count: > 0 })

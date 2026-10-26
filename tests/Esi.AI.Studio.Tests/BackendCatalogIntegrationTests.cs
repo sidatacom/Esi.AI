@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Esi.AI.Backend.Abstractions;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
@@ -242,7 +243,7 @@ public sealed class BackendCatalogIntegrationTests
     {
         await using var context = await TestContext.CreateAsync();
         var now = DateTime.UtcNow;
-        await using (var db = await context.dbContextFactory.CreateDbContextAsync())
+        await using (var db = await context.CreateDbContextAsync())
         {
             db.ModelSettings.Add(new ModelSettingsEntity
             {
@@ -1268,6 +1269,7 @@ public sealed class BackendCatalogIntegrationTests
         public DataService DataService { get; }
         public string ModelPath { get; }
         public string ModelDirectory => directory;
+        public Task<ApplicationDbContext> CreateDbContextAsync() => dbContextFactory.CreateDbContextAsync();
 
         public DataService CreateAdditionalDataService() => new(
             dbContextFactory,

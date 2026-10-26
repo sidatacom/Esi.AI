@@ -179,11 +179,37 @@ public sealed class OpenAiCompatibleControllerTests
     Assert.AreEqual(configuration.Id.ToString("D"), model.Id);
     Assert.AreEqual(configuration.Name, model.Name);
     Assert.IsTrue(model.AutoLaunch);
+    Assert.AreEqual(4_096u, model.ContextLength);
     Assert.IsTrue(model.Capabilities!.ToolCalling);
     Assert.IsTrue(model.Capabilities.ImageInput);
     Assert.IsTrue(model.Capabilities.Thinking);
 
         Directory.Delete(directory, recursive: true);
+    }
+
+    [TestMethod]
+    public void GetModelContextLength_VllmProfile_UsesConfiguredLengthUnlessRuntimeReportsOne()
+    {
+        var configuration = new ModelConfiguration(
+            Guid.NewGuid(),
+            "Qwen vLLM",
+            null,
+            "/models/qwen",
+            false,
+            1,
+            BackendConfigurationJson.Serialize(
+                "vllm.cuda12",
+                new PythonInferenceLoadRequest(
+                    "/models/qwen",
+                    ConfigurationBackend.Vllm,
+                    MaxModelLength: 131_072)),
+            default,
+            default,
+            ConfigurationBackend.Vllm,
+            BackendVariantId: "vllm.cuda12");
+
+        Assert.AreEqual(131_072u, OpenAiCompatibleController.GetModelContextLength(configuration, null));
+        Assert.AreEqual(65_536u, OpenAiCompatibleController.GetModelContextLength(configuration, 65_536));
     }
 
     [TestMethod]
@@ -195,7 +221,10 @@ public sealed class OpenAiCompatibleControllerTests
             1,
             "esi-ai",
             "vision",
-            new ModelCapabilities(ToolCalling: true, ImageInput: true, AgentMode: true, Thinking: true));
+            new ModelCapabilities(ToolCalling: true, ImageInput: true, AgentMode: true, Thinking: true))
+        {
+            ContextLength = 131_072
+        };
 
         using var document = JsonDocument.Parse(JsonSerializer.Serialize(model, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         var capabilities = document.RootElement.GetProperty("capabilities");
@@ -204,6 +233,7 @@ public sealed class OpenAiCompatibleControllerTests
         Assert.IsTrue(capabilities.GetProperty("imageInput").GetBoolean());
         Assert.IsTrue(capabilities.GetProperty("agentMode").GetBoolean());
         Assert.IsTrue(capabilities.GetProperty("thinking").GetBoolean());
+        Assert.AreEqual(131_072u, document.RootElement.GetProperty("context_length").GetUInt32());
     }
 
     [TestMethod]
@@ -505,6 +535,40 @@ public sealed class OpenAiCompatibleControllerTests
         using var document = JsonDocument.Parse("[{\"type\":\"image_url\",\"image_url\":{\"url\":\"https://example.com/image.png\"}}]");
 
         Assert.Throws<ArgumentException>(() => OpenAiCompatibleBackendMiddleware.ParseMessage(new OpenAiChatMessage("user", document.RootElement.Clone())));
+    }
+
+    [TestMethod]
+    public void Prepare_WhenVllmRequestsJsonObject_MapsObjectSchema()
+    {
+        using var runtime = new ModelRuntime();
+        var middleware = new OpenAiCompatibleBackendMiddleware(runtime, new InferenceScheduler());
+        var status = new ModelLoadStatus("/models/model", "vLLM", 0, 4096, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), true, []);
+        using var responseFormat = JsonDocument.Parse("""{"type":"json_object"}""");
+        var request = new OpenAiChatRequest(null, [new OpenAiChatMessage("user", "Return JSON.")])
+        {
+            ResponseFormat = responseFormat.RootElement.Clone()
+        };
+
+        var normalized = middleware.Prepare(request, status);
+
+        Assert.AreEqual("""{"type":"object"}""", normalized.Options.StructuredOutputJsonSchema);
+    }
+
+    [TestMethod]
+    public void Prepare_WhenNonVllmBackendRequestsJsonObject_ThrowsArgumentException()
+    {
+        using var runtime = new ModelRuntime();
+        var middleware = new OpenAiCompatibleBackendMiddleware(runtime, new InferenceScheduler());
+        var status = new ModelLoadStatus("/models/model", "OpenVINO", 0, 4096, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), true, []);
+        using var responseFormat = JsonDocument.Parse("""{"type":"json_object"}""");
+        var request = new OpenAiChatRequest(null, [new OpenAiChatMessage("user", "Return JSON.")])
+        {
+            ResponseFormat = responseFormat.RootElement.Clone()
+        };
+
+        var exception = Assert.Throws<ArgumentException>(() => middleware.Prepare(request, status));
+
+        Assert.Contains("supported only by vLLM", exception.Message);
     }
 
     [TestMethod]

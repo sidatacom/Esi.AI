@@ -55,6 +55,7 @@ internal static class VllmCuda12GrpcMapper
             MinP = options.MinP,
             RepetitionPenalty = options.RepetitionPenalty,
             Seed = options.Seed ?? 0,
+            StructuredOutputJsonSchema = options.StructuredOutputJsonSchema ?? string.Empty,
         };
         grpcRequest.StopSequences.AddRange(options.StopSequences ?? []);
 

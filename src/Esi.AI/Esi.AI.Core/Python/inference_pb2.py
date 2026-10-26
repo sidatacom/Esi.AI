@@ -84,6 +84,7 @@ _field(generate_request, "seed", 10, 5)
 _field(generate_request, "stop_sequences", 11, 9, 3)
 _field(generate_request, "tools", 12, 11, 3, ".esi.ai.inference.ToolDefinition")
 _field(generate_request, "tool_choice_json", 13, 9)
+_field(generate_request, "structured_output_json_schema", 14, 9)
 
 generate_response = file_descriptor.message_type.add(name="GenerateResponse")
 _field(generate_response, "delta", 1, 9)

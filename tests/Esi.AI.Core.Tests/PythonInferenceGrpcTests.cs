@@ -106,7 +106,8 @@ public sealed class PythonInferenceGrpcTests
                 MinP: .05f,
                 RepetitionPenalty: 1.1f,
                 Seed: 42,
-                StopSequences: ["END"]));
+                StopSequences: ["END"],
+                StructuredOutputJsonSchema: """{"type":"object"}"""));
 
         Assert.AreEqual((uint)17, request.MaxTokens);
         Assert.AreEqual(.25f, request.Temperature, .001f);
@@ -115,6 +116,7 @@ public sealed class PythonInferenceGrpcTests
         Assert.AreEqual(.05f, request.MinP, .001f);
         Assert.AreEqual(1.1f, request.RepetitionPenalty, .001f);
         Assert.AreEqual(42, request.Seed);
+        Assert.AreEqual("""{"type":"object"}""", request.StructuredOutputJsonSchema);
         CollectionAssert.AreEqual(new[] { "END" }, request.StopSequences.ToArray());
     }
 

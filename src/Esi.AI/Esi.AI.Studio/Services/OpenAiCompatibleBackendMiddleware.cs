@@ -35,10 +35,11 @@ public sealed class OpenAiCompatibleBackendMiddleware(
 
         var structuredMessages = request.Messages.ToArray();
         var messages = structuredMessages.Select(ParseMessage).ToArray();
-        if (request.ResponseFormat is not null || messages.Select((message, index) => (message, index))
+        if (messages.Select((message, index) => (message, index))
             .Any(item => string.IsNullOrWhiteSpace(item.message.Content) && item.message.Images is not { Count: > 0 } && !IsToolMessage(structuredMessages[item.index])))
             throw new ArgumentException("Every chat message requires non-empty text or image content.", nameof(request));
 
+        var structuredOutputJsonSchema = GetStructuredOutputJsonSchema(request, status);
         ValidateImageCapability(status, messages);
         ValidateToolCapability(status, request.Tools);
         var tools = string.Equals(status.Backend, "OpenVINO", StringComparison.OrdinalIgnoreCase)
@@ -56,7 +57,11 @@ public sealed class OpenAiCompatibleBackendMiddleware(
             structuredMessages,
             messages,
             tools,
-            ToGenerationOptions(request, tools, string.Equals(status.Backend, "OpenVINO", StringComparison.OrdinalIgnoreCase)),
+            ToGenerationOptions(
+                request,
+                tools,
+                string.Equals(status.Backend, "OpenVINO", StringComparison.OrdinalIgnoreCase),
+                structuredOutputJsonSchema),
             BackendVariantId: status.BackendVariantId);
     }
 
@@ -424,7 +429,8 @@ public sealed class OpenAiCompatibleBackendMiddleware(
     private static ChatGenerationOptions ToGenerationOptions(
         OpenAiChatRequest request,
         IReadOnlyList<OpenAiToolDefinition>? tools,
-        bool isOpenVino) => new(
+        bool isOpenVino,
+        string? structuredOutputJsonSchema) => new(
         MaxTokens: isOpenVino
             ? Math.Min(request.MaxCompletionTokens ?? request.MaxTokens ?? 128, MaximumOpenVinoOutputTokens)
             : request.MaxCompletionTokens ?? request.MaxTokens ?? 128,
@@ -437,7 +443,26 @@ public sealed class OpenAiCompatibleBackendMiddleware(
         StopSequences: request.Stop,
         ReasoningEffort: request.ReasoningEffort,
         Tools: tools,
-        ToolChoice: request.ToolChoice);
+        ToolChoice: request.ToolChoice,
+        StructuredOutputJsonSchema: structuredOutputJsonSchema);
+
+    private static string? GetStructuredOutputJsonSchema(OpenAiChatRequest request, ModelLoadStatus status)
+    {
+        if (request.ResponseFormat is not JsonElement responseFormat ||
+            responseFormat.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            return null;
+
+        if (!string.Equals(status.Backend, "vLLM", StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("response_format is supported only by vLLM backends.", nameof(request));
+
+        if (responseFormat.ValueKind != JsonValueKind.Object ||
+            !responseFormat.TryGetProperty("type", out var type) ||
+            type.ValueKind != JsonValueKind.String ||
+            !string.Equals(type.GetString(), "json_object", StringComparison.Ordinal))
+            throw new ArgumentException("Only response_format type 'json_object' is supported.", nameof(request));
+
+        return """{"type":"object"}""";
+    }
 
     private static IReadOnlyList<OpenAiToolDefinition>? LimitOpenVinoTools(
         IReadOnlyList<OpenAiToolDefinition>? tools,
