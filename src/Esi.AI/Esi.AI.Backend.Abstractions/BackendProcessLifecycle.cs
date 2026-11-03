@@ -1,0 +1,167 @@
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Globalization;
+using System.Runtime.InteropServices;
+
+namespace Esi.AI.Backend.Abstractions;
+
+/// <summary>Starts and stops backend processes as an owned process group.</summary>
+public static class BackendProcessLifecycle
+{
+    private const int Sigterm = 15;
+    private const int Sigkill = 9;
+    private const int NoSuchProcess = 3;
+    private static readonly TimeSpan GracefulShutdownTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan ForcedShutdownTimeout = TimeSpan.FromSeconds(3);
+
+    /// <summary>Configures a process to start in its own Linux session and preserve the child exit status.</summary>
+    /// <param name="startInfo">The process configuration to update.</param>
+    /// <exception cref="ArgumentNullException">The start info is <see langword="null" />.</exception>
+    /// <exception cref="InvalidOperationException">The Linux <c>setsid</c> executable is unavailable.</exception>
+    public static void ConfigureStartInfo(ProcessStartInfo startInfo)
+    {
+        ArgumentNullException.ThrowIfNull(startInfo);
+        if (!OperatingSystem.IsLinux())
+            return;
+
+        ArgumentException.ThrowIfNullOrWhiteSpace(startInfo.FileName);
+        var executable = startInfo.FileName;
+        var arguments = startInfo.ArgumentList.ToArray();
+        startInfo.FileName = ResolveSetSidExecutable();
+        startInfo.ArgumentList.Clear();
+        startInfo.ArgumentList.Add("--wait");
+        startInfo.ArgumentList.Add("--");
+        startInfo.ArgumentList.Add(executable);
+        foreach (var argument in arguments)
+            startInfo.ArgumentList.Add(argument);
+    }
+
+    /// <summary>Terminates a process and all processes in its owned group.</summary>
+    /// <param name="process">The process previously configured with <see cref="ConfigureStartInfo(ProcessStartInfo)" />.</param>
+    /// <exception cref="ArgumentNullException">The process is <see langword="null" />.</exception>
+    /// <exception cref="TimeoutException">The process group remains alive after forced termination.</exception>
+    public static async Task StopAsync(Process process)
+    {
+        ArgumentNullException.ThrowIfNull(process);
+        if (!OperatingSystem.IsLinux())
+        {
+            if (!process.HasExited)
+                process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            return;
+        }
+
+        var processGroupId = process.Id;
+        if (process.HasExited && !HasLiveProcessInGroup(processGroupId))
+            return;
+        if (!process.HasExited && GetProcessGroupId(process.Id) != processGroupId)
+        {
+            process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            return;
+        }
+
+        SignalProcessGroup(processGroupId, Sigterm);
+        if (!await WaitForProcessGroupExitAsync(processGroupId, GracefulShutdownTimeout).ConfigureAwait(false))
+        {
+            SignalProcessGroup(processGroupId, Sigkill);
+            if (!await WaitForProcessGroupExitAsync(processGroupId, ForcedShutdownTimeout).ConfigureAwait(false))
+                throw new TimeoutException($"Backend process group {processGroupId} remained alive after forced termination.");
+        }
+
+        await process.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+    }
+
+    private static string ResolveSetSidExecutable()
+    {
+        var candidates = new List<string> { "/usr/bin/setsid", "/bin/setsid" };
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            candidates.AddRange(path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries)
+                .Select(directory => Path.Combine(directory, "setsid")));
+        }
+
+        return candidates.FirstOrDefault(File.Exists)
+            ?? throw new InvalidOperationException("Could not start a managed backend process group because the Linux 'setsid' executable was not found.");
+    }
+
+    private static int GetProcessGroupId(int processId)
+    {
+        var stat = File.ReadAllText($"/proc/{processId}/stat");
+        var closingParenthesis = stat.LastIndexOf(')');
+        if (closingParenthesis < 0)
+            throw new InvalidOperationException($"Could not read process group information for backend process {processId}.");
+
+        var fields = stat[(closingParenthesis + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        if (fields.Length < 3 ||
+            !int.TryParse(fields[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var processGroupId))
+            throw new InvalidOperationException($"Could not read process group information for backend process {processId}.");
+
+        return processGroupId;
+    }
+
+    private static void SignalProcessGroup(int processGroupId, int signal)
+    {
+        if (Kill(-processGroupId, signal) == 0)
+            return;
+
+        var error = Marshal.GetLastPInvokeError();
+        if (error == NoSuchProcess)
+            return;
+
+        throw new Win32Exception(error, $"Could not send signal {signal} to backend process group {processGroupId}.");
+    }
+
+    private static async Task<bool> WaitForProcessGroupExitAsync(int processGroupId, TimeSpan timeout)
+    {
+        var timer = Stopwatch.StartNew();
+        while (timer.Elapsed < timeout)
+        {
+            if (!HasLiveProcessInGroup(processGroupId))
+                return true;
+            await Task.Delay(TimeSpan.FromMilliseconds(50)).ConfigureAwait(false);
+        }
+
+        return !HasLiveProcessInGroup(processGroupId);
+    }
+
+    private static bool HasLiveProcessInGroup(int processGroupId)
+    {
+        foreach (var processDirectory in Directory.EnumerateDirectories("/proc"))
+        {
+            if (!int.TryParse(Path.GetFileName(processDirectory), NumberStyles.None, CultureInfo.InvariantCulture, out _))
+                continue;
+
+            string stat;
+            try
+            {
+                stat = File.ReadAllText(Path.Combine(processDirectory, "stat"));
+            }
+            catch (FileNotFoundException)
+            {
+                continue;
+            }
+            catch (DirectoryNotFoundException)
+            {
+                continue;
+            }
+
+            var closingParenthesis = stat.LastIndexOf(')');
+            if (closingParenthesis < 0)
+                continue;
+            var fields = stat[(closingParenthesis + 2)..].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (fields.Length < 3 ||
+                fields[0] is "Z" or "X" ||
+                !int.TryParse(fields[2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var memberGroupId))
+                continue;
+            if (memberGroupId == processGroupId)
+                return true;
+        }
+
+        return false;
+    }
+
+    [DllImport("libc", EntryPoint = "kill", SetLastError = true)]
+    private static extern int Kill(int processId, int signal);
+}

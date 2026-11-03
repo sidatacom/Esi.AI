@@ -130,26 +130,32 @@ public sealed class BackendRequirementMonitor : BackgroundService, IBackendRequi
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        await foreach (var request in refreshRequests.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
+        try
         {
-            try
+            await foreach (var request in refreshRequests.Reader.ReadAllAsync(stoppingToken).ConfigureAwait(false))
             {
-                if (request.BackendIds is null)
+                try
                 {
-                    var settings = await applicationSettings.ReadAsync(stoppingToken).ConfigureAwait(false);
-                    await RefreshAsync(GetEnabledBackendIds(settings.EnabledBackendIds), stoppingToken).ConfigureAwait(false);
+                    if (request.BackendIds is null)
+                    {
+                        var settings = await applicationSettings.ReadAsync(stoppingToken).ConfigureAwait(false);
+                        await RefreshAsync(GetEnabledBackendIds(settings.EnabledBackendIds), stoppingToken).ConfigureAwait(false);
+                    }
+                    else
+                        await RefreshAsync(request.BackendIds, stoppingToken).ConfigureAwait(false);
                 }
-                else
-                    await RefreshAsync(request.BackendIds, stoppingToken).ConfigureAwait(false);
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception exception)
+                {
+                    logger.LogError(exception, "Backend requirement refresh failed for {BackendIds}.", request.BackendIds is null ? "enabled backends" : string.Join(", ", request.BackendIds));
+                }
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception exception)
-            {
-                logger.LogError(exception, "Backend requirement refresh failed for {BackendIds}.", request.BackendIds is null ? "enabled backends" : string.Join(", ", request.BackendIds));
-            }
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
         }
     }
 

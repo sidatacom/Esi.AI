@@ -209,6 +209,7 @@ builder.Services.AddSingleton<IModelDownloadManager>(services => services.GetReq
 builder.Services.AddScoped<IInferenceScheduler, InferenceScheduler>();
 builder.Services.AddScoped<OpenAiCompatibleBackendMiddleware>();
 builder.Services.AddScoped<IInferenceService, InferenceService>();
+builder.Services.AddSingleton<ModelConfigurationLoadCoordinator>();
 builder.Services.AddScoped<DataService>();
     builder.Services.AddScoped<IDataService>(services => services.GetRequiredService<DataService>());
 

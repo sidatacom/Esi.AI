@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using Esi.AI.Backend.Abstractions;
 using Esi.AI.Backend.Vllm.Xpu.Grpc;
 using Esi.AI.Models;
 using Grpc.Core;
@@ -54,24 +55,35 @@ internal sealed class VllmXpuChatSession : IDisposable
         double? firstTokenMs = null;
         IReadOnlyList<OpenAiToolCall>? toolCalls = null;
 
-        await foreach (var response in generate(request, linkedCancellation.Token)
-            .WithCancellation(linkedCancellation.Token).ConfigureAwait(false))
+        try
         {
-            if (!string.IsNullOrWhiteSpace(response.Error))
-                throw new InvalidOperationException($"vLLM generation failed: {response.Error}");
-            if (!string.IsNullOrEmpty(response.Delta))
+            await foreach (var response in generate(request, linkedCancellation.Token)
+                .WithCancellation(linkedCancellation.Token).ConfigureAwait(false))
             {
-                firstTokenMs ??= started.Elapsed.TotalMilliseconds;
-                text.Append(response.Delta);
-                if (onToken is not null)
-                    await onToken(response.Delta).ConfigureAwait(false);
+                if (!string.IsNullOrWhiteSpace(response.Error))
+                    throw new InvalidOperationException($"vLLM generation failed: {response.Error}");
+                if (!string.IsNullOrEmpty(response.Delta))
+                {
+                    firstTokenMs ??= started.Elapsed.TotalMilliseconds;
+                    text.Append(response.Delta);
+                    if (onToken is not null)
+                        await onToken(response.Delta).ConfigureAwait(false);
+                }
+                if (!string.IsNullOrWhiteSpace(response.ToolCallsJson))
+                    toolCalls = JsonSerializer.Deserialize<OpenAiToolCall[]>(response.ToolCallsJson, ToolCallJsonOptions);
+                tokenCount = Math.Max(tokenCount, (int)response.GeneratedTokens);
+                promptTokenCount = Math.Max(promptTokenCount, (int)response.PromptTokens);
+                if (response.TokensPerSecond > 0)
+                    tokensPerSecond = response.TokensPerSecond;
             }
-            if (!string.IsNullOrWhiteSpace(response.ToolCallsJson))
-                toolCalls = JsonSerializer.Deserialize<OpenAiToolCall[]>(response.ToolCallsJson, ToolCallJsonOptions);
-            tokenCount = Math.Max(tokenCount, (int)response.GeneratedTokens);
-            promptTokenCount = Math.Max(promptTokenCount, (int)response.PromptTokens);
-            if (response.TokensPerSecond > 0)
-                tokensPerSecond = response.TokensPerSecond;
+        }
+        catch (OperationCanceledException exception) when (IsRuntimeStopping(cancellationToken))
+        {
+            throw CreateRuntimeStoppingException(exception);
+        }
+        catch (RpcException exception) when (IsRuntimeStopping(cancellationToken))
+        {
+            throw CreateRuntimeStoppingException(exception);
         }
 
         started.Stop();
@@ -97,6 +109,12 @@ internal sealed class VllmXpuChatSession : IDisposable
         disposeCancellation.Cancel();
         disposeCancellation.Dispose();
     }
+
+    private bool IsRuntimeStopping(CancellationToken callerCancellationToken) =>
+        disposeCancellation.IsCancellationRequested && !callerCancellationToken.IsCancellationRequested;
+
+    private static BackendRuntimeStoppingException CreateRuntimeStoppingException(Exception innerException) =>
+        new("vLLM XPU generation was interrupted because the model runtime is stopping or reloading.", innerException);
 
     private static async IAsyncEnumerable<GenerateResponse> StreamAsync(
         Inference.InferenceClient client,

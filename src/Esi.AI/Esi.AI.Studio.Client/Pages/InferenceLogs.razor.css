@@ -175,6 +175,34 @@
     color: #8b3f2f;
 }
 
+.inference-log-payloads {
+    display: grid;
+    gap: .5rem;
+    margin-top: .9rem;
+}
+
+.inference-log-payload {
+    min-width: 0;
+    padding: .6rem .75rem;
+    border: 1px solid #d9d4ca;
+    background: #fffefa;
+}
+
+.inference-log-payload summary {
+    cursor: pointer;
+    font-weight: 700;
+}
+
+.inference-log-payload pre {
+    max-height: 28rem;
+    margin: .6rem 0 0;
+    overflow: auto;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+    color: #302d28;
+    font: .78rem/1.5 ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+
 .inference-log-error summary {
     cursor: pointer;
     font-weight: 700;

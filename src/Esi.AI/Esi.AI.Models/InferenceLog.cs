@@ -42,6 +42,8 @@ public enum InferenceLogStatus
 /// <param name="DurationMilliseconds">The total request duration in milliseconds.</param>
 /// <param name="ErrorType">The exception type for a failed request, when available.</param>
 /// <param name="ErrorMessage">A bounded exception message for a failed request, when available.</param>
+/// <param name="RequestPayload">The readable request payload, when available.</param>
+/// <param name="ResponsePayload">The readable response payload, when available.</param>
 public sealed record InferenceLog(
     Guid Id,
     string InferenceId,
@@ -61,4 +63,6 @@ public sealed record InferenceLog(
     DateTimeOffset? CompletedAtUtc = null,
     long? DurationMilliseconds = null,
     string? ErrorType = null,
-    string? ErrorMessage = null);
+    string? ErrorMessage = null,
+    string? RequestPayload = null,
+    string? ResponsePayload = null);

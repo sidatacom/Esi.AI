@@ -555,6 +555,49 @@ public sealed class OpenAiCompatibleControllerTests
     }
 
     [TestMethod]
+    public void Prepare_WhenVllmRequestsJsonSchema_MapsConstrainedSchema()
+    {
+        using var runtime = new ModelRuntime();
+        var middleware = new OpenAiCompatibleBackendMiddleware(runtime, new InferenceScheduler());
+        var status = new ModelLoadStatus("/models/model", "vLLM", 0, 4096, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), true, []);
+        using var responseFormat = JsonDocument.Parse(
+            """{"type":"json_schema","json_schema":{"name":"rewrite","strict":true,"schema":{"type":"object","properties":{"language":{"type":"string"},"text":{"type":"string"}},"required":["language","text"],"additionalProperties":false}}}""");
+        var request = new OpenAiChatRequest(null, [new OpenAiChatMessage("user", "Return the rewrite.")])
+        {
+            ResponseFormat = responseFormat.RootElement.Clone()
+        };
+
+        var normalized = middleware.Prepare(request, status);
+        using var schema = JsonDocument.Parse(normalized.Options.StructuredOutputJsonSchema!);
+
+        Assert.AreEqual("object", schema.RootElement.GetProperty("type").GetString());
+        CollectionAssert.AreEqual(
+            new[] { "language", "text" },
+            schema.RootElement.GetProperty("required").EnumerateArray()
+                .Select(property => property.GetString())
+                .ToArray());
+        Assert.IsFalse(schema.RootElement.GetProperty("additionalProperties").GetBoolean());
+    }
+
+    [TestMethod]
+    public void Prepare_WhenVllmRequestsJsonSchemaWithoutObjectSchema_ThrowsArgumentException()
+    {
+        using var runtime = new ModelRuntime();
+        var middleware = new OpenAiCompatibleBackendMiddleware(runtime, new InferenceScheduler());
+        var status = new ModelLoadStatus("/models/model", "vLLM", 0, 4096, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), true, []);
+        using var responseFormat = JsonDocument.Parse(
+            """{"type":"json_schema","json_schema":{"name":"rewrite","strict":true,"schema":"object"}}""");
+        var request = new OpenAiChatRequest(null, [new OpenAiChatMessage("user", "Return the rewrite.")])
+        {
+            ResponseFormat = responseFormat.RootElement.Clone()
+        };
+
+        var exception = Assert.ThrowsExactly<ArgumentException>(() => middleware.Prepare(request, status));
+
+        StringAssert.Contains(exception.Message, "json_schema");
+    }
+
+    [TestMethod]
     public void Prepare_WhenNonVllmBackendRequestsJsonObject_ThrowsArgumentException()
     {
         using var runtime = new ModelRuntime();

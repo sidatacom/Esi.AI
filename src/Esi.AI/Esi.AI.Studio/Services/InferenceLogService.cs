@@ -122,7 +122,8 @@ public sealed class InferenceLogService(
                 throw new InvalidOperationException("Only a running inference log can be updated.");
             if (previous with { EstimatedPrefillTokens = log.EstimatedPrefillTokens, OutputTokenCount = log.OutputTokenCount,
                     FinishReason = log.FinishReason, Status = log.Status, CompletedAtUtc = log.CompletedAtUtc,
-                    DurationMilliseconds = log.DurationMilliseconds, ErrorType = log.ErrorType, ErrorMessage = log.ErrorMessage } != log)
+                    DurationMilliseconds = log.DurationMilliseconds, ErrorType = log.ErrorType, ErrorMessage = log.ErrorMessage,
+                    ResponsePayload = log.ResponsePayload } != log)
                 throw new InvalidOperationException("Inference request metadata cannot be changed after creation.");
             if (!Enum.IsDefined(log.Status))
                 throw new ArgumentOutOfRangeException(nameof(log), "The inference log status is invalid.");
@@ -137,6 +138,7 @@ public sealed class InferenceLogService(
             entity.DurationMilliseconds = log.DurationMilliseconds;
             entity.ErrorType = log.ErrorType;
             entity.ErrorMessage = LimitErrorMessage(log.ErrorMessage);
+            entity.ResponsePayload = log.ResponsePayload;
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             updated = ToContract(entity);
             deleted = log.Status == InferenceLogStatus.Running
@@ -250,7 +252,9 @@ public sealed class InferenceLogService(
             CompletedAtUtc = log.CompletedAtUtc,
             DurationMilliseconds = log.DurationMilliseconds,
             ErrorType = log.ErrorType,
-            ErrorMessage = LimitErrorMessage(log.ErrorMessage)
+            ErrorMessage = LimitErrorMessage(log.ErrorMessage),
+            RequestPayload = log.RequestPayload,
+            ResponsePayload = log.ResponsePayload
         };
 
     private static InferenceLog ToContract(InferenceLogEntity entity) =>
@@ -273,7 +277,9 @@ public sealed class InferenceLogService(
             entity.CompletedAtUtc,
             entity.DurationMilliseconds,
             entity.ErrorType,
-            entity.ErrorMessage);
+            entity.ErrorMessage,
+            entity.RequestPayload,
+            entity.ResponsePayload);
 
     private static string? LimitErrorMessage(string? message) =>
         message is { Length: > MaximumErrorMessageLength } ? message[..MaximumErrorMessageLength] : message;

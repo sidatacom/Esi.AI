@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using Esi.AI.Backend.Abstractions;
 using Esi.AI.Core.Chat;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
@@ -118,7 +119,8 @@ public sealed class InferenceService(
                         0,
                         onDelta is not null,
                         InferenceLogStatus.Running,
-                        estimatedPrefillTokens),
+                        estimatedPrefillTokens,
+                        RequestPayload: InferenceLogPayloadFormatter.FormatStudioRequest(chat, request, onDelta is not null)),
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -139,6 +141,29 @@ public sealed class InferenceService(
                         DurationMilliseconds = stopwatch.ElapsedMilliseconds,
                         ErrorType = nameof(OperationCanceledException),
                         ErrorMessage = "The caller cancelled the inference request."
+                    },
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+
+            throw;
+        }
+        catch (BackendRuntimeStoppingException exception)
+        {
+            effectiveLogger.LogInformation(
+                exception,
+                "Inference {InferenceId} was interrupted because the backend runtime is stopping or reloading after {ElapsedMilliseconds} ms.",
+                inferenceId,
+                stopwatch.ElapsedMilliseconds);
+            if (inferenceLog is not null && inferenceLogService is not null)
+            {
+                await inferenceLogService.InferenceLog_UpdateAsync(
+                    inferenceLog with
+                    {
+                        Status = InferenceLogStatus.Canceled,
+                        CompletedAtUtc = DateTimeOffset.UtcNow,
+                        DurationMilliseconds = stopwatch.ElapsedMilliseconds,
+                        ErrorType = exception.GetType().FullName ?? exception.GetType().Name,
+                        ErrorMessage = exception.Message
                     },
                     CancellationToken.None).ConfigureAwait(false);
             }
@@ -181,6 +206,7 @@ public sealed class InferenceService(
                     Status = InferenceLogStatus.Succeeded,
                     OutputTokenCount = result.TokenCount,
                     FinishReason = result.FinishReason,
+                    ResponsePayload = InferenceLogPayloadFormatter.FormatResponse(result),
                     CompletedAtUtc = DateTimeOffset.UtcNow,
                     DurationMilliseconds = stopwatch.ElapsedMilliseconds
                 },
@@ -286,6 +312,10 @@ public sealed class InferenceService(
             return await session.GenerateWithStatsAsync(messages, onDelta, cancellationToken).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (BackendRuntimeStoppingException)
         {
             throw;
         }

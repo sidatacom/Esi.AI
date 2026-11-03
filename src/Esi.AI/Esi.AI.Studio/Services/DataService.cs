@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Runtime.CompilerServices;
@@ -36,7 +35,8 @@ public sealed class DataService(
     IVulkanLogStatusPublisher? vulkanLogStatusPublisher = null,
     IPyTorchTrainingService? pyTorchTrainingService = null,
     IBenchmarkRunPublisher? benchmarkRunPublisher = null,
-    InferenceLogService? inferenceLogService = null) : IDataService
+    InferenceLogService? inferenceLogService = null,
+    ModelConfigurationLoadCoordinator? configurationLoadCoordinator = null) : IDataService
 {
     private static readonly SemaphoreSlim localModelMetadataSync = new(1, 1);
     private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web)
@@ -50,7 +50,8 @@ public sealed class DataService(
     private readonly IOptimajetFlowRuntime? effectiveOptimajetFlowRuntime = optimajetFlowRuntime;
     private readonly VulkanLogStore effectiveVulkanLogStore = vulkanLogStore ?? new();
     private readonly IVulkanLogStatusPublisher? effectiveVulkanLogStatusPublisher = vulkanLogStatusPublisher;
-    private readonly ConcurrentDictionary<Guid, Lazy<Task<ModelLoadStatus>>> configurationLoadTasks = new();
+    private readonly ModelConfigurationLoadCoordinator effectiveConfigurationLoadCoordinator =
+        configurationLoadCoordinator ?? new();
     private readonly object openVinoLoadSync = new();
     private CancellationTokenSource? openVinoLoadCancellation;
 
@@ -1080,10 +1081,9 @@ public sealed class DataService(
         if (request.ConfigurationId == Guid.Empty)
             throw new ArgumentException("ConfigurationId is required.", nameof(request));
 
-        var newLoad = new Lazy<Task<ModelLoadStatus>>(
+        return effectiveConfigurationLoadCoordinator.RunAsync(
             () => LoadConfiguredModelCoreAsync(request),
-            LazyThreadSafetyMode.ExecutionAndPublication);
-        return AwaitSharedConfigurationLoadAsync(request.ConfigurationId, newLoad, cancellationToken);
+            cancellationToken);
     }
 
     private async Task<ModelLoadStatus> LoadConfiguredModelCoreAsync(ApplicationModelLoadRequest request)
@@ -1095,6 +1095,10 @@ public sealed class DataService(
         EnsureSupportedBackend(configuration.Backend);
         if (!string.Equals(Path.GetFullPath(model.Path), Path.GetFullPath(configuration.ModelPath), StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The selected model configuration does not belong to the selected model.");
+
+        var loadedStatus = GetLoadedConfigurationStatus(configuration);
+        if (loadedStatus is not null)
+            return loadedStatus;
 
         if (modelRuntime.HasBackendRuntime(configuration.BackendVariantId))
         {
@@ -1161,23 +1165,18 @@ public sealed class DataService(
         if (configurationId == Guid.Empty)
             throw new ArgumentException("ConfigurationId is required.", nameof(configurationId));
 
-        var newLoad = new Lazy<Task<ModelLoadStatus>>(
+        return effectiveConfigurationLoadCoordinator.RunAsync(
             () => LoadModelConfigurationCoreAsync(configurationId),
-            LazyThreadSafetyMode.ExecutionAndPublication);
-        return AwaitSharedConfigurationLoadAsync(configurationId, newLoad, cancellationToken);
+            cancellationToken);
     }
 
     private async Task<ModelLoadStatus> LoadModelConfigurationCoreAsync(Guid configurationId)
     {
         var configuration = await ModelConfiguration_ReadAsync(configurationId, CancellationToken.None).ConfigureAwait(false)
             ?? throw new KeyNotFoundException($"The model configuration '{configurationId}' was not found.");
-        var currentStatus = modelRuntime.LoadedModel_Read();
-        if (currentStatus.LoadedModels.Any(model =>
-            !model.IsLoading &&
-            string.Equals(model.ModelPath, configuration.ModelPath, StringComparison.OrdinalIgnoreCase) &&
-            model.Backend == configuration.Backend &&
-            string.Equals(model.BackendVariantId, configuration.BackendVariantId, StringComparison.OrdinalIgnoreCase)))
-            return currentStatus;
+        var loadedStatus = GetLoadedConfigurationStatus(configuration);
+        if (loadedStatus is not null)
+            return loadedStatus;
 
         var model = (await Model_UpdateAsync(CancellationToken.None)).SingleOrDefault(item =>
             string.Equals(item.Path, configuration.ModelPath, StringComparison.OrdinalIgnoreCase))
@@ -1187,30 +1186,17 @@ public sealed class DataService(
             new ApplicationModelLoadRequest(model.Id, configuration.Id)).ConfigureAwait(false);
     }
 
-    private Task<ModelLoadStatus> AwaitSharedConfigurationLoadAsync(
-        Guid configurationId,
-        Lazy<Task<ModelLoadStatus>> newLoad,
-        CancellationToken cancellationToken)
+    private ModelLoadStatus? GetLoadedConfigurationStatus(ModelConfiguration configuration)
     {
-        var sharedLoad = configurationLoadTasks.GetOrAdd(configurationId, newLoad);
-        var loadTask = sharedLoad.Value;
-        _ = RemoveCompletedConfigurationLoadAsync(configurationId, sharedLoad, loadTask);
-        return loadTask.WaitAsync(cancellationToken);
-    }
-
-    private async Task RemoveCompletedConfigurationLoadAsync(
-        Guid configurationId,
-        Lazy<Task<ModelLoadStatus>> sharedLoad,
-        Task<ModelLoadStatus> loadTask)
-    {
-        try
-        {
-            await loadTask.ConfigureAwait(false);
-        }
-        catch
-        {
-        }
-        configurationLoadTasks.TryRemove(new KeyValuePair<Guid, Lazy<Task<ModelLoadStatus>>>(configurationId, sharedLoad));
+        var currentStatus = modelRuntime.LoadedModel_Read();
+        return currentStatus.LoadedModels.Any(model =>
+            model.IsModelLoaded &&
+            !model.IsLoading &&
+            string.Equals(model.ModelPath, configuration.ModelPath, StringComparison.OrdinalIgnoreCase) &&
+            model.Backend == configuration.Backend &&
+            string.Equals(model.BackendVariantId, configuration.BackendVariantId, StringComparison.OrdinalIgnoreCase))
+            ? currentStatus
+            : null;
     }
 
     public async Task<IReadOnlyList<BackendModel>> BackendModel_ReadAsync(ConfigurationBackend backend, CancellationToken cancellationToken = default)

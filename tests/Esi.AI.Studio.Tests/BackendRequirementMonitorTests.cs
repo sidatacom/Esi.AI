@@ -2,6 +2,7 @@ using Esi.AI.Models;
 using Esi.AI.Studio.Services;
 using Esi.AI.Core.ModelLoading;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace Esi.AI.Studio.Tests;
 
@@ -44,6 +45,17 @@ public sealed class BackendRequirementMonitorTests
         await dataService.BackendRequirement_InitializeAsync();
 
         Assert.AreEqual(0, requirementState.RefreshRequests);
+    }
+
+    [TestMethod]
+    public async Task ExecuteAsync_StoppingWhileWaitingForRefresh_CompletesNormally()
+    {
+        using var monitor = new BackendRequirementMonitor(null!, null!, null!, NullLogger<BackendRequirementMonitor>.Instance);
+        await monitor.StartAsync(CancellationToken.None);
+
+        await monitor.StopAsync(CancellationToken.None);
+
+        Assert.AreEqual(TaskStatus.RanToCompletion, monitor.ExecuteTask?.Status);
     }
 
     [TestMethod]

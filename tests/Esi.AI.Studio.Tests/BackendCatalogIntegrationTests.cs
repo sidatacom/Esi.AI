@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Esi.AI.Backend.Abstractions;
+using Esi.AI.Core.Chat;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
 using Esi.AI.Studio.Client.State;
@@ -106,6 +107,45 @@ public sealed class BackendCatalogIntegrationTests
             () => context.DataService.LoadConfiguredModelAsync(new ApplicationModelLoadRequest(model.Id, configurationId)));
 
         Assert.Contains("no longer supported", exception.Message);
+    }
+
+    [TestMethod]
+    public async Task ConfiguredModelLoad_ConcurrentScopes_LoadsSameXpuConfigurationOnce()
+    {
+        var backendRuntime = new CountingVllmXpuRuntime();
+        var modelRuntime = new ModelRuntime(
+            new LlamaModelLoader(),
+            new OpenVinoModelLoader(),
+            new PythonInferenceServer(),
+            backendRuntimeResolver: new BackendRuntimeResolver([backendRuntime]));
+        await using var context = await TestContext.CreateAsync(modelRuntime: modelRuntime);
+        var configurationId = Guid.NewGuid();
+        var now = DateTime.UtcNow;
+        await context.AddPersistedConfigurationAsync(new ModelConfigurationEntity
+        {
+            Id = configurationId,
+            Name = "Intel XPU",
+            ModelPath = context.ModelPath,
+            Backend = ConfigurationBackend.Vllm,
+            BackendVariantId = backendRuntime.Descriptor.Id,
+            ConfigurationJson = "{\"vllm.xpu\":{}}",
+            CreatedAtUtc = now,
+            UpdatedAtUtc = now
+        });
+        var model = (await context.DataService.Model_UpdateAsync())
+            .Single(item => string.Equals(item.Path, context.ModelPath, StringComparison.OrdinalIgnoreCase));
+        var additionalDataService = context.CreateAdditionalDataService();
+
+        var loadResults = await Task.WhenAll(
+            context.DataService.LoadConfiguredModelAsync(new ApplicationModelLoadRequest(model.Id, configurationId)),
+            additionalDataService.LoadModelConfigurationAsync(configurationId));
+
+        Assert.AreEqual(1, backendRuntime.LoadCount);
+        Assert.IsTrue(loadResults.All(status => status.LoadedModels.Any(loadedModel =>
+            string.Equals(loadedModel.ModelPath, context.ModelPath, StringComparison.OrdinalIgnoreCase) &&
+            loadedModel.BackendVariantId == backendRuntime.Descriptor.Id)));
+        await additionalDataService.LoadConfiguredModelAsync(new ApplicationModelLoadRequest(model.Id, configurationId));
+        Assert.AreEqual(1, backendRuntime.LoadCount);
     }
 
     [TestMethod]
@@ -295,7 +335,7 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
-    public void PythonState_Load_WhenXpuProfileHasExplicitCudaRoute_PreservesConflict()
+    public void PythonState_Load_WhenXpuProfileHasExplicitCudaRoute_UsesXpuDefault()
     {
         var state = new PythonState();
         var request = new PythonInferenceLoadRequest(
@@ -306,8 +346,8 @@ public sealed class BackendCatalogIntegrationTests
 
         state.Load(request, "vllm.xpu");
 
-        Assert.AreEqual("cuda:0", state.Device);
-        CollectionAssert.AreEqual(new[] { "cuda:0" }, state.SelectedDevices.ToArray());
+        Assert.AreEqual("xpu:0", state.Device);
+        CollectionAssert.AreEqual(new[] { "xpu:0" }, state.SelectedDevices.ToArray());
     }
 
     [TestMethod]
@@ -1243,18 +1283,99 @@ public sealed class BackendCatalogIntegrationTests
         }
     }
 
+    private sealed class CountingVllmXpuRuntime : IBackendRuntime
+    {
+        private string? modelPath;
+        private int loadCount;
+
+        public BackendVariantDescriptor Descriptor { get; } = new(
+            "vllm.xpu",
+            ConfigurationBackend.Vllm,
+            "xpu",
+            "Test vLLM XPU",
+            "Intel");
+
+        public int LoadCount => Volatile.Read(ref loadCount);
+
+        public ModelLoadStatus GetStatus()
+        {
+            var activeModelPath = Volatile.Read(ref modelPath);
+            var loadedModels = activeModelPath is null
+                ? Array.Empty<LoadedModelStatus>()
+                : [new LoadedModelStatus(
+                    activeModelPath,
+                    ConfigurationBackend.Vllm,
+                    Descriptor.RuntimeName,
+                    0,
+                    0,
+                    0,
+                    [],
+                    null,
+                    BackendVariantId: Descriptor.Id)];
+            return new ModelLoadStatus(
+                activeModelPath,
+                Descriptor.Route,
+                0,
+                0,
+                0,
+                0,
+                [],
+                null,
+                string.Empty,
+                new Dictionary<string, float>(),
+                loadedModels.Length > 0,
+                loadedModels,
+                Descriptor.Id);
+        }
+
+        public bool SupportsImageInput(string? path) => false;
+
+        public async Task LoadAsync(BackendLoadRequest request, CancellationToken cancellationToken = default)
+        {
+            Interlocked.Increment(ref loadCount);
+            await Task.Delay(TimeSpan.FromMilliseconds(50), cancellationToken);
+            Volatile.Write(ref modelPath, request.ModelPath);
+        }
+
+        public Task UnloadAsync(string path, CancellationToken cancellationToken = default)
+        {
+            Volatile.Write(ref modelPath, null);
+            return Task.CompletedTask;
+        }
+
+        public Task StopAsync(CancellationToken cancellationToken = default)
+        {
+            Volatile.Write(ref modelPath, null);
+            return Task.CompletedTask;
+        }
+
+        public Task<GenerationResult> GenerateAsync(
+            OpenAiBackendChatRequest request,
+            Func<string, Task>? onToken = null,
+            CancellationToken cancellationToken = default) =>
+            Task.FromException<GenerationResult>(new NotSupportedException());
+
+        public void Dispose()
+        {
+        }
+    }
+
     private sealed class TestContext : IAsyncDisposable
     {
         private readonly string directory;
         private readonly string databasePath;
         private readonly TestDbContextFactory dbContextFactory;
         private readonly ModelLibraryService modelLibrary;
+        private readonly ModelRuntime modelRuntime;
+        private readonly ModelConfigurationLoadCoordinator configurationLoadCoordinator;
 
         private TestContext(
             string directory,
             string databasePath,
             TestDbContextFactory dbContextFactory,
             ModelLibraryService modelLibrary,
+            ModelRuntime modelRuntime,
+            ModelConfigurationLoadCoordinator configurationLoadCoordinator,
             DataService dataService,
             string modelPath)
         {
@@ -1262,6 +1383,8 @@ public sealed class BackendCatalogIntegrationTests
             this.databasePath = databasePath;
             this.dbContextFactory = dbContextFactory;
             this.modelLibrary = modelLibrary;
+            this.modelRuntime = modelRuntime;
+            this.configurationLoadCoordinator = configurationLoadCoordinator;
             DataService = dataService;
             ModelPath = modelPath;
         }
@@ -1279,7 +1402,8 @@ public sealed class BackendCatalogIntegrationTests
             modelLibrary,
             new OpenVinoDiagnosticsService(),
             new OpenVinoDriverInstaller(),
-            new ModelRuntime());
+            modelRuntime,
+            configurationLoadCoordinator: configurationLoadCoordinator);
 
         public async Task<string> CreateModelFileAsync(string fileName)
         {
@@ -1368,7 +1492,7 @@ public sealed class BackendCatalogIntegrationTests
             return await db.ChatMessages.CountAsync(message => message.ConversationId == chatId);
         }
 
-        public static async Task<TestContext> CreateAsync(HttpMessageHandler? handler = null)
+        public static async Task<TestContext> CreateAsync(HttpMessageHandler? handler = null, ModelRuntime? modelRuntime = null)
         {
             var directory = Directory.CreateTempSubdirectory("esi-ai-studio-tests-").FullName;
             var modelPath = Path.Combine(directory, "local.gguf");
@@ -1388,6 +1512,8 @@ public sealed class BackendCatalogIntegrationTests
                 null!,
                 dbContextFactory,
                 Options.Create(new ModelLibraryOptions { Directories = [directory] }));
+            modelRuntime ??= new ModelRuntime();
+            var configurationLoadCoordinator = new ModelConfigurationLoadCoordinator();
             var dataService = new DataService(
                 dbContextFactory,
                 modelLibrary,
@@ -1396,12 +1522,22 @@ public sealed class BackendCatalogIntegrationTests
                 modelLibrary,
                 new OpenVinoDiagnosticsService(),
                 new OpenVinoDriverInstaller(),
-                new ModelRuntime());
-            return new TestContext(directory, databasePath, dbContextFactory, modelLibrary, dataService, modelPath);
+                modelRuntime,
+                configurationLoadCoordinator: configurationLoadCoordinator);
+            return new TestContext(
+                directory,
+                databasePath,
+                dbContextFactory,
+                modelLibrary,
+                modelRuntime,
+                configurationLoadCoordinator,
+                dataService,
+                modelPath);
         }
 
         public ValueTask DisposeAsync()
         {
+            modelRuntime.Dispose();
             dbContextFactory.Dispose();
             TryDelete(databasePath);
             TryDelete(directory);

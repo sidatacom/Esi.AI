@@ -53,13 +53,64 @@ public sealed class InferenceServiceTests
         Assert.IsNull(cudaRuntime.LastRequest);
     }
 
+    [TestMethod]
+    public async Task GenerateAsync_WhenBackendRuntimeIsStopping_DoesNotMarkFailureFatal()
+    {
+        const string modelPath = "/models/shared.gguf";
+        var stoppingException = new BackendRuntimeStoppingException("Runtime is reloading.");
+        var backendRuntime = new TestBackendRuntime("llama.cuda12", stoppingException);
+        using var modelRuntime = CreateModelRuntime(backendRuntime);
+        using var configuration = JsonDocument.Parse("{}");
+        await modelRuntime.LoadBackendAsync(new BackendLoadRequest(modelPath, backendRuntime.Descriptor.Id, configuration.RootElement));
+        using var scheduler = new InferenceScheduler();
+        var failureCoordinator = new RecordingInferenceFailureCoordinator();
+        var service = new InferenceService(modelRuntime, scheduler, failureCoordinator);
+        var chat = new PersistedChat(Guid.NewGuid(), "Reload test", DateTime.UtcNow, DateTime.UtcNow, []);
+        var request = new ChatExchangeRequest("hello", modelPath, "CUDA", BackendVariantId: backendRuntime.Descriptor.Id);
+
+        var exception = await Assert.ThrowsExactlyAsync<BackendRuntimeStoppingException>(
+            () => service.GenerateAsync(chat, request, "CUDA"));
+
+        Assert.AreSame(stoppingException, exception);
+        Assert.AreEqual(0, failureCoordinator.FailureCount);
+    }
+
+    [TestMethod]
+    public async Task OpenAiMiddleware_WhenBackendRuntimeIsStopping_DoesNotMarkFailureFatal()
+    {
+        const string modelPath = "/models/shared.gguf";
+        var stoppingException = new BackendRuntimeStoppingException("Runtime is reloading.");
+        var backendRuntime = new TestBackendRuntime("llama.cuda12", stoppingException);
+        using var modelRuntime = CreateModelRuntime(backendRuntime);
+        using var configuration = JsonDocument.Parse("{}");
+        await modelRuntime.LoadBackendAsync(new BackendLoadRequest(modelPath, backendRuntime.Descriptor.Id, configuration.RootElement));
+        using var scheduler = new InferenceScheduler();
+        var failureCoordinator = new RecordingInferenceFailureCoordinator();
+        var middleware = new OpenAiCompatibleBackendMiddleware(modelRuntime, scheduler, failureCoordinator);
+        var request = new OpenAiBackendChatRequest(
+            "CUDA",
+            "shared",
+            modelPath,
+            [new OpenAiChatMessage("user", "hello")],
+            [new ChatMessage("user", "hello")],
+            null,
+            new ChatGenerationOptions(),
+            BackendVariantId: backendRuntime.Descriptor.Id);
+
+        var exception = await Assert.ThrowsExactlyAsync<BackendRuntimeStoppingException>(
+            () => middleware.GenerateAsync(request, null));
+
+        Assert.AreSame(stoppingException, exception);
+        Assert.AreEqual(0, failureCoordinator.FailureCount);
+    }
+
     private static ModelRuntime CreateModelRuntime(params TestBackendRuntime[] runtimes) => new(
         new LlamaModelLoader(),
         new OpenVinoModelLoader(),
         new PythonInferenceServer(),
         backendRuntimeResolver: new BackendRuntimeResolver(runtimes));
 
-    private sealed class TestBackendRuntime(string variantId) : IBackendRuntime
+    private sealed class TestBackendRuntime(string variantId, Exception? generationException = null) : IBackendRuntime
     {
         private string? modelPath;
 
@@ -106,11 +157,25 @@ public sealed class InferenceServiceTests
             CancellationToken cancellationToken = default)
         {
             LastRequest = request;
+            if (generationException is not null)
+                return Task.FromException<GenerationResult>(generationException);
             return Task.FromResult(new GenerationResult($"{Descriptor.Id} response", 2, TimeSpan.Zero, 0));
         }
 
         public void Dispose()
         {
+        }
+    }
+
+    private sealed class RecordingInferenceFailureCoordinator : IInferenceFailureCoordinator
+    {
+        public int FailureCount { get; private set; }
+
+        public Task FailAsync(Exception exception, string? inferenceId = null)
+        {
+            ArgumentNullException.ThrowIfNull(exception);
+            FailureCount++;
+            return Task.CompletedTask;
         }
     }
 }

@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using Esi.AI.Backend.Abstractions;
 using Esi.AI.Core.Chat;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
@@ -125,7 +126,8 @@ public sealed class OpenAiCompatibleBackendMiddleware(
                         imageCount,
                         request.Tools?.Count ?? 0,
                         isStreaming,
-                        InferenceLogStatus.Running),
+                        InferenceLogStatus.Running,
+                        RequestPayload: InferenceLogPayloadFormatter.FormatOpenAiRequest(request, isStreaming)),
                     cancellationToken).ConfigureAwait(false);
             }
 
@@ -195,6 +197,29 @@ public sealed class OpenAiCompatibleBackendMiddleware(
 
             throw;
         }
+        catch (BackendRuntimeStoppingException exception)
+        {
+            effectiveLogger.LogInformation(
+                exception,
+                "Inference {InferenceId} was interrupted because the backend runtime is stopping or reloading after {ElapsedMilliseconds} ms.",
+                inferenceId,
+                stopwatch.ElapsedMilliseconds);
+            if (inferenceLog is not null && inferenceLogService is not null)
+            {
+                await inferenceLogService.InferenceLog_UpdateAsync(
+                    inferenceLog with
+                    {
+                        Status = InferenceLogStatus.Canceled,
+                        CompletedAtUtc = DateTimeOffset.UtcNow,
+                        DurationMilliseconds = stopwatch.ElapsedMilliseconds,
+                        ErrorType = exception.GetType().FullName ?? exception.GetType().Name,
+                        ErrorMessage = exception.Message
+                    },
+                    CancellationToken.None).ConfigureAwait(false);
+            }
+
+            throw;
+        }
         catch (Exception exception)
         {
             effectiveLogger.LogError(exception, "Inference {InferenceId} failed after {ElapsedMilliseconds} ms.", inferenceId, stopwatch.ElapsedMilliseconds);
@@ -231,6 +256,7 @@ public sealed class OpenAiCompatibleBackendMiddleware(
                     Status = InferenceLogStatus.Succeeded,
                     OutputTokenCount = result.TokenCount,
                     FinishReason = result.FinishReason,
+                    ResponsePayload = InferenceLogPayloadFormatter.FormatResponse(result),
                     CompletedAtUtc = DateTimeOffset.UtcNow,
                     DurationMilliseconds = stopwatch.ElapsedMilliseconds
                 },
@@ -322,6 +348,10 @@ public sealed class OpenAiCompatibleBackendMiddleware(
         catch (Exception) when (cancellationToken.IsCancellationRequested)
         {
             throw new OperationCanceledException(cancellationToken);
+        }
+        catch (BackendRuntimeStoppingException)
+        {
+            throw;
         }
         catch (ArgumentException exception) when (exception.ParamName == nameof(request))
         {
@@ -457,11 +487,22 @@ public sealed class OpenAiCompatibleBackendMiddleware(
 
         if (responseFormat.ValueKind != JsonValueKind.Object ||
             !responseFormat.TryGetProperty("type", out var type) ||
-            type.ValueKind != JsonValueKind.String ||
-            !string.Equals(type.GetString(), "json_object", StringComparison.Ordinal))
-            throw new ArgumentException("Only response_format type 'json_object' is supported.", nameof(request));
+            type.ValueKind != JsonValueKind.String)
+            throw new ArgumentException("response_format must specify a supported type.", nameof(request));
 
-        return """{"type":"object"}""";
+        if (string.Equals(type.GetString(), "json_object", StringComparison.Ordinal))
+            return """{"type":"object"}""";
+
+        if (string.Equals(type.GetString(), "json_schema", StringComparison.Ordinal) &&
+            responseFormat.TryGetProperty("json_schema", out var jsonSchema) &&
+            jsonSchema.ValueKind == JsonValueKind.Object &&
+            jsonSchema.TryGetProperty("schema", out var schema) &&
+            schema.ValueKind == JsonValueKind.Object)
+            return schema.GetRawText();
+
+        throw new ArgumentException(
+            "response_format supports 'json_object' or 'json_schema' with an object schema.",
+            nameof(request));
     }
 
     private static IReadOnlyList<OpenAiToolDefinition>? LimitOpenVinoTools(

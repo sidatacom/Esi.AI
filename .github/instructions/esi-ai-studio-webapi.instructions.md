@@ -78,6 +78,7 @@ GET http://127.0.0.1:7010/v1/application/models
 ## Chat request rules
 
 - `OpenAiChatMessage.Content` may be a string, a JSON string value, or an array of OpenAI content parts.
+- vLLM chat requests may use `response_format` with `json_object` or `json_schema`; schema mode forwards the nested JSON Schema to vLLM structured outputs.
 - Local multimodal content supports only `text` and `image_url` parts.
 - Images must use a local Base64 data URL with an `image/*` media type, for example `data:image/png;base64,...`.
 - Remote URLs are rejected and must never be downloaded by the local server.

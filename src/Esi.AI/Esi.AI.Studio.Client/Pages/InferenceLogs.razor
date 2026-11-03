@@ -13,7 +13,7 @@
         <div>
             <p class="inference-logs-eyebrow">REQUEST DIAGNOSTICS</p>
             <h1>Inference logs</h1>
-            <p>Live request history with correlation IDs and payload-free metadata. The latest 500 entries are kept in the local Studio database.</p>
+            <p>Live request history with correlation IDs and expandable text payloads. Image data is omitted; the latest 500 entries are kept in the local Studio database.</p>
         </div>
         <button type="button" class="inference-logs-button" @onclick="RefreshAsync" disabled="@isRefreshing">
             @(isRefreshing ? "Refreshing ..." : "Refresh")
@@ -69,6 +69,17 @@
                             <div><dt>Finish reason</dt><dd>@log.FinishReason</dd></div>
                         }
                     </dl>
+
+                    <div class="inference-log-payloads">
+                        <details class="inference-log-payload">
+                            <summary>Request</summary>
+                            <pre>@(log.RequestPayload ?? "Request payload unavailable for this entry.")</pre>
+                        </details>
+                        <details class="inference-log-payload">
+                            <summary>Response</summary>
+                            <pre>@(log.ResponsePayload ?? (log.Status == InferenceLogStatus.Running ? "Generation is in progress." : "No response payload was recorded."))</pre>
+                        </details>
+                    </div>
 
                     @if (!string.IsNullOrWhiteSpace(log.ErrorMessage))
                     {

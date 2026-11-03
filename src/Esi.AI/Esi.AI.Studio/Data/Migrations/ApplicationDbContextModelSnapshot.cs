@@ -334,6 +334,12 @@ namespace Esi.AI.Studio.Migrations
                         .IsRequired()
                         .HasColumnType("TEXT");
 
+                    b.Property<string>("RequestPayload")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ResponsePayload")
+                        .HasColumnType("TEXT");
+
                     b.Property<DateTimeOffset>("StartedAtUtc")
                         .HasColumnType("TEXT");
 

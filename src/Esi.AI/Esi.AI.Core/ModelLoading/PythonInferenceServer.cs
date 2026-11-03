@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using Esi.AI.Backend.Abstractions;
 using GenerationResult = Esi.AI.Models.GenerationResult;
 using Esi.AI.Core.Grpc;
 using Esi.AI.Models;
@@ -136,11 +137,14 @@ public sealed class PythonInferenceServer : IDisposable
             if (!IsExecutable(pythonExecutable))
                 throw new InvalidOperationException($"The Python executable '{pythonExecutable}' was not found or is not executable.");
 
+            BackendProcessLifecycle.ConfigureStartInfo(startInfo);
             var newProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
             newProcess.OutputDataReceived += CaptureOutput;
             newProcess.ErrorDataReceived += CaptureOutput;
             if (!newProcess.Start())
                 throw new InvalidOperationException($"Could not start the {GetBackendName(request.Backend)} gRPC bridge.");
+            lock (sync)
+                process = newProcess;
             newProcess.BeginOutputReadLine();
             newProcess.BeginErrorReadLine();
 
@@ -148,7 +152,6 @@ public sealed class PythonInferenceServer : IDisposable
             var newClient = new Inference.InferenceClient(newChannel);
             lock (sync)
             {
-                process = newProcess;
                 channel = newChannel;
                 client = newClient;
                 loadLog = string.Concat(loadLog, Environment.NewLine,
@@ -227,9 +230,7 @@ public sealed class PythonInferenceServer : IDisposable
 
         try
         {
-            if (!activeProcess.HasExited)
-                activeProcess.Kill(entireProcessTree: true);
-            await activeProcess.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            await BackendProcessLifecycle.StopAsync(activeProcess).ConfigureAwait(false);
         }
         finally
         {

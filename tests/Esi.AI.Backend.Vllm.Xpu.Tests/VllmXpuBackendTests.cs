@@ -4,6 +4,7 @@ using Esi.AI.Backend.Abstractions;
 using Esi.AI.Backend.Vllm.Xpu;
 using Esi.AI.Backend.Vllm.Xpu.Grpc;
 using Esi.AI.Models;
+using Grpc.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using GrpcGenerateResponse = Esi.AI.Backend.Vllm.Xpu.Grpc.GenerateResponse;
@@ -97,6 +98,18 @@ public sealed class VllmXpuBackendTests
         var details = VllmXpuRuntime.ExtractPythonFailureDetails(output);
 
         Assert.AreEqual(traceback, details);
+    }
+
+    [TestMethod]
+    public void FormatPythonBridgeExitDetails_WhenOutputExceedsLimit_ReturnsExitCodeAndBoundedTail()
+    {
+        var output = new string('x', 20_000) + Environment.NewLine + "RuntimeError: final failure";
+
+        var details = VllmXpuRuntime.FormatPythonBridgeExitDetails(17, output);
+
+        Assert.Contains("exited with code 17", details);
+        Assert.Contains("RuntimeError: final failure", details);
+        Assert.IsTrue(details.Length < output.Length);
     }
 
     [TestMethod]
@@ -247,6 +260,29 @@ public sealed class VllmXpuBackendTests
         Assert.AreEqual(" there", deltas[1]);
     }
 
+    [TestMethod]
+    public async Task GenerateAsync_WhenRuntimeStopsDuringUnavailableStream_ReportsExpectedInterruption()
+    {
+        var streamStarted = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var allowUnavailable = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var session = new VllmXpuChatSession(
+            (_, cancellationToken) => StreamUnavailable(streamStarted, allowUnavailable, cancellationToken),
+            "org/model");
+        var generation = session.GenerateAsync(
+            [new ModelChatMessage("user", "hello")],
+            new ChatGenerationOptions(),
+            null,
+            CancellationToken.None);
+
+        await streamStarted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        session.Dispose();
+        allowUnavailable.TrySetResult(true);
+
+        var exception = await Assert.ThrowsExactlyAsync<BackendRuntimeStoppingException>(() => generation);
+        Assert.IsInstanceOfType<RpcException>(exception.InnerException, out var rpcException);
+        Assert.AreEqual(StatusCode.Unavailable, rpcException.StatusCode);
+    }
+
     private static async IAsyncEnumerable<GrpcGenerateResponse> StreamResponses(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
@@ -255,5 +291,16 @@ public sealed class VllmXpuBackendTests
         await Task.Yield();
         cancellationToken.ThrowIfCancellationRequested();
         yield return new GrpcGenerateResponse { Delta = " there", Finished = true, GeneratedTokens = 4, PromptTokens = 11, TokensPerSecond = 20 };
+    }
+
+    private static async IAsyncEnumerable<GrpcGenerateResponse> StreamUnavailable(
+        TaskCompletionSource<bool> streamStarted,
+        TaskCompletionSource<bool> allowUnavailable,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        streamStarted.TrySetResult(true);
+        yield return new GrpcGenerateResponse();
+        await allowUnavailable.Task.ConfigureAwait(false);
+        throw new RpcException(new Status(StatusCode.Unavailable, "Connection refused."));
     }
 }

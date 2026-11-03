@@ -6,21 +6,28 @@ using Esi.AI.Backend.Vllm.Xpu.Grpc;
 using Esi.AI.Models;
 using Grpc.Core;
 using Grpc.Net.Client;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using LoadModelRequest = Esi.AI.Models.LoadModelRequest;
 using PythonLoadRequest = Esi.AI.Models.PythonInferenceLoadRequest;
 
 namespace Esi.AI.Backend.Vllm.Xpu;
 
 /// <summary>Owns the vLLM Intel XPU Python process and its local gRPC model session.</summary>
-public sealed class VllmXpuRuntime : IBackendRuntime
+public sealed class VllmXpuRuntime(ILogger<VllmXpuRuntime>? logger = null) : IBackendRuntime
 {
     private const string VariantId = "vllm.xpu";
+    private const int MaximumCapturedLogCharacters = 32 * 1024;
+    private const int MaximumProcessExitOutputCharacters = 8 * 1024;
     private static readonly JsonSerializerOptions ConfigurationJsonOptions = new(JsonSerializerDefaults.Web)
     {
         Converters = { new JsonStringEnumConverter() }
     };
+    private readonly ILogger<VllmXpuRuntime> effectiveLogger = logger ?? NullLogger<VllmXpuRuntime>.Instance;
     private readonly object sync = new();
+    private readonly SemaphoreSlim lifecycleLock = new(1, 1);
     private readonly HashSet<VllmXpuChatSession> sessions = [];
+    private readonly Dictionary<Process, string> expectedProcessExitReasons = new();
     private readonly VllmXpuPythonEnvironment provisioner = new();
     private Process? process;
     private GrpcChannel? channel;
@@ -103,97 +110,114 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         if (startupTimeout <= TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(request), "The startup timeout must be positive.");
 
-        await StopAsync(cancellationToken).ConfigureAwait(false);
-        lock (sync)
-        {
-            isLoading = true;
-            modelPath = request.ModelPath;
-            modelId = null;
-            devices = configuration.Devices!;
-            contextSize = configuration.MaxModelLength;
-            loadLog = "Preparing vLLM Intel XPU runtime...";
-        }
-
+        await lifecycleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var preparation = await provisioner.PrepareAsync(
-                configuration.PythonExecutable,
-                AppContext.BaseDirectory,
-                startupTimeout,
-                cancellationToken).ConfigureAwait(false);
-            lock (sync)
-                loadLog = preparation.Message;
-
-            var pythonDirectory = Path.Combine(AppContext.BaseDirectory, "Python");
-            var bootstrapScriptPath = Path.Combine(pythonDirectory, "vllm_xpu_bootstrap.py");
-            var scriptPath = Path.Combine(pythonDirectory, "inference_server.py");
-            if (!File.Exists(bootstrapScriptPath))
-                throw new FileNotFoundException("The vLLM XPU Python bootstrap was not deployed.", bootstrapScriptPath);
-            if (!File.Exists(scriptPath))
-                throw new FileNotFoundException("The Python gRPC inference bridge was not deployed.", scriptPath);
-
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = preparation.PythonExecutable,
-                WorkingDirectory = configuration.WorkingDirectory ?? AppContext.BaseDirectory,
-                UseShellExecute = false,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                CreateNoWindow = true
-            };
-            foreach (var argument in BuildBootstrapArguments(bootstrapScriptPath, scriptPath, configuration))
-                startInfo.ArgumentList.Add(argument);
-
-            if (!IsExecutable(preparation.PythonExecutable))
-                throw new InvalidOperationException($"The Python executable '{preparation.PythonExecutable}' was not found or is not executable.");
-
-            var newProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
-            newProcess.OutputDataReceived += CaptureOutput;
-            newProcess.ErrorDataReceived += CaptureOutput;
-            if (!newProcess.Start())
-                throw new InvalidOperationException("Could not start the vLLM XPU gRPC bridge.");
-            newProcess.BeginOutputReadLine();
-            newProcess.BeginErrorReadLine();
-
-            var newChannel = GrpcChannel.ForAddress($"http://127.0.0.1:{configuration.Port}");
-            var newClient = new Inference.InferenceClient(newChannel);
+            await StopCoreAsync("load_replacement").ConfigureAwait(false);
             lock (sync)
             {
-                process = newProcess;
-                channel = newChannel;
-                client = newClient;
-                loadLog = string.Concat(loadLog, Environment.NewLine,
-                    $"Started vLLM XPU gRPC bridge using {preparation.PythonExecutable}.");
+                isLoading = true;
+                modelPath = request.ModelPath;
+                modelId = null;
+                devices = configuration.Devices!;
+                contextSize = configuration.MaxModelLength;
+                loadLog = "Preparing vLLM Intel XPU runtime...";
             }
 
-            using var startupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            startupCancellation.CancelAfter(startupTimeout);
-            await WaitUntilReadyAsync(newClient, newProcess, startupTimeout, startupCancellation.Token).ConfigureAwait(false);
-            using var loadCall = newClient.LoadModelAsync(VllmXpuGrpcMapper.ToGrpcRequest(configuration),
-                cancellationToken: startupCancellation.Token);
-            var response = await loadCall.ResponseAsync.ConfigureAwait(false);
-            var loadedModelId = GetLoadedModelId(response);
-            await WaitUntilModelReadyAsync(
-                newClient,
-                newProcess,
-                loadedModelId,
-                startupTimeout,
-                startupCancellation.Token).ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            var failure = exception.Message;
-            lock (sync)
-                loadLog = string.IsNullOrWhiteSpace(loadLog)
-                    ? failure
-                    : string.Concat(loadLog, Environment.NewLine, failure);
-            await StopAsync(CancellationToken.None).ConfigureAwait(false);
-            throw;
+            try
+            {
+                var preparation = await provisioner.PrepareAsync(
+                    configuration.PythonExecutable,
+                    AppContext.BaseDirectory,
+                    startupTimeout,
+                    cancellationToken).ConfigureAwait(false);
+                lock (sync)
+                    loadLog = GetBoundedTail(preparation.Message, MaximumCapturedLogCharacters);
+
+                var pythonDirectory = Path.Combine(AppContext.BaseDirectory, "Python");
+                var bootstrapScriptPath = Path.Combine(pythonDirectory, "vllm_xpu_bootstrap.py");
+                var scriptPath = Path.Combine(pythonDirectory, "inference_server.py");
+                if (!File.Exists(bootstrapScriptPath))
+                    throw new FileNotFoundException("The vLLM XPU Python bootstrap was not deployed.", bootstrapScriptPath);
+                if (!File.Exists(scriptPath))
+                    throw new FileNotFoundException("The Python gRPC inference bridge was not deployed.", scriptPath);
+
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = preparation.PythonExecutable,
+                    WorkingDirectory = configuration.WorkingDirectory ?? AppContext.BaseDirectory,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true
+                };
+                foreach (var argument in BuildBootstrapArguments(bootstrapScriptPath, scriptPath, configuration))
+                    startInfo.ArgumentList.Add(argument);
+
+                BackendProcessLifecycle.ConfigureStartInfo(startInfo);
+                if (!IsExecutable(preparation.PythonExecutable))
+                    throw new InvalidOperationException($"The Python executable '{preparation.PythonExecutable}' was not found or is not executable.");
+
+                var newProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
+                newProcess.OutputDataReceived += CaptureOutput;
+                newProcess.ErrorDataReceived += CaptureOutput;
+                newProcess.Exited += CaptureProcessExit;
+                if (!newProcess.Start())
+                    throw new InvalidOperationException("Could not start the vLLM XPU gRPC bridge.");
+                lock (sync)
+                    process = newProcess;
+                newProcess.BeginOutputReadLine();
+                newProcess.BeginErrorReadLine();
+                effectiveLogger.LogInformation(
+                    "Started vLLM XPU Python bridge. ProcessId={ProcessId} Device={Device} Port={Port}",
+                    newProcess.Id,
+                    configuration.Device,
+                    configuration.Port);
+
+                var newChannel = GrpcChannel.ForAddress($"http://127.0.0.1:{configuration.Port}");
+                var newClient = new Inference.InferenceClient(newChannel);
+                lock (sync)
+                {
+                    channel = newChannel;
+                    client = newClient;
+                }
+                AppendLoadLog($"Started vLLM XPU gRPC bridge using {preparation.PythonExecutable}.");
+
+                using var startupCancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                startupCancellation.CancelAfter(startupTimeout);
+                await WaitUntilReadyAsync(newClient, newProcess, startupTimeout, startupCancellation.Token).ConfigureAwait(false);
+                using var loadCall = newClient.LoadModelAsync(VllmXpuGrpcMapper.ToGrpcRequest(configuration),
+                    cancellationToken: startupCancellation.Token);
+                var response = await loadCall.ResponseAsync.ConfigureAwait(false);
+                var loadedModelId = GetLoadedModelId(response);
+                await WaitUntilModelReadyAsync(
+                    newClient,
+                    newProcess,
+                    loadedModelId,
+                    startupTimeout,
+                    startupCancellation.Token).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                AppendLoadLog(exception.Message);
+                if (exception is OperationCanceledException && cancellationToken.IsCancellationRequested)
+                    effectiveLogger.LogInformation(exception, "vLLM XPU model loading was cancelled. Device={Device} Port={Port}",
+                        configuration.Device, configuration.Port);
+                else
+                    effectiveLogger.LogError(exception, "vLLM XPU model loading failed. Device={Device} Port={Port}",
+                        configuration.Device, configuration.Port);
+                await StopCoreAsync("load_failure").ConfigureAwait(false);
+                throw;
+            }
+            finally
+            {
+                lock (sync)
+                    isLoading = false;
+            }
         }
         finally
         {
-            lock (sync)
-                isLoading = false;
+            lifecycleLock.Release();
         }
     }
 
@@ -201,27 +225,47 @@ public sealed class VllmXpuRuntime : IBackendRuntime
     public async Task UnloadAsync(string modelPath, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(modelPath);
-        Inference.InferenceClient? activeClient;
-        string? activeModelPath;
-        lock (sync)
+        await lifecycleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            activeClient = client;
-            activeModelPath = this.modelPath;
-        }
-        if (activeClient is null || activeModelPath is null || !SameModelPath(modelPath, activeModelPath))
-            return;
+            Inference.InferenceClient? activeClient;
+            string? activeModelPath;
+            lock (sync)
+            {
+                activeClient = client;
+                activeModelPath = this.modelPath;
+            }
+            if (activeClient is null || activeModelPath is null || !SameModelPath(modelPath, activeModelPath))
+                return;
 
-        using var call = activeClient.UnloadModelAsync(new UnloadModelRequest(), cancellationToken: cancellationToken);
-        var response = await call.ResponseAsync.ConfigureAwait(false);
-        if (!response.Succeeded)
-            throw new InvalidOperationException(response.Error);
-        await StopAsync(CancellationToken.None).ConfigureAwait(false);
+            using var call = activeClient.UnloadModelAsync(new UnloadModelRequest(), cancellationToken: cancellationToken);
+            var response = await call.ResponseAsync.ConfigureAwait(false);
+            if (!response.Succeeded)
+                throw new InvalidOperationException(response.Error);
+            await StopCoreAsync("unload").ConfigureAwait(false);
+        }
+        finally
+        {
+            lifecycleLock.Release();
+        }
     }
 
     /// <inheritdoc />
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
-        cancellationToken.ThrowIfCancellationRequested();
+        await lifecycleLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await StopCoreAsync("stop_requested").ConfigureAwait(false);
+        }
+        finally
+        {
+            lifecycleLock.Release();
+        }
+    }
+
+    private async Task StopCoreAsync(string stopReason)
+    {
         Process? activeProcess;
         GrpcChannel? activeChannel;
         VllmXpuChatSession[] activeSessions;
@@ -230,6 +274,8 @@ public sealed class VllmXpuRuntime : IBackendRuntime
             activeProcess = process;
             activeChannel = channel;
             activeSessions = sessions.ToArray();
+            if (activeProcess is { HasExited: false })
+                expectedProcessExitReasons[activeProcess] = stopReason;
             sessions.Clear();
             process = null;
             channel = null;
@@ -247,11 +293,13 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         if (activeProcess is null)
             return;
 
+        effectiveLogger.LogInformation(
+            "Stopping vLLM XPU Python bridge. StopReason={StopReason} ProcessId={ProcessId}",
+            stopReason,
+            activeProcess.Id);
         try
         {
-            if (!activeProcess.HasExited)
-                activeProcess.Kill(entireProcessTree: true);
-            await activeProcess.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            await BackendProcessLifecycle.StopAsync(activeProcess).ConfigureAwait(false);
         }
         finally
         {
@@ -302,6 +350,7 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         if (Interlocked.Exchange(ref disposed, 1) != 0)
             return;
         StopAsync(CancellationToken.None).GetAwaiter().GetResult();
+        lifecycleLock.Dispose();
     }
 
     internal static PythonLoadRequest NormalizeLoadConfiguration(BackendLoadRequest request)
@@ -389,7 +438,7 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         {
             timeout.Token.ThrowIfCancellationRequested();
             if (activeProcess.HasExited)
-                throw new InvalidOperationException(ExtractPythonFailureDetails(loadLog));
+                throw new InvalidOperationException(FormatPythonBridgeExitDetails(activeProcess.ExitCode, GetLoadLogSnapshot()));
             try
             {
                 using var call = activeClient.CheckReadinessAsync(new ReadinessRequest(), cancellationToken: timeout.Token);
@@ -416,7 +465,7 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         {
             timeout.Token.ThrowIfCancellationRequested();
             if (activeProcess.HasExited)
-                throw new InvalidOperationException(ExtractPythonFailureDetails(loadLog));
+                throw new InvalidOperationException(FormatPythonBridgeExitDetails(activeProcess.ExitCode, GetLoadLogSnapshot()));
             try
             {
                 using var call = activeClient.CheckReadinessAsync(new ReadinessRequest(), cancellationToken: timeout.Token);
@@ -439,8 +488,50 @@ public sealed class VllmXpuRuntime : IBackendRuntime
     private void CaptureOutput(object sender, DataReceivedEventArgs args)
     {
         if (!string.IsNullOrWhiteSpace(args.Data))
+            AppendLoadLog(args.Data);
+    }
+
+    private void CaptureProcessExit(object? sender, EventArgs args)
+    {
+        if (sender is not Process exitedProcess)
+            return;
+
+        string? stopReason;
+        lock (sync)
+            expectedProcessExitReasons.Remove(exitedProcess, out stopReason);
+
+        try
+        {
+            exitedProcess.WaitForExit();
+            var exitCode = exitedProcess.ExitCode;
+            var processId = exitedProcess.Id;
+            string output;
             lock (sync)
-                loadLog = string.Concat(loadLog, Environment.NewLine, args.Data);
+                output = GetBoundedTail(loadLog, MaximumProcessExitOutputCharacters);
+            var failureDetails = ExtractPythonFailureDetails(output);
+            if (stopReason is null)
+            {
+                effectiveLogger.LogError(
+                    "vLLM XPU Python bridge exited unexpectedly. ProcessId={ProcessId} ExitCode={ExitCode} PythonOutputTail={PythonOutputTail} FailureDetails={FailureDetails}",
+                    processId,
+                    exitCode,
+                    output,
+                    failureDetails);
+            }
+            else
+            {
+                effectiveLogger.LogInformation(
+                    "vLLM XPU Python bridge stopped. StopReason={StopReason} ProcessId={ProcessId} ExitCode={ExitCode} PythonOutputTail={PythonOutputTail}",
+                    stopReason,
+                    processId,
+                    exitCode,
+                    output);
+            }
+        }
+        catch (InvalidOperationException exception)
+        {
+            effectiveLogger.LogWarning(exception, "Could not read the vLLM XPU Python bridge exit details.");
+        }
     }
 
     private static void ValidateXpuDevices(IReadOnlyList<string> devices)
@@ -529,6 +620,36 @@ public sealed class VllmXpuRuntime : IBackendRuntime
         }
         return message.Trim();
     }
+
+    internal static string FormatPythonBridgeExitDetails(int exitCode, string output)
+    {
+        ArgumentNullException.ThrowIfNull(output);
+        var failureDetails = ExtractPythonFailureDetails(
+            GetBoundedTail(output, MaximumProcessExitOutputCharacters));
+        return string.IsNullOrWhiteSpace(failureDetails)
+            ? $"vLLM XPU Python bridge exited with code {exitCode}."
+            : $"vLLM XPU Python bridge exited with code {exitCode}.{Environment.NewLine}{failureDetails}";
+    }
+
+    private void AppendLoadLog(string message)
+    {
+        lock (sync)
+        {
+            var combined = string.IsNullOrEmpty(loadLog)
+                ? message
+                : string.Concat(loadLog, Environment.NewLine, message);
+            loadLog = GetBoundedTail(combined, MaximumCapturedLogCharacters);
+        }
+    }
+
+    private string GetLoadLogSnapshot()
+    {
+        lock (sync)
+            return loadLog;
+    }
+
+    private static string GetBoundedTail(string value, int maximumCharacters) =>
+        value.Length <= maximumCharacters ? value : value[^maximumCharacters..];
 
     private void ThrowIfDisposed() => ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
 }

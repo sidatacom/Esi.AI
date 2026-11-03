@@ -16,6 +16,7 @@ import time
 import traceback
 import uuid
 
+
 import grpc
 import inference_pb2
 import inference_pb2_grpc
@@ -309,9 +310,14 @@ async def run(options: argparse.Namespace) -> None:
 
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
+
+    # The .NET host owns this process group; Linux parent-death signals also fire when its launcher thread exits.
+    def handle_signal() -> None:
+        stopped.set()
+
     for signum in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(signum, stopped.set)
+            loop.add_signal_handler(signum, handle_signal)
     try:
         await stopped.wait()
     finally:

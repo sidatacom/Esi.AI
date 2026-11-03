@@ -59,16 +59,15 @@ public sealed class PythonState : IBackendTabConfigurationData
     public void Load(PythonInferenceLoadRequest request, string backendVariantId)
     {
         Load(request);
-        if (GetDevices().Any(IsVllmDeviceRoute))
-            return;
-
-        var defaultDevice = backendVariantId.ToLowerInvariant() switch
+        var (defaultDevice, devicePrefix) = backendVariantId.ToLowerInvariant() switch
         {
-            "vllm.cuda12" => "cuda:0",
-            "vllm.xpu" => "xpu:0",
-            _ => null
+            "vllm.cuda12" => ("cuda:0", "cuda:"),
+            "vllm.xpu" => ("xpu:0", "xpu:"),
+            _ => ((string?)null, null)
         };
-        if (defaultDevice is null)
+        if (defaultDevice is null || devicePrefix is null)
+            return;
+        if (GetDevices().Any(device => device.StartsWith(devicePrefix, StringComparison.OrdinalIgnoreCase)))
             return;
 
         Devices.Clear();
@@ -136,7 +135,4 @@ public sealed class PythonState : IBackendTabConfigurationData
                 : 0;
     }
 
-    private static bool IsVllmDeviceRoute(string? route) =>
-        route?.StartsWith("cuda:", StringComparison.OrdinalIgnoreCase) == true ||
-        route?.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase) == true;
 }

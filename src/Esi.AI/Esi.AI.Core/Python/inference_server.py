@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import ctypes
 import gc
 import inspect
 import json
@@ -16,6 +17,23 @@ import sys
 import time
 import traceback
 import uuid
+
+
+def _arm_parent_death_signal() -> int:
+    if sys.platform != "linux":
+        return os.getppid()
+
+    parent_pid = os.getppid()
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), "prctl(PR_SET_PDEATHSIG)")
+    if os.getppid() != parent_pid:
+        os.kill(os.getpid(), signal.SIGTERM)
+    return parent_pid
+
+
+_PARENT_PID = _arm_parent_death_signal()
 
 import grpc
 
@@ -359,9 +377,18 @@ async def run(options: argparse.Namespace) -> None:
 
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
+
+    def handle_signal(signum: int) -> None:
+        if signum == signal.SIGTERM and os.getppid() != _PARENT_PID:
+            loop.remove_signal_handler(signum)
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(os.getpgrp(), signal.SIGKILL)
+            return
+        stopped.set()
+
     for signum in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(signum, stopped.set)
+            loop.add_signal_handler(signum, handle_signal, signum)
     try:
         await stopped.wait()
     finally:
