@@ -57,12 +57,18 @@
                     </div>
 
                     <dl class="inference-log-metrics">
-                        <div><dt>Input estimate (approx.)</dt><dd>@FormatCount(log.EstimatedPrefillTokens) tokens</dd></div>
+                        <div><dt>Input tokens</dt><dd>@FormatInputTokenCount(log)</dd></div>
+                        <div><dt>Prefill duration</dt><dd>@FormatStepDuration(log.PrefillDurationMs)</dd></div>
+                        <div><dt>Prefill rate</dt><dd>@FormatRate(log.PrefillTokensPerSecond, log.PrefillTokenCountIsEstimated)</dd></div>
+                        <div><dt>Time to first token</dt><dd>@FormatStepDuration(log.TimeToFirstTokenMs)</dd></div>
+                        <div><dt>Decode duration</dt><dd>@FormatStepDuration(log.DecodeDurationMs)</dd></div>
+                        <div><dt>Decode rate</dt><dd>@FormatRate(log.DecodeTokensPerSecond)</dd></div>
                         <div><dt>Messages</dt><dd>@log.MessageCount</dd></div>
                         <div><dt>Images</dt><dd>@log.ImageCount</dd></div>
                         <div><dt>Tools</dt><dd>@log.ToolCount</dd></div>
                         <div><dt>Output</dt><dd>@FormatCount(log.OutputTokenCount) tokens</dd></div>
                         <div><dt>Duration</dt><dd>@FormatDuration(log.DurationMilliseconds)</dd></div>
+                        <div><dt>End-to-end rate</dt><dd>@FormatRate(log.EndToEndTokensPerSecond, log.PrefillTokenCountIsEstimated)</dd></div>
                         <div><dt>Streaming</dt><dd>@(log.Streaming ? "Yes" : "No")</dd></div>
                         @if (!string.IsNullOrWhiteSpace(log.FinishReason))
                         {
@@ -208,6 +214,21 @@
     };
 
     private static string FormatCount(int? count) => count?.ToString("N0") ?? "—";
+
+    private static string FormatInputTokenCount(InferenceLog log) =>
+        log.PromptTokenCount is int promptTokenCount
+            ? $"{promptTokenCount:N0} tokens"
+            : log.EstimatedPrefillTokens is int estimate
+                ? $"≈ {estimate:N0} tokens"
+                : "—";
+
+    private static string FormatStepDuration(double? durationMilliseconds) =>
+        durationMilliseconds is double duration ? $"{duration:N1} ms" : "—";
+
+    private static string FormatRate(double? tokensPerSecond, bool estimated = false) =>
+        tokensPerSecond is double rate
+            ? $"{(estimated ? "≈ " : string.Empty)}{rate:N1} tokens/s"
+            : "—";
 
     private static string FormatDuration(long? durationMilliseconds) =>
         durationMilliseconds is { } duration ? $"{duration:N0} ms" : "In progress";

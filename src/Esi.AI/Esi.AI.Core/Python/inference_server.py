@@ -6,34 +6,17 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
-import ctypes
 import gc
 import inspect
 import json
 import os
 from pathlib import Path
-import signal
 import sys
 import time
 import traceback
 import uuid
 
-
-def _arm_parent_death_signal() -> int:
-    if sys.platform != "linux":
-        return os.getppid()
-
-    parent_pid = os.getppid()
-    libc = ctypes.CDLL(None, use_errno=True)
-    if libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0:
-        error = ctypes.get_errno()
-        raise OSError(error, os.strerror(error), "prctl(PR_SET_PDEATHSIG)")
-    if os.getppid() != parent_pid:
-        os.kill(os.getpid(), signal.SIGTERM)
-    return parent_pid
-
-
-_PARENT_PID = _arm_parent_death_signal()
+from esi_process_lifecycle import install_parent_lifetime_handlers
 
 import grpc
 
@@ -361,6 +344,9 @@ def parse_args() -> argparse.Namespace:
 
 
 async def run(options: argparse.Namespace) -> None:
+    stopped = asyncio.Event()
+    install_parent_lifetime_handlers(stopped)
+
     server = grpc.aio.server()
     service = InferenceService()
     inference_pb2_grpc.add_InferenceServicer_to_server(service, server)
@@ -375,20 +361,6 @@ async def run(options: argparse.Namespace) -> None:
             None,
         )
 
-    stopped = asyncio.Event()
-    loop = asyncio.get_running_loop()
-
-    def handle_signal(signum: int) -> None:
-        if signum == signal.SIGTERM and os.getppid() != _PARENT_PID:
-            loop.remove_signal_handler(signum)
-            with contextlib.suppress(ProcessLookupError):
-                os.killpg(os.getpgrp(), signal.SIGKILL)
-            return
-        stopped.set()
-
-    for signum in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(signum, handle_signal, signum)
     try:
         await stopped.wait()
     finally:

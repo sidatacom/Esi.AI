@@ -100,6 +100,11 @@ public sealed class InferenceLogPayloadTests
             {
                 Status = InferenceLogStatus.Succeeded,
                 ResponsePayload = """{"text":"hello back"}""",
+                PromptTokenCount = 128,
+                TimeToFirstTokenMs = 120,
+                PrefillDurationMs = 110,
+                DecodeDurationMs = 80,
+                OutputTokenCount = 16,
                 CompletedAtUtc = DateTimeOffset.UtcNow,
                 DurationMilliseconds = 1
             });
@@ -108,6 +113,11 @@ public sealed class InferenceLogPayloadTests
 
             Assert.AreEqual(created.RequestPayload, entry.RequestPayload);
             Assert.AreEqual("""{"text":"hello back"}""", entry.ResponsePayload);
+            Assert.AreEqual(128, entry.PromptTokenCount);
+            Assert.AreEqual(120d, entry.TimeToFirstTokenMs);
+            Assert.AreEqual(110d, entry.PrefillDurationMs);
+            Assert.AreEqual(80d, entry.DecodeDurationMs);
+            Assert.AreEqual(16, entry.OutputTokenCount);
         }
         finally
         {

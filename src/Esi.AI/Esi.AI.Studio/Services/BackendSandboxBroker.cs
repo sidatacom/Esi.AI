@@ -1,19 +1,26 @@
 using System.Diagnostics;
 using System.Text.Json;
+using Esi.AI.Backend.Abstractions;
 using Esi.AI.Core.ModelLoading;
 using Esi.AI.Models;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 
 namespace Esi.AI.Studio.Services;
 
 /// <summary>Executes backend diagnostics in an operating-system constrained worker process.</summary>
-public sealed class BackendSandboxBroker
+public sealed class BackendSandboxBroker : IHostedService, IDisposable
 {
     private const string WorkerProjectName = "Esi.AI.Backend.Worker.dll";
+    private readonly object lifecycleSync = new();
+    private readonly HashSet<ActiveExecution> activeExecutions = [];
     private readonly BackendSandboxOptions options;
     private readonly ApplicationSettingsService applicationSettings;
     private readonly string workerPath;
     private readonly JsonSerializerOptions jsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly CancellationTokenSource stopping = new();
+    private Task? stopTask;
+    private bool isStopping;
 
     public BackendSandboxBroker(
         IOptions<BackendSandboxOptions> options,
@@ -22,6 +29,39 @@ public sealed class BackendSandboxBroker
         this.options = options.Value;
         this.applicationSettings = applicationSettings;
         workerPath = ResolveWorkerPath(this.options.WorkerPath);
+    }
+
+    /// <inheritdoc />
+    public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+
+    /// <inheritdoc />
+    public Task StopAsync(CancellationToken cancellationToken)
+    {
+        ActiveExecution[] active;
+        TaskCompletionSource stopCompletion;
+        lock (lifecycleSync)
+        {
+            if (stopTask is not null)
+                return stopTask;
+
+            isStopping = true;
+            active = activeExecutions.ToArray();
+            stopCompletion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            stopTask = stopCompletion.Task;
+        }
+
+        _ = FinishStopAsync(active, cancellationToken, stopCompletion);
+        return stopCompletion.Task;
+    }
+
+    /// <inheritdoc />
+    public void Dispose()
+    {
+        lock (lifecycleSync)
+        {
+            if (activeExecutions.Count == 0)
+                stopping.Dispose();
+        }
     }
 
     /// <summary>Runs prerequisite diagnostics without executing backend probes in the Studio process.</summary>
@@ -103,7 +143,31 @@ public sealed class BackendSandboxBroker
 
     private async Task<BackendWorkerResponse> ExecuteAsync(BackendWorkerRequest request, CancellationToken cancellationToken)
     {
-        var settings = await applicationSettings.ReadAsync(cancellationToken).ConfigureAwait(false);
+        var execution = RegisterExecution();
+        if (execution is null)
+            return new(false, Error: "The backend sandbox is shutting down.");
+
+        try
+        {
+            using var linkedCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+                cancellationToken,
+                stopping.Token);
+            return await ExecuteWorkerAsync(request, cancellationToken, linkedCancellation.Token, execution)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            CompleteExecution(execution);
+        }
+    }
+
+    private async Task<BackendWorkerResponse> ExecuteWorkerAsync(
+        BackendWorkerRequest request,
+        CancellationToken callerCancellationToken,
+        CancellationToken operationCancellationToken,
+        ActiveExecution execution)
+    {
+        var settings = await applicationSettings.ReadAsync(operationCancellationToken).ConfigureAwait(false);
         var sandbox = settings.BackendSandbox ?? new BackendSandboxSettings();
 
         if (!OperatingSystem.IsLinux())
@@ -122,37 +186,62 @@ public sealed class BackendSandboxBroker
             StartInfo = CreateStartInfo(systemdRun, request, sandbox),
             EnableRaisingEvents = true
         };
+        var processStarted = false;
 
         try
         {
+            operationCancellationToken.ThrowIfCancellationRequested();
             if (!process.Start())
                 return new(false, Error: "The constrained backend worker could not be started.");
+            processStarted = true;
 
             await process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(request, jsonOptions)).ConfigureAwait(false);
             await process.StandardInput.FlushAsync().ConfigureAwait(false);
-            process.StandardInput.Close();
 
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(operationCancellationToken);
             timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(sandbox.WorkerTimeoutSeconds, 1, 300)));
-            var outputTask = process.StandardOutput.ReadToEndAsync(timeout.Token);
             var errorTask = process.StandardError.ReadToEndAsync(timeout.Token);
-            var output = await outputTask.ConfigureAwait(false);
+            var outputLines = new List<string>();
+            string? responseJson = null;
+            string? outputLine;
+            while ((outputLine = await process.StandardOutput.ReadLineAsync(timeout.Token).ConfigureAwait(false)) is not null)
+            {
+                if (outputLine.TrimStart().StartsWith('{'))
+                {
+                    responseJson = outputLine;
+                    break;
+                }
+
+                outputLines.Add(outputLine);
+            }
+
+            process.StandardInput.Close();
+            var remainingOutput = await process.StandardOutput.ReadToEndAsync(timeout.Token).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(remainingOutput))
+                outputLines.Add(remainingOutput);
+            var output = responseJson ?? string.Join(Environment.NewLine, outputLines);
             var error = await errorTask.ConfigureAwait(false);
             await process.WaitForExitAsync(timeout.Token).ConfigureAwait(false);
             if (string.IsNullOrWhiteSpace(output))
                 return new(false, Error: string.IsNullOrWhiteSpace(error) ? "The backend worker returned no output." : error.Trim());
 
-            if (process.ExitCode != 0 && !output.TrimStart().StartsWith('{'))
+            if (responseJson is null && process.ExitCode != 0)
             {
                 var diagnostics = string.Join(Environment.NewLine,
                     new[] { output.Trim(), error.Trim() }.Where(value => !string.IsNullOrWhiteSpace(value)));
                 return new(false, Error: $"The backend worker exited with code {process.ExitCode} without returning a response.{Environment.NewLine}{diagnostics}");
             }
 
-            return JsonSerializer.Deserialize<BackendWorkerResponse>(output, jsonOptions)
+            return responseJson is null
+                ? new(false, Error: $"The backend worker returned no JSON response.{Environment.NewLine}{output}")
+                : JsonSerializer.Deserialize<BackendWorkerResponse>(responseJson, jsonOptions)
                 ?? new BackendWorkerResponse(false, Error: "The backend worker returned invalid JSON.");
         }
-        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (stopping.IsCancellationRequested)
+        {
+            return new(false, Error: "The backend worker was stopped because the host is shutting down.");
+        }
+        catch (OperationCanceledException) when (!callerCancellationToken.IsCancellationRequested)
         {
             return new(false, Error: $"The backend worker exceeded its {sandbox.WorkerTimeoutSeconds}-second limit.");
         }
@@ -166,17 +255,65 @@ public sealed class BackendSandboxBroker
         }
         finally
         {
-            if (!process.HasExited)
+            if (processStarted)
             {
                 try
                 {
-                    process.Kill(entireProcessTree: true);
-                    await process.WaitForExitAsync().ConfigureAwait(false);
+                    await BackendProcessLifecycle.StopAsync(process).ConfigureAwait(false);
                 }
-                catch (InvalidOperationException)
+                catch (Exception exception)
                 {
+                    execution.StopFailure = exception;
+                    throw;
                 }
             }
+        }
+    }
+
+    private ActiveExecution? RegisterExecution()
+    {
+        lock (lifecycleSync)
+        {
+            if (isStopping)
+                return null;
+
+            var execution = new ActiveExecution();
+            activeExecutions.Add(execution);
+            return execution;
+        }
+    }
+
+    private void CompleteExecution(ActiveExecution execution)
+    {
+        lock (lifecycleSync)
+            activeExecutions.Remove(execution);
+        execution.Completion.TrySetResult();
+    }
+
+    private async Task FinishStopAsync(
+        ActiveExecution[] active,
+        CancellationToken cancellationToken,
+        TaskCompletionSource completion)
+    {
+        try
+        {
+            stopping.Cancel();
+            await Task.WhenAll(active.Select(execution => execution.Completion.Task))
+                .WaitAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+            var failures = active
+                .Select(execution => execution.StopFailure)
+                .OfType<Exception>()
+                .ToArray();
+            if (failures.Length > 0)
+                throw new AggregateException("One or more backend sandbox workers failed to stop.", failures);
+
+            completion.TrySetResult();
+        }
+        catch (Exception exception)
+        {
+            completion.TrySetException(exception);
         }
     }
 
@@ -199,6 +336,7 @@ public sealed class BackendSandboxBroker
             RedirectStandardError = true,
             CreateNoWindow = true
         };
+        startInfo.ArgumentList.Add("--setenv=ESI_PARENT_LIFETIME_PIPE=1");
         ConfigureCuda12Environment(startInfo, request);
         if (string.Equals(request.BackendVariantId, "llama.cuda12", StringComparison.OrdinalIgnoreCase))
         {
@@ -219,6 +357,7 @@ public sealed class BackendSandboxBroker
         startInfo.ArgumentList.Add("--");
         startInfo.ArgumentList.Add(dotnetHost);
         startInfo.ArgumentList.Add(workerPath);
+        BackendProcessLifecycle.ConfigureStartInfo(startInfo);
         return startInfo;
     }
 
@@ -308,6 +447,12 @@ public sealed class BackendSandboxBroker
 
         var worker = candidates.FirstOrDefault(File.Exists);
         return worker ?? throw new FileNotFoundException("The backend worker was not built.", WorkerProjectName);
+    }
+
+    private sealed class ActiveExecution
+    {
+        public TaskCompletionSource Completion { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Exception? StopFailure { get; set; }
     }
 
     private static string? FindExecutable(string command)

@@ -10,12 +10,12 @@ import gc
 import inspect
 import json
 import os
-import signal
 import sys
 import time
 import traceback
 import uuid
 
+from esi_process_lifecycle import install_parent_lifetime_handlers
 
 import grpc
 import inference_pb2
@@ -75,6 +75,11 @@ def _enable_b70_bf16_mtp_draft() -> None:
         patched = patched.replace("import torch\n", "import os\nimport torch\n", 1)
     compile(patched, str(model_path), "exec")
     model_path.write_text(patched)
+
+
+def _redirect_stdout_to_stderr() -> None:
+    os.dup2(sys.stderr.fileno(), sys.stdout.fileno())
+    sys.stdout = sys.stderr
 
 
 class InferenceService(inference_pb2_grpc.InferenceServicer):
@@ -300,6 +305,9 @@ def parse_args() -> argparse.Namespace:
 async def run(options: argparse.Namespace) -> None:
     if options.grpc_port < 1 or options.grpc_port > 65535:
         raise ValueError("The gRPC port must be between 1 and 65535.")
+    stopped = asyncio.Event()
+    install_parent_lifetime_handlers(stopped)
+
     server = grpc.aio.server()
     service = InferenceService()
     inference_pb2_grpc.add_InferenceServicer_to_server(service, server)
@@ -308,16 +316,6 @@ async def run(options: argparse.Namespace) -> None:
         raise RuntimeError(f"Could not bind local gRPC server to {options.host}:{options.grpc_port}.")
     await server.start()
 
-    stopped = asyncio.Event()
-    loop = asyncio.get_running_loop()
-
-    # The .NET host owns this process group; Linux parent-death signals also fire when its launcher thread exits.
-    def handle_signal() -> None:
-        stopped.set()
-
-    for signum in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(signum, handle_signal)
     try:
         await stopped.wait()
     finally:
@@ -327,6 +325,8 @@ async def run(options: argparse.Namespace) -> None:
 
 def main() -> int:
     try:
+        # vLLM multiprocessing flushes stdout before spawning workers; keep it on the captured stderr pipe.
+        _redirect_stdout_to_stderr()
         asyncio.run(run(parse_args()))
     except KeyboardInterrupt:
         return 0

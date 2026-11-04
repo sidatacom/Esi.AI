@@ -28,9 +28,32 @@ internal static class Program
         {
             var request = JsonSerializer.Deserialize<BackendWorkerRequest>(input, JsonOptions)
                 ?? throw new InvalidOperationException("The backend worker request was empty.");
-            var response = await ExecuteAsync(request);
-            await Console.Out.WriteLineAsync(JsonSerializer.Serialize(response, JsonOptions));
-            return response.Succeeded ? 0 : 1;
+            using var parentLifetimeCancellation = new CancellationTokenSource();
+            var parentShutdownTask = BackendProcessLifecycle.WaitForParentShutdownAsync(parentLifetimeCancellation.Token);
+            try
+            {
+                var executionTask = Task.Run(() => ExecuteAsync(request));
+                if (await Task.WhenAny(executionTask, parentShutdownTask).ConfigureAwait(false) == parentShutdownTask)
+                {
+                    await parentShutdownTask.ConfigureAwait(false);
+                    return 0;
+                }
+
+                var response = await executionTask.ConfigureAwait(false);
+                await Console.Out.WriteLineAsync(JsonSerializer.Serialize(response, JsonOptions)).ConfigureAwait(false);
+                return response.Succeeded ? 0 : 1;
+            }
+            finally
+            {
+                parentLifetimeCancellation.Cancel();
+                try
+                {
+                    await parentShutdownTask.ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (parentLifetimeCancellation.IsCancellationRequested)
+                {
+                }
+            }
         }
         catch (Exception exception)
         {
@@ -80,7 +103,7 @@ internal static class Program
         }
     }
 
-    private static async Task<BackendWorkerResponse> DiscoverDevicesAsync(
+    internal static async Task<BackendWorkerResponse> DiscoverDevicesAsync(
         BackendWorkerRequest request,
         string applicationDirectory,
         TimeSpan timeout)
@@ -95,25 +118,26 @@ internal static class Program
                 .ToArray());
         }
 
-        if (variantId is "vllm.cuda12" or "vllm.xpu")
+        if (variantId == "vllm.cuda12")
         {
-            if (variantId == "vllm.cuda12")
-                return new BackendWorkerResponse(true, Devices: (await NvidiaDeviceDiscovery.DiscoverAsync(timeout).ConfigureAwait(false))
-                    .Select(device => new BackendAcceleratorDevice(
-                        device.DeviceId,
-                        device.DeviceCaption ?? device.DeviceId,
-                        device.Vendor ?? string.Empty,
-                        device.Driver ?? string.Empty))
-                    .ToArray());
-
-            const string devicePrefix = "xpu:";
-            using IBackendRuntime nativeRuntime = new LlamaSyclRuntime(applicationDirectory);
-            return new BackendWorkerResponse(true, Devices: nativeRuntime.DiscoverDevices()
-                .Select((device, index) => new BackendAcceleratorDevice(
-                    $"{devicePrefix}{index}",
+            return new BackendWorkerResponse(true, Devices: (await NvidiaDeviceDiscovery.DiscoverAsync(timeout).ConfigureAwait(false))
+                .Select(device => new BackendAcceleratorDevice(
+                    device.DeviceId,
                     device.DeviceCaption ?? device.DeviceId,
                     device.Vendor ?? string.Empty,
                     device.Driver ?? string.Empty))
+                .ToArray());
+        }
+
+        if (variantId == "vllm.xpu")
+        {
+            var devices = await new PythonBackendProvisioner().DiscoverDevicesAsync(
+                request.PythonExecutable,
+                applicationDirectory,
+                timeout,
+                devices: ["xpu:0"]).ConfigureAwait(false);
+            return new BackendWorkerResponse(true, Devices: devices
+                .Where(device => device.Route.StartsWith("xpu:", StringComparison.OrdinalIgnoreCase))
                 .ToArray());
         }
 

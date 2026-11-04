@@ -12,6 +12,14 @@ namespace Esi.AI.Backend.Vllm.Cuda12.Tests;
 public sealed class VllmCuda12BackendTests
 {
     [TestMethod]
+    public void PythonLifecycleHelper_WhenCuda12BridgeIsDeployed_IsAvailableBesideBridge()
+    {
+        var helperPath = Path.Combine(AppContext.BaseDirectory, "Python", "vllm-cuda12", "esi_process_lifecycle.py");
+
+        Assert.IsTrue(File.Exists(helperPath), $"The shared Python lifecycle helper was not deployed to '{helperPath}'.");
+    }
+
+    [TestMethod]
     public void Descriptor_WhenModuleIsCreated_UsesStableCuda12Identity()
     {
         var descriptor = new VllmCuda12BackendModule().Descriptor;

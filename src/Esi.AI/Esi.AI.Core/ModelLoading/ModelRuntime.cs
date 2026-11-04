@@ -323,14 +323,19 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
             return;
 
         var failures = new List<Exception>();
-        await StopRuntimeAsync("LLama", () => llama.StopAsync(cancellationToken), failures).ConfigureAwait(false);
-        await StopRuntimeAsync("OpenVINO", () => ExecuteOpenVinoOperationAsync(() => openVino.UnloadAsync(cancellationToken)), failures).ConfigureAwait(false);
-        await StopRuntimeAsync("Python", () => python.StopAsync(cancellationToken), failures).ConfigureAwait(false);
+        var stopOperations = new List<(string Runtime, Func<Task> Stop)>
+        {
+            ("LLama", () => llama.StopAsync(cancellationToken)),
+            ("OpenVINO", () => ExecuteOpenVinoOperationAsync(() => openVino.UnloadAsync(cancellationToken))),
+            ("Python", () => python.StopAsync(cancellationToken))
+        };
         if (backendRuntimeResolver is not null)
         {
             foreach (var runtime in backendRuntimeResolver.Runtimes)
-                await StopRuntimeAsync(runtime.Descriptor.Id, () => runtime.StopAsync(cancellationToken), failures).ConfigureAwait(false);
+                stopOperations.Add((runtime.Descriptor.Id, () => runtime.StopAsync(cancellationToken)));
         }
+        await Task.WhenAll(stopOperations.Select(operation =>
+            StopRuntimeAsync(operation.Runtime, operation.Stop, failures))).ConfigureAwait(false);
         await PublishStatusAsync(
             "LoadedModel_Delete",
             () => statusPublisher.LoadedModel_DeleteAsync(LoadedModel_Read(), cancellationToken)).ConfigureAwait(false);
@@ -606,7 +611,8 @@ public sealed class ModelRuntime : IHostedService, IModelRuntimeShutdown, IDispo
         }
         catch (Exception exception)
         {
-            failures.Add(exception);
+            lock (failures)
+                failures.Add(exception);
             logger.LogError(exception, "Failed to stop the {Runtime} model runtime.", runtime);
         }
     }

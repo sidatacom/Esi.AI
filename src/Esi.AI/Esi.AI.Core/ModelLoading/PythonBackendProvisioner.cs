@@ -185,6 +185,34 @@ public sealed class PythonBackendProvisioner
         return new(backend, definition.DisplayName, checks.Where(check => !check.IsOptional).All(check => check.IsAvailable), checks, null, availableDevices);
     }
 
+    /// <summary>Discovers devices reported by the selected vLLM Python environment.</summary>
+    public async Task<IReadOnlyList<BackendAcceleratorDevice>> DiscoverDevicesAsync(
+        string requestedPythonExecutable,
+        string applicationDirectory,
+        TimeSpan timeout,
+        CancellationToken cancellationToken = default,
+        IReadOnlyList<string>? devices = null)
+    {
+        if (string.IsNullOrWhiteSpace(requestedPythonExecutable))
+            throw new ArgumentException("A Python executable is required.", nameof(requestedPythonExecutable));
+        if (string.IsNullOrWhiteSpace(applicationDirectory))
+            throw new ArgumentException("The application directory is required.", nameof(applicationDirectory));
+        if (timeout <= TimeSpan.Zero)
+            throw new ArgumentOutOfRangeException(nameof(timeout), "The device discovery timeout must be positive.");
+
+        var definition = GetDefinition(ConfigurationBackend.Vllm, devices);
+        var configuredExecutable = ResolveConfiguredExecutable(ConfigurationBackend.Vllm, requestedPythonExecutable);
+        var executable = IsAutomaticExecutable(configuredExecutable)
+            ? GetEnvironmentPythonPath(ResolveEnvironmentPath(definition.EnvironmentName))
+            : configuredExecutable;
+        var pythonAvailable = File.Exists(executable) ||
+            (!Path.IsPathFullyQualified(executable) && await CanStartProcessAsync(executable, timeout, cancellationToken).ConfigureAwait(false));
+        if (!pythonAvailable)
+            return [];
+
+        return await DiscoverDevicesAsync(executable, timeout, cancellationToken).ConfigureAwait(false);
+    }
+
     /// <summary>Returns the default isolated environment path for a backend.</summary>
     public static string GetDefaultEnvironmentPath(ConfigurationBackend backend, IReadOnlyList<string>? devices = null)
     {

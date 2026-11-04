@@ -110,6 +110,7 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
                     FileName = python.Executable,
                     WorkingDirectory = configuration.WorkingDirectory ?? applicationDirectory,
                     UseShellExecute = false,
+                    RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     CreateNoWindow = true,
@@ -122,6 +123,7 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
                 startInfo.ArgumentList.Add(configuration.Port.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 startInfo.Environment["CUDA_VISIBLE_DEVICES"] = string.Join(",", deviceRoutes.Select(device => device[(device.IndexOf(':') + 1)..]));
 
+                BackendProcessLifecycle.ConfigureStartInfo(startInfo);
                 var newProcess = new Process { StartInfo = startInfo, EnableRaisingEvents = true };
                 newProcess.OutputDataReceived += CaptureOutput;
                 newProcess.ErrorDataReceived += CaptureOutput;
@@ -388,9 +390,7 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
             return;
         try
         {
-            if (!activeProcess.HasExited)
-                activeProcess.Kill(entireProcessTree: true);
-            await activeProcess.WaitForExitAsync(CancellationToken.None).ConfigureAwait(false);
+            await BackendProcessLifecycle.StopAsync(activeProcess).ConfigureAwait(false);
         }
         finally
         {

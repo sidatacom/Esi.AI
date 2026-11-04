@@ -28,6 +28,12 @@
           CopyToPublishDirectory="PreserveNewest"
           Pack="true"
           PackagePath="contentFiles/any/any/Python/%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="../Esi.AI.Core/Python/esi_process_lifecycle.py"
+          Link="Python/esi_process_lifecycle.py"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Pack="true"
+          PackagePath="contentFiles/any/any/Python/esi_process_lifecycle.py" />
   </ItemGroup>
 
   <ItemGroup>

@@ -45,4 +45,16 @@ public sealed class InferenceLogEntity
     public string? RequestPayload { get; set; }
 
     public string? ResponsePayload { get; set; }
+
+    /// <summary>Gets or sets the actual prompt-token count reported by the backend.</summary>
+    public int? PromptTokenCount { get; set; }
+
+    /// <summary>Gets or sets the time to the first generated token in milliseconds.</summary>
+    public double? TimeToFirstTokenMs { get; set; }
+
+    /// <summary>Gets or sets the prompt-prefill duration in milliseconds.</summary>
+    public double? PrefillDurationMs { get; set; }
+
+    /// <summary>Gets or sets the generated-token decode duration in milliseconds.</summary>
+    public double? DecodeDurationMs { get; set; }
 }

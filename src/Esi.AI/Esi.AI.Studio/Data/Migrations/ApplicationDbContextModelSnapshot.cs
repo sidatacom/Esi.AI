@@ -340,6 +340,18 @@ namespace Esi.AI.Studio.Migrations
                     b.Property<string>("ResponsePayload")
                         .HasColumnType("TEXT");
 
+                    b.Property<int?>("PromptTokenCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<double?>("TimeToFirstTokenMs")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("PrefillDurationMs")
+                        .HasColumnType("REAL");
+
+                    b.Property<double?>("DecodeDurationMs")
+                        .HasColumnType("REAL");
+
                     b.Property<DateTimeOffset>("StartedAtUtc")
                         .HasColumnType("TEXT");
 

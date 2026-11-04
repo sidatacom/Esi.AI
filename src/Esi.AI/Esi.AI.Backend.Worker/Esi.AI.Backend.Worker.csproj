@@ -18,4 +18,8 @@
     <ProjectReference Include="../Esi.AI.Backend.Vllm.Cuda12/Esi.AI.Backend.Vllm.Cuda12.csproj" />
     <ProjectReference Include="../Esi.AI.Backend.Vllm.Xpu/Esi.AI.Backend.Vllm.Xpu.csproj" />
   </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Esi.AI.Backend.Vllm.Xpu.Tests" />
+  </ItemGroup>
 </Project>

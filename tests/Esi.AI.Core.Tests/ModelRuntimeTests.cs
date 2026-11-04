@@ -10,6 +10,14 @@ namespace Esi.AI.Core.Tests;
 public sealed class ModelRuntimeTests
 {
     [TestMethod]
+    public void PythonLifecycleHelper_WhenCoreBridgeIsDeployed_IsAvailableBesideBridge()
+    {
+        var helperPath = Path.Combine(AppContext.BaseDirectory, "Python", "esi_process_lifecycle.py");
+
+        Assert.IsTrue(File.Exists(helperPath), $"The shared Python lifecycle helper was not deployed to '{helperPath}'.");
+    }
+
+    [TestMethod]
     public async Task StopAsync_WhenNoModelsAreLoaded_LeavesAllRuntimesUnloaded()
     {
         using var llama = new LlamaModelLoader();
@@ -38,6 +46,40 @@ public sealed class ModelRuntimeTests
 
         Assert.AreEqual(1, exception.InnerExceptions.Count);
         CollectionAssert.AreEqual(new[] { "delete" }, publisher.Events);
+    }
+
+    [TestMethod]
+    public async Task StopAsync_WhenMultipleBackendRuntimesAreRegistered_StopsThemConcurrently()
+    {
+        var firstRuntime = new RecordingBackendRuntime("vllm.xpu", ConfigurationBackend.Vllm)
+        {
+            WaitForStopRelease = true
+        };
+        var secondRuntime = new RecordingBackendRuntime("llama.vulkan")
+        {
+            WaitForStopRelease = true
+        };
+        using var modelRuntime = new ModelRuntime(
+            new LlamaModelLoader(),
+            new OpenVinoModelLoader(),
+            new PythonInferenceServer(),
+            backendRuntimeResolver: new BackendRuntimeResolver([firstRuntime, secondRuntime]));
+
+        var stopTask = modelRuntime.StopAsync();
+        try
+        {
+            await Task.WhenAll(firstRuntime.StopStarted.Task, secondRuntime.StopStarted.Task)
+                .WaitAsync(TimeSpan.FromSeconds(5));
+        }
+        finally
+        {
+            firstRuntime.ReleaseStop.TrySetResult(true);
+            secondRuntime.ReleaseStop.TrySetResult(true);
+            await stopTask;
+        }
+
+        Assert.AreEqual(1, firstRuntime.StopCount);
+        Assert.AreEqual(1, secondRuntime.StopCount);
     }
 
     [TestMethod]
@@ -331,6 +373,8 @@ public sealed class ModelRuntimeTests
 
         public bool WaitForLoadRelease { get; init; }
 
+        public bool WaitForStopRelease { get; init; }
+
         public int LoadCount { get; private set; }
 
         public int StopCount { get; private set; }
@@ -338,6 +382,10 @@ public sealed class ModelRuntimeTests
         public TaskCompletionSource<bool> LoadStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public TaskCompletionSource<bool> ReleaseLoad { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> StopStarted { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public TaskCompletionSource<bool> ReleaseStop { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
         public ModelLoadStatus GetStatus()
         {
@@ -364,13 +412,15 @@ public sealed class ModelRuntimeTests
             return Task.CompletedTask;
         }
 
-        public Task StopAsync(CancellationToken cancellationToken = default)
+        public async Task StopAsync(CancellationToken cancellationToken = default)
         {
             StopCount++;
+            StopStarted.TrySetResult(true);
+            if (WaitForStopRelease)
+                await ReleaseStop.Task.WaitAsync(cancellationToken);
             modelPath = null;
-            return ThrowOnStop
-                ? Task.FromException(new InvalidOperationException("stop failed"))
-                : Task.CompletedTask;
+            if (ThrowOnStop)
+                throw new InvalidOperationException("stop failed");
         }
 
         public Task<GenerationResult> GenerateAsync(OpenAiBackendChatRequest request, Func<string, Task>? onToken = null, CancellationToken cancellationToken = default)

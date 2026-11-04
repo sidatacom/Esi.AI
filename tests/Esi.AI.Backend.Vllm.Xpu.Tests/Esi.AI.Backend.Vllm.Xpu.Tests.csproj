@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../src/Esi.AI/Esi.AI.Backend.Worker/Esi.AI.Backend.Worker.csproj" />
     <ProjectReference Include="../../src/Esi.AI/Esi.AI.Backend.Vllm.Xpu/Esi.AI.Backend.Vllm.Xpu.csproj" />
   </ItemGroup>
 

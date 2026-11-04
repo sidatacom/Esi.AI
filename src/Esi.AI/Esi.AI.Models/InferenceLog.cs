@@ -22,7 +22,7 @@ public enum InferenceLogStatus
     Interrupted
 }
 
-/// <summary>Stores payload-free metadata for one inference request.</summary>
+/// <summary>Stores diagnostic metadata and readable payloads for one inference request.</summary>
 /// <param name="Id">The persistent entry identifier.</param>
 /// <param name="InferenceId">The identifier used to correlate the request across server logs.</param>
 /// <param name="StartedAtUtc">The time the request entered inference processing.</param>
@@ -44,6 +44,10 @@ public enum InferenceLogStatus
 /// <param name="ErrorMessage">A bounded exception message for a failed request, when available.</param>
 /// <param name="RequestPayload">The readable request payload, when available.</param>
 /// <param name="ResponsePayload">The readable response payload, when available.</param>
+/// <param name="PromptTokenCount">The actual prompt-token count reported by the backend, when available.</param>
+/// <param name="TimeToFirstTokenMs">The time to the first generated token in milliseconds, when available.</param>
+/// <param name="PrefillDurationMs">The prompt-prefill duration in milliseconds, when available.</param>
+/// <param name="DecodeDurationMs">The generated-token decode duration in milliseconds, when available.</param>
 public sealed record InferenceLog(
     Guid Id,
     string InferenceId,
@@ -65,4 +69,51 @@ public sealed record InferenceLog(
     string? ErrorType = null,
     string? ErrorMessage = null,
     string? RequestPayload = null,
-    string? ResponsePayload = null);
+    string? ResponsePayload = null,
+    int? PromptTokenCount = null,
+    double? TimeToFirstTokenMs = null,
+    double? PrefillDurationMs = null,
+    double? DecodeDurationMs = null)
+{
+    /// <summary>Gets a value that indicates whether the prompt-token count is estimated.</summary>
+    /// <value><see langword="true" /> if the actual prompt-token count is unavailable and an estimate exists; otherwise, <see langword="false" />.</value>
+    public bool PrefillTokenCountIsEstimated =>
+        PromptTokenCount is null && EstimatedPrefillTokens is not null;
+
+    /// <summary>Gets the prompt-prefill throughput in tokens per second.</summary>
+    /// <value>A measured or estimated prompt-prefill rate, or <see langword="null" /> when the token count or duration is unavailable.</value>
+    public double? PrefillTokensPerSecond =>
+        CalculateTokensPerSecond(PromptTokenCount ?? EstimatedPrefillTokens, PrefillDurationMs);
+
+    /// <summary>Gets the generated-token decode throughput in tokens per second.</summary>
+    /// <value>A decode rate, or <see langword="null" /> when the output-token count or duration is unavailable.</value>
+    public double? DecodeTokensPerSecond =>
+        CalculateTokensPerSecond(OutputTokenCount, DecodeDurationMs);
+
+    /// <summary>Gets the total prompt and generated-token throughput across the request.</summary>
+    /// <value>An end-to-end rate, or <see langword="null" /> when token counts or total duration are unavailable.</value>
+    public double? EndToEndTokensPerSecond
+    {
+        get
+        {
+            var promptTokenCount = PromptTokenCount ?? EstimatedPrefillTokens;
+            if (promptTokenCount is not int promptTokens || OutputTokenCount is not int outputTokens)
+                return null;
+
+            return CalculateTokensPerSecond(
+                (long)promptTokens + outputTokens,
+                DurationMilliseconds);
+        }
+    }
+
+    private static double? CalculateTokensPerSecond(long? tokenCount, double? durationMilliseconds)
+    {
+        if (tokenCount is not long tokens || tokens < 0 ||
+            durationMilliseconds is not double duration || duration <= 0 ||
+            !double.IsFinite(duration))
+            return null;
+
+        var tokensPerSecond = tokens * 1_000d / duration;
+        return double.IsFinite(tokensPerSecond) ? tokensPerSecond : null;
+    }
+}

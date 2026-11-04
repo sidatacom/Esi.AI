@@ -1,0 +1,13 @@
+{
+  "typeCheckingMode": "off",
+  "executionEnvironments": [
+    {
+      "root": "src/Esi.AI/Esi.AI.Backend.Vllm.Cuda12/Python",
+      "extraPaths": ["src/Esi.AI/Esi.AI.Core/Python"]
+    },
+    {
+      "root": "src/Esi.AI/Esi.AI.Backend.Vllm.Xpu/Python",
+      "extraPaths": ["src/Esi.AI/Esi.AI.Core/Python"]
+    }
+  ]
+}

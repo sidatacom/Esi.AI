@@ -255,6 +255,10 @@ public sealed class OpenAiCompatibleBackendMiddleware(
                 {
                     Status = InferenceLogStatus.Succeeded,
                     OutputTokenCount = result.TokenCount,
+                    PromptTokenCount = result.PromptTokenCount,
+                    TimeToFirstTokenMs = result.TimeToFirstTokenMs,
+                    PrefillDurationMs = result.PrefillDurationMs,
+                    DecodeDurationMs = result.DecodeDurationMs,
                     FinishReason = result.FinishReason,
                     ResponsePayload = InferenceLogPayloadFormatter.FormatResponse(result),
                     CompletedAtUtc = DateTimeOffset.UtcNow,

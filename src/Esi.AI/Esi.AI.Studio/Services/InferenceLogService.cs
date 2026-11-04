@@ -31,7 +31,7 @@ internal sealed class SignalRInferenceLogPublisher(IHubContext<DataHub> hubConte
         hubContext.Clients.All.SendAsync("InferenceLog_Delete", log, cancellationToken);
 }
 
-/// <summary>Persists payload-free inference metadata and publishes collection changes.</summary>
+/// <summary>Persists inference metadata and readable payloads, then publishes collection changes.</summary>
 public sealed class InferenceLogService(
     IDbContextFactory<ApplicationDbContext> dbContextFactory,
     IInferenceLogPublisher publisher)
@@ -123,7 +123,9 @@ public sealed class InferenceLogService(
             if (previous with { EstimatedPrefillTokens = log.EstimatedPrefillTokens, OutputTokenCount = log.OutputTokenCount,
                     FinishReason = log.FinishReason, Status = log.Status, CompletedAtUtc = log.CompletedAtUtc,
                     DurationMilliseconds = log.DurationMilliseconds, ErrorType = log.ErrorType, ErrorMessage = log.ErrorMessage,
-                    ResponsePayload = log.ResponsePayload } != log)
+                    ResponsePayload = log.ResponsePayload, PromptTokenCount = log.PromptTokenCount,
+                    TimeToFirstTokenMs = log.TimeToFirstTokenMs, PrefillDurationMs = log.PrefillDurationMs,
+                    DecodeDurationMs = log.DecodeDurationMs } != log)
                 throw new InvalidOperationException("Inference request metadata cannot be changed after creation.");
             if (!Enum.IsDefined(log.Status))
                 throw new ArgumentOutOfRangeException(nameof(log), "The inference log status is invalid.");
@@ -139,6 +141,10 @@ public sealed class InferenceLogService(
             entity.ErrorType = log.ErrorType;
             entity.ErrorMessage = LimitErrorMessage(log.ErrorMessage);
             entity.ResponsePayload = log.ResponsePayload;
+            entity.PromptTokenCount = log.PromptTokenCount;
+            entity.TimeToFirstTokenMs = log.TimeToFirstTokenMs;
+            entity.PrefillDurationMs = log.PrefillDurationMs;
+            entity.DecodeDurationMs = log.DecodeDurationMs;
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             updated = ToContract(entity);
             deleted = log.Status == InferenceLogStatus.Running
@@ -227,9 +233,14 @@ public sealed class InferenceLogService(
             string.IsNullOrWhiteSpace(log.Model))
             throw new ArgumentException("Inference identifier, path, backend, and model are required.", nameof(log));
         if (log.MessageCount < 0 || log.ImageCount < 0 || log.ToolCount < 0 ||
-            log.EstimatedPrefillTokens < 0 || log.OutputTokenCount < 0 || log.DurationMilliseconds < 0)
-            throw new ArgumentOutOfRangeException(nameof(log), "Inference log counts and duration must be non-negative.");
+            log.EstimatedPrefillTokens < 0 || log.PromptTokenCount < 0 || log.OutputTokenCount < 0 ||
+            log.DurationMilliseconds < 0 || IsInvalidDuration(log.TimeToFirstTokenMs) ||
+            IsInvalidDuration(log.PrefillDurationMs) || IsInvalidDuration(log.DecodeDurationMs))
+            throw new ArgumentOutOfRangeException(nameof(log), "Inference log counts and durations must be non-negative and finite.");
     }
+
+    private static bool IsInvalidDuration(double? durationMilliseconds) =>
+        durationMilliseconds is double duration && (!double.IsFinite(duration) || duration < 0);
 
     private static InferenceLogEntity ToEntity(InferenceLog log) =>
         new()
@@ -254,7 +265,11 @@ public sealed class InferenceLogService(
             ErrorType = log.ErrorType,
             ErrorMessage = LimitErrorMessage(log.ErrorMessage),
             RequestPayload = log.RequestPayload,
-            ResponsePayload = log.ResponsePayload
+            ResponsePayload = log.ResponsePayload,
+            PromptTokenCount = log.PromptTokenCount,
+            TimeToFirstTokenMs = log.TimeToFirstTokenMs,
+            PrefillDurationMs = log.PrefillDurationMs,
+            DecodeDurationMs = log.DecodeDurationMs
         };
 
     private static InferenceLog ToContract(InferenceLogEntity entity) =>
@@ -279,7 +294,11 @@ public sealed class InferenceLogService(
             entity.ErrorType,
             entity.ErrorMessage,
             entity.RequestPayload,
-            entity.ResponsePayload);
+            entity.ResponsePayload,
+            entity.PromptTokenCount,
+            entity.TimeToFirstTokenMs,
+            entity.PrefillDurationMs,
+            entity.DecodeDurationMs);
 
     private static string? LimitErrorMessage(string? message) =>
         message is { Length: > MaximumErrorMessageLength } ? message[..MaximumErrorMessageLength] : message;

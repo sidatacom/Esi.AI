@@ -113,6 +113,7 @@ public sealed class PythonInferenceServer : IDisposable
                 FileName = pythonExecutable,
                 WorkingDirectory = request.WorkingDirectory ?? AppContext.BaseDirectory,
                 UseShellExecute = false,
+                RedirectStandardInput = true,
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
                 CreateNoWindow = true

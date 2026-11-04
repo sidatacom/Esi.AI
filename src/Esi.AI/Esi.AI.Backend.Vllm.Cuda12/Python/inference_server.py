@@ -10,11 +10,12 @@ import gc
 import inspect
 import json
 import os
-import signal
 import sys
 import time
 import traceback
 import uuid
+
+from esi_process_lifecycle import install_parent_lifetime_handlers
 
 import grpc
 
@@ -280,6 +281,9 @@ def parse_args() -> argparse.Namespace:
 async def run(options: argparse.Namespace) -> None:
     if options.grpc_port < 1 or options.grpc_port > 65535:
         raise ValueError("The gRPC port must be between 1 and 65535.")
+    stopped = asyncio.Event()
+    install_parent_lifetime_handlers(stopped)
+
     server = grpc.aio.server()
     service = InferenceService()
     inference_pb2_grpc.add_InferenceServicer_to_server(service, server)
@@ -287,11 +291,6 @@ async def run(options: argparse.Namespace) -> None:
         raise RuntimeError(f"Could not bind the local gRPC server to {options.host}:{options.grpc_port}.")
     await server.start()
 
-    stopped = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for signum in (signal.SIGINT, signal.SIGTERM):
-        with contextlib.suppress(NotImplementedError):
-            loop.add_signal_handler(signum, stopped.set)
     try:
         await stopped.wait()
     finally:

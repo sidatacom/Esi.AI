@@ -147,6 +147,7 @@ public sealed class VllmXpuRuntime(ILogger<VllmXpuRuntime>? logger = null) : IBa
                     FileName = preparation.PythonExecutable,
                     WorkingDirectory = configuration.WorkingDirectory ?? AppContext.BaseDirectory,
                     UseShellExecute = false,
+                    RedirectStandardInput = true,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     CreateNoWindow = true

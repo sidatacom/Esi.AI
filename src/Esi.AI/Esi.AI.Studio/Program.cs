@@ -131,6 +131,7 @@ builder.Services.AddSingleton<OpenVinoDiagnosticsService>();
 builder.Services.AddSingleton<OpenVinoDriverInstaller>();
 builder.Services.Configure<BackendSandboxOptions>(builder.Configuration.GetSection("BackendSandbox"));
 builder.Services.AddSingleton<BackendSandboxBroker>();
+builder.Services.AddHostedService<BackendSandboxBroker>(services => services.GetRequiredService<BackendSandboxBroker>());
 builder.Services.AddSingleton<IBackendDiagnosticsService, BackendDiagnosticsService>();
 builder.Services.AddSingleton<BackendRuntimeCatalogService>();
 builder.Services.AddSingleton<IBackendRuntimeCatalog>(services => services.GetRequiredService<BackendRuntimeCatalogService>());
