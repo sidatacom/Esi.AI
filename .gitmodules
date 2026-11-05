@@ -18,6 +18,12 @@
 [submodule "origins/sidatacom/elsa-studio"]
 	path = origins/sidatacom/elsa-studio
 	url = https://github.com/elsa-workflows/elsa-studio.git
+[submodule "origins/sidatacom/elsa-core"]
+	path = origins/sidatacom/elsa-core
+	url = https://github.com/elsa-workflows/elsa-core.git
+[submodule "src/vscode/vscode-esi-ai-studio/origins/omniroute"]
+	path = src/vscode/vscode-esi-ai-studio/origins/omniroute
+	url = https://github.com/cheaper-inference/OmniRoute.git
 [submodule "origins/sidatacom/fluentui-blazor"]
 	path = origins/sidatacom/fluentui-blazor
 	url = https://github.com/sidatacom/fluentui-blazor.git
