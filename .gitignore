@@ -11,6 +11,9 @@
 *.nupkg
 packages/
 
+# Esi.AI Studio local database and SQLite sidecars
+src/Esi.AI/Esi.AI.Studio/Data/app.db*
+
 # Visual Studio user state
 .vs/
 *.user
