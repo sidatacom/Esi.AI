@@ -109,12 +109,25 @@ public sealed class VllmCuda12BackendTests
             "owner/model",
             null,
             [],
-            [new ChatMessage("user", "Weather?", ToolCallId: "call-1")],
+            [
+                new ChatMessage("user", "Weather?", ToolCallId: "call-1"),
+                new ChatMessage(
+                    "assistant",
+                    string.Empty,
+                    ToolCalls:
+                    [
+                        new OpenAiToolCall(
+                            "call_1",
+                            "function",
+                            new OpenAiToolCallFunction("lookup", "{\"query\":\"weather\"}"))
+                    ])
+            ],
             null,
             new ChatGenerationOptions(
                 MaxTokens: 64,
                 Seed: 42,
                 StopSequences: ["END"],
+                ReasoningEffort: "none",
                 Tools: [new OpenAiToolDefinition("function", new OpenAiToolFunction("weather", "Look up weather", parameters.RootElement))],
                 ToolChoice: toolChoice.RootElement,
                 StructuredOutputJsonSchema: """{"type":"object"}"""),
@@ -126,10 +139,14 @@ public sealed class VllmCuda12BackendTests
         Assert.AreEqual("request-id", mapped.RequestId);
         Assert.AreEqual("user", mapped.Messages[0].Role);
         Assert.AreEqual("call-1", mapped.Messages[0].ToolCallId);
+        using var toolCalls = JsonDocument.Parse(mapped.Messages[1].ToolCallsJson);
+        Assert.AreEqual("lookup", toolCalls.RootElement[0].GetProperty("function").GetProperty("name").GetString());
+        Assert.AreEqual("{\"query\":\"weather\"}", toolCalls.RootElement[0].GetProperty("function").GetProperty("arguments").GetString());
         Assert.AreEqual("weather", mapped.Tools[0].Name);
         Assert.AreEqual("\"auto\"", mapped.ToolChoiceJson);
         Assert.AreEqual(42, mapped.Seed);
         Assert.AreEqual("END", mapped.StopSequences[0]);
         Assert.AreEqual("""{"type":"object"}""", mapped.StructuredOutputJsonSchema);
+        Assert.AreEqual("none", mapped.ReasoningEffort);
     }
 }

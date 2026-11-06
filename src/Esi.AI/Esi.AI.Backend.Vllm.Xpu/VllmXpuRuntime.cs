@@ -37,6 +37,7 @@ public sealed class VllmXpuRuntime(ILogger<VllmXpuRuntime>? logger = null) : IBa
     private string loadLog = string.Empty;
     private IReadOnlyList<string> devices = [];
     private uint contextSize;
+    private bool supportsImageInput;
     private bool isLoading;
     private int disposed;
 
@@ -90,7 +91,15 @@ public sealed class VllmXpuRuntime(ILogger<VllmXpuRuntime>? logger = null) : IBa
     }
 
     /// <inheritdoc />
-    public bool SupportsImageInput(string? modelPath) => false;
+    public bool SupportsImageInput(string? requestedModelPath)
+    {
+        lock (sync)
+        {
+            return supportsImageInput &&
+                modelPath is not null &&
+                string.Equals(modelPath, requestedModelPath, StringComparison.OrdinalIgnoreCase);
+        }
+    }
 
     /// <inheritdoc />
     public async Task LoadAsync(BackendLoadRequest request, CancellationToken cancellationToken = default)
@@ -175,7 +184,9 @@ public sealed class VllmXpuRuntime(ILogger<VllmXpuRuntime>? logger = null) : IBa
                     configuration.Device,
                     configuration.Port);
 
-                var newChannel = GrpcChannel.ForAddress($"http://127.0.0.1:{configuration.Port}");
+                var newChannel = GrpcChannel.ForAddress(
+                    $"http://127.0.0.1:{configuration.Port}",
+                    new GrpcChannelOptions { MaxSendMessageSize = 64 * 1024 * 1024 });
                 var newClient = new Inference.InferenceClient(newChannel);
                 lock (sync)
                 {
@@ -191,6 +202,8 @@ public sealed class VllmXpuRuntime(ILogger<VllmXpuRuntime>? logger = null) : IBa
                     cancellationToken: startupCancellation.Token);
                 var response = await loadCall.ResponseAsync.ConfigureAwait(false);
                 var loadedModelId = GetLoadedModelId(response);
+                lock (sync)
+                    supportsImageInput = response.SupportsImageInput;
                 await WaitUntilModelReadyAsync(
                     newClient,
                     newProcess,
@@ -286,6 +299,7 @@ public sealed class VllmXpuRuntime(ILogger<VllmXpuRuntime>? logger = null) : IBa
             isLoading = false;
             devices = [];
             contextSize = 0;
+            supportsImageInput = false;
         }
 
         foreach (var session in activeSessions)

@@ -120,11 +120,12 @@ public sealed class OpenAiCompatibleControllerTests
         Assert.AreEqual(2, response.Data.Count);
         Assert.AreEqual("/models/qwen3.gguf", response.Data[0].Id);
         Assert.AreEqual("Qwen 3", response.Data[0].Name);
+        Assert.IsTrue(response.Data[0].Capabilities!.ToolCalling);
         Assert.AreEqual("SmolLM", response.Data[1].Name);
     }
 
     [TestMethod]
-    public async Task ListModels_WhenStoredCapabilitiesExist_PreservesThem()
+    public async Task ListModels_WhenStoredImageCapabilityExistsButModelIsUnloaded_PreservesImageInput()
     {
         var directory = Directory.CreateTempSubdirectory("esi-ai-capabilities-").FullName;
         var modelPath = Path.Combine(directory, "vision.gguf");
@@ -154,7 +155,7 @@ public sealed class OpenAiCompatibleControllerTests
             new ModelRuntime());
         await dataService.LocalModel_UpdateAsync(new ModelCompatibilityUpdate(
             modelPath,
-            Capabilities: new ModelCapabilities(ToolCalling: true, ImageInput: true, Thinking: true)));
+            Capabilities: new ModelCapabilities(ToolCalling: false, ImageInput: true, Thinking: true)));
         var configuration = await dataService.ModelConfiguration_CreateAsync(new ModelConfiguration(
             Guid.Empty,
             "Vision CPU",
@@ -175,14 +176,14 @@ public sealed class OpenAiCompatibleControllerTests
         var response = ((OkObjectResult)result).Value as OpenAiModelListResponse;
 
         Assert.IsNotNull(response);
-    var model = response.Data.Single();
-    Assert.AreEqual(configuration.Id.ToString("D"), model.Id);
-    Assert.AreEqual(configuration.Name, model.Name);
-    Assert.IsTrue(model.AutoLaunch);
-    Assert.AreEqual(4_096u, model.ContextLength);
-    Assert.IsTrue(model.Capabilities!.ToolCalling);
-    Assert.IsTrue(model.Capabilities.ImageInput);
-    Assert.IsTrue(model.Capabilities.Thinking);
+        var model = response.Data.Single();
+        Assert.AreEqual(configuration.Id.ToString("D"), model.Id);
+        Assert.AreEqual(configuration.Name, model.Name);
+        Assert.IsTrue(model.AutoLaunch);
+        Assert.AreEqual(4_096u, model.ContextLength);
+        Assert.IsTrue(model.Capabilities!.ToolCalling);
+        Assert.IsTrue(model.Capabilities.ImageInput);
+        Assert.IsTrue(model.Capabilities.Thinking);
 
         Directory.Delete(directory, recursive: true);
     }

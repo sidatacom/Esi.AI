@@ -48,6 +48,7 @@ public enum InferenceLogStatus
 /// <param name="TimeToFirstTokenMs">The time to the first generated token in milliseconds, when available.</param>
 /// <param name="PrefillDurationMs">The prompt-prefill duration in milliseconds, when available.</param>
 /// <param name="DecodeDurationMs">The generated-token decode duration in milliseconds, when available.</param>
+/// <param name="GenerationTokensPerSecond">The backend-reported generated-token rate, when available.</param>
 public sealed record InferenceLog(
     Guid Id,
     string InferenceId,
@@ -73,7 +74,8 @@ public sealed record InferenceLog(
     int? PromptTokenCount = null,
     double? TimeToFirstTokenMs = null,
     double? PrefillDurationMs = null,
-    double? DecodeDurationMs = null)
+    double? DecodeDurationMs = null,
+    double? GenerationTokensPerSecond = null)
 {
     /// <summary>Gets a value that indicates whether the prompt-token count is estimated.</summary>
     /// <value><see langword="true" /> if the actual prompt-token count is unavailable and an estimate exists; otherwise, <see langword="false" />.</value>
@@ -86,9 +88,9 @@ public sealed record InferenceLog(
         CalculateTokensPerSecond(PromptTokenCount ?? EstimatedPrefillTokens, PrefillDurationMs);
 
     /// <summary>Gets the generated-token decode throughput in tokens per second.</summary>
-    /// <value>A decode rate, or <see langword="null" /> when the output-token count or duration is unavailable.</value>
+    /// <value>The backend-reported decode rate, or a rate calculated from the output-token count and decode duration.</value>
     public double? DecodeTokensPerSecond =>
-        CalculateTokensPerSecond(OutputTokenCount, DecodeDurationMs);
+        GenerationTokensPerSecond ?? CalculateTokensPerSecond(OutputTokenCount, DecodeDurationMs);
 
     /// <summary>Gets the total prompt and generated-token throughput across the request.</summary>
     /// <value>An end-to-end rate, or <see langword="null" /> when token counts or total duration are unavailable.</value>

@@ -47,6 +47,19 @@ message ModelOperationResponse {
   bool succeeded = 1;
   string model_id = 2;
   string error = 3;
+  bool supports_image_input = 4;
+}
+
+message ChatImage {
+  string media_type = 1;
+  bytes data = 2;
+}
+
+message ChatMessageContentPart {
+  oneof part {
+    string text = 1;
+    uint32 image_index = 2;
+  }
 }
 
 message ChatMessage {
@@ -54,6 +67,8 @@ message ChatMessage {
   string content = 2;
   string tool_calls_json = 3;
   string tool_call_id = 4;
+  repeated ChatImage images = 5;
+  repeated ChatMessageContentPart content_parts = 6;
 }
 
 message ToolDefinition {
@@ -79,6 +94,7 @@ message GenerateRequest {
   string tool_choice_json = 13;
   // Empty disables structured output; otherwise this contains a JSON Schema.
   string structured_output_json_schema = 14;
+  string reasoning_effort = 15;
 }
 
 message GenerateResponse {

@@ -125,7 +125,8 @@ public sealed class InferenceLogService(
                     DurationMilliseconds = log.DurationMilliseconds, ErrorType = log.ErrorType, ErrorMessage = log.ErrorMessage,
                     ResponsePayload = log.ResponsePayload, PromptTokenCount = log.PromptTokenCount,
                     TimeToFirstTokenMs = log.TimeToFirstTokenMs, PrefillDurationMs = log.PrefillDurationMs,
-                    DecodeDurationMs = log.DecodeDurationMs } != log)
+                    DecodeDurationMs = log.DecodeDurationMs,
+                    GenerationTokensPerSecond = log.GenerationTokensPerSecond } != log)
                 throw new InvalidOperationException("Inference request metadata cannot be changed after creation.");
             if (!Enum.IsDefined(log.Status))
                 throw new ArgumentOutOfRangeException(nameof(log), "The inference log status is invalid.");
@@ -145,6 +146,7 @@ public sealed class InferenceLogService(
             entity.TimeToFirstTokenMs = log.TimeToFirstTokenMs;
             entity.PrefillDurationMs = log.PrefillDurationMs;
             entity.DecodeDurationMs = log.DecodeDurationMs;
+            entity.GenerationTokensPerSecond = log.GenerationTokensPerSecond;
             await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
             updated = ToContract(entity);
             deleted = log.Status == InferenceLogStatus.Running
@@ -270,12 +272,16 @@ public sealed class InferenceLogService(
         if (log.MessageCount < 0 || log.ImageCount < 0 || log.ToolCount < 0 ||
             log.EstimatedPrefillTokens < 0 || log.PromptTokenCount < 0 || log.OutputTokenCount < 0 ||
             log.DurationMilliseconds < 0 || IsInvalidDuration(log.TimeToFirstTokenMs) ||
-            IsInvalidDuration(log.PrefillDurationMs) || IsInvalidDuration(log.DecodeDurationMs))
-            throw new ArgumentOutOfRangeException(nameof(log), "Inference log counts and durations must be non-negative and finite.");
+            IsInvalidDuration(log.PrefillDurationMs) || IsInvalidDuration(log.DecodeDurationMs) ||
+            IsInvalidRate(log.GenerationTokensPerSecond))
+            throw new ArgumentOutOfRangeException(nameof(log), "Inference log counts, durations, and rates must be non-negative and finite.");
     }
 
     private static bool IsInvalidDuration(double? durationMilliseconds) =>
         durationMilliseconds is double duration && (!double.IsFinite(duration) || duration < 0);
+
+    private static bool IsInvalidRate(double? tokensPerSecond) =>
+        tokensPerSecond is double rate && (!double.IsFinite(rate) || rate < 0);
 
     private static InferenceLogEntity ToEntity(InferenceLog log) =>
         new()
@@ -304,7 +310,8 @@ public sealed class InferenceLogService(
             PromptTokenCount = log.PromptTokenCount,
             TimeToFirstTokenMs = log.TimeToFirstTokenMs,
             PrefillDurationMs = log.PrefillDurationMs,
-            DecodeDurationMs = log.DecodeDurationMs
+            DecodeDurationMs = log.DecodeDurationMs,
+            GenerationTokensPerSecond = log.GenerationTokensPerSecond
         };
 
     private static InferenceLog ToContract(InferenceLogEntity entity) =>
@@ -333,7 +340,8 @@ public sealed class InferenceLogService(
             entity.PromptTokenCount,
             entity.TimeToFirstTokenMs,
             entity.PrefillDurationMs,
-            entity.DecodeDurationMs);
+            entity.DecodeDurationMs,
+            entity.GenerationTokensPerSecond);
 
     private static string? LimitErrorMessage(string? message) =>
         message is { Length: > MaximumErrorMessageLength } ? message[..MaximumErrorMessageLength] : message;

@@ -55,14 +55,15 @@ public sealed class InferenceLogPayloadTests
     }
 
     [TestMethod]
-    public void FormatResponse_IncludesGeneratedTextAndCompletionMetadata()
+    public void FormatResponse_IncludesGeneratedTextRateAndCompletionMetadata()
     {
-        var result = new GenerationResult("Generated answer", 3, TimeSpan.Zero, 0, FinishReason: "stop");
+        var result = new GenerationResult("Generated answer", 3, TimeSpan.Zero, 58.4, FinishReason: "stop");
 
         var payload = InferenceLogPayloadFormatter.FormatResponse(result);
         using var document = JsonDocument.Parse(payload);
 
         Assert.AreEqual("Generated answer", document.RootElement.GetProperty("text").GetString());
+        Assert.AreEqual(58.4, document.RootElement.GetProperty("tokensPerSecond").GetDouble(), 0.001);
         Assert.AreEqual("stop", document.RootElement.GetProperty("finishReason").GetString());
         Assert.AreEqual(3, document.RootElement.GetProperty("tokenCount").GetInt32());
     }
@@ -104,6 +105,7 @@ public sealed class InferenceLogPayloadTests
                 TimeToFirstTokenMs = 120,
                 PrefillDurationMs = 110,
                 DecodeDurationMs = 80,
+                GenerationTokensPerSecond = 58.4,
                 OutputTokenCount = 16,
                 CompletedAtUtc = DateTimeOffset.UtcNow,
                 DurationMilliseconds = 1
@@ -113,6 +115,7 @@ public sealed class InferenceLogPayloadTests
 
             Assert.AreEqual(created.RequestPayload, entry.RequestPayload);
             Assert.AreEqual("""{"text":"hello back"}""", entry.ResponsePayload);
+            Assert.AreEqual(58.4, entry.GenerationTokensPerSecond.GetValueOrDefault(), 0.001);
             Assert.AreEqual(128, entry.PromptTokenCount);
             Assert.AreEqual(120d, entry.TimeToFirstTokenMs);
             Assert.AreEqual(110d, entry.PrefillDurationMs);

@@ -25,6 +25,7 @@ public sealed class PythonInferenceServer : IDisposable
     private Inference.InferenceClient? client;
     private string? modelPath;
     private string? modelId;
+    private bool supportsImageInput;
     private ConfigurationBackend backend;
     private string loadLog = string.Empty;
     private bool isLoading;
@@ -56,8 +57,19 @@ public sealed class PythonInferenceServer : IDisposable
                 isRunning,
                 isRunning ? [new LoadedModelStatus(modelPath!, backend, GetBackendName(backend), 0, 0, 0, [], null, loadLog)] : []);
         }
+
     }
 
+    /// <summary>Returns whether the loaded model accepts image input.</summary>
+    public bool SupportsImageInput(string? requestedModelPath)
+        {
+            lock (sync)
+            {
+                return supportsImageInput &&
+                    modelPath is not null &&
+                    string.Equals(modelPath, requestedModelPath, StringComparison.OrdinalIgnoreCase);
+            }
+        }
     /// <summary>Starts the local Python gRPC bridge and loads the configured model.</summary>
     public async Task LoadAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default)
     {
@@ -91,6 +103,7 @@ public sealed class PythonInferenceServer : IDisposable
             isLoading = true;
             modelPath = request.ModelPath;
             modelId = null;
+            supportsImageInput = false;
             backend = request.Backend;
             loadLog = $"Preparing {GetBackendName(request.Backend)} runtime...";
         }
@@ -149,7 +162,9 @@ public sealed class PythonInferenceServer : IDisposable
             newProcess.BeginOutputReadLine();
             newProcess.BeginErrorReadLine();
 
-            var newChannel = GrpcChannel.ForAddress($"http://127.0.0.1:{request.Port}");
+            var newChannel = GrpcChannel.ForAddress(
+                $"http://127.0.0.1:{request.Port}",
+                new GrpcChannelOptions { MaxSendMessageSize = 64 * 1024 * 1024 });
             var newClient = new Inference.InferenceClient(newChannel);
             lock (sync)
             {
@@ -168,7 +183,11 @@ public sealed class PythonInferenceServer : IDisposable
             if (!response.Succeeded)
                 throw new InvalidOperationException(response.Error);
 
-            modelId = response.ModelId;
+            lock (sync)
+            {
+                modelId = response.ModelId;
+                supportsImageInput = response.SupportsImageInput;
+            }
             await WaitUntilModelReadyAsync(newClient, newProcess, startupTimeout, startupCancellation.Token).ConfigureAwait(false);
         }
         catch (Exception exception)
@@ -220,6 +239,7 @@ public sealed class PythonInferenceServer : IDisposable
             client = null;
             modelPath = null;
             modelId = null;
+            supportsImageInput = false;
             isLoading = false;
         }
 

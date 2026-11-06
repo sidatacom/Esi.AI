@@ -53,8 +53,14 @@ public sealed class OpenAiCompatibleController(
                     (string.IsNullOrWhiteSpace(configuration.BackendVariantId) ||
                      string.Equals(model.BackendVariantId, configuration.BackendVariantId, StringComparison.OrdinalIgnoreCase)));
                 var capabilities = localModel?.Capabilities ?? new ModelCapabilities();
-                if (loadedModel is not null && modelRuntime.SupportsImageInput(loadedModel.Runtime, loadedModel.ModelPath))
-                    capabilities = capabilities with { ImageInput = true };
+                capabilities = capabilities with
+                {
+                    ToolCalling = true,
+                    ImageInput = loadedModel is not null
+                        ? modelRuntime.SupportsImageInput(loadedModel.Runtime, loadedModel.ModelPath)
+                        : (configuration.Backend is ConfigurationBackend.Llama or ConfigurationBackend.OpenVino or ConfigurationBackend.Vllm) &&
+                            capabilities.ImageInput
+                };
 
                 return new OpenAiModel(
                     configuration.Id.ToString("D"),
@@ -92,10 +98,13 @@ public sealed class OpenAiCompatibleController(
             var capabilities = storedCapabilities ?? new ModelCapabilities();
             var loadedModel = loadedModels.FirstOrDefault(loaded =>
                 string.Equals(modelPath, loaded.ModelPath, StringComparison.OrdinalIgnoreCase));
-            return loadedModel is not null &&
-                modelRuntime.SupportsImageInput(loadedModel.Runtime, loadedModel.ModelPath)
-                ? capabilities with { ImageInput = true }
-                : capabilities;
+            return capabilities with
+            {
+                ToolCalling = true,
+                ImageInput = loadedModel is not null
+                    ? modelRuntime.SupportsImageInput(loadedModel.Runtime, loadedModel.ModelPath)
+                    : capabilities.ImageInput
+            };
         }
         var apiModels = dataService is null
             ? (await localModelCatalog.ScanLocalModelsAsync(cancellationToken).ConfigureAwait(false))
@@ -117,7 +126,7 @@ public sealed class OpenAiCompatibleController(
                 created,
                 "esi-ai",
                 Path.GetFileName(loadedModel.ModelPath),
-                new ModelCapabilities(ImageInput: modelRuntime.SupportsImageInput(loadedModel.Runtime, loadedModel.ModelPath)),
+                new ModelCapabilities(ToolCalling: true, ImageInput: modelRuntime.SupportsImageInput(loadedModel.Runtime, loadedModel.ModelPath)),
                 Loaded: true)
             {
                 ContextLength = loadedModel.ContextSize is > 0 ? loadedModel.ContextSize : null

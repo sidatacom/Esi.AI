@@ -259,6 +259,9 @@ public sealed class OpenAiCompatibleBackendMiddleware(
                     TimeToFirstTokenMs = result.TimeToFirstTokenMs,
                     PrefillDurationMs = result.PrefillDurationMs,
                     DecodeDurationMs = result.DecodeDurationMs,
+                    GenerationTokensPerSecond = double.IsFinite(result.TokensPerSecond) && result.TokensPerSecond > 0
+                        ? result.TokensPerSecond
+                        : null,
                     FinishReason = result.FinishReason,
                     ResponsePayload = InferenceLogPayloadFormatter.FormatResponse(result),
                     CompletedAtUtc = DateTimeOffset.UtcNow,
@@ -334,16 +337,24 @@ public sealed class OpenAiCompatibleBackendMiddleware(
     {
         try
         {
+            GenerationResult result;
             if (!string.IsNullOrWhiteSpace(request.BackendVariantId) && modelRuntime.HasBackendRuntime(request.BackendVariantId))
-                return await modelRuntime.GenerateBackendAsync(request, onDelta, cancellationToken).ConfigureAwait(false);
-
-            return request.Backend switch
+                result = await modelRuntime.GenerateBackendAsync(request, onDelta, cancellationToken).ConfigureAwait(false);
+            else
             {
-                "OpenVINO" => await GenerateOpenVinoAsync(request, onDelta, cancellationToken).ConfigureAwait(false),
-                "vLLM" => await GeneratePythonAsync(request, onDelta, cancellationToken).ConfigureAwait(false),
-                "Vulkan" or "VULKAN" or "CUDA" or "SYCL" or "CPU" => await GenerateLlamaAsync(request, onDelta, cancellationToken).ConfigureAwait(false),
-                _ => throw new ArgumentException($"Unsupported backend '{request.Backend}'.", nameof(request))
-            };
+                result = request.Backend switch
+                {
+                    "OpenVINO" => await GenerateOpenVinoAsync(request, onDelta, cancellationToken).ConfigureAwait(false),
+                    "vLLM" => await GeneratePythonAsync(request, onDelta, cancellationToken).ConfigureAwait(false),
+                    "Vulkan" or "VULKAN" or "CUDA" or "SYCL" or "CPU" => await GenerateLlamaAsync(request, onDelta, cancellationToken).ConfigureAwait(false),
+                    _ => throw new ArgumentException($"Unsupported backend '{request.Backend}'.", nameof(request))
+                };
+            }
+
+            return !string.Equals(request.Backend, "OpenVINO", StringComparison.OrdinalIgnoreCase) ||
+                   request.Tools is { Count: > 0 }
+                ? ParseToolResult(result)
+                : result;
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -415,7 +426,7 @@ public sealed class OpenAiCompatibleBackendMiddleware(
         CancellationToken cancellationToken)
     {
         using var session = modelRuntime.CreateLlamaChatSession("You are a helpful assistant.", request.ModelPath);
-        return ParseToolResult(await session.GenerateWithStatsAsync(request.Messages, onDelta, request.Options, cancellationToken).ConfigureAwait(false));
+        return await session.GenerateWithStatsAsync(request.Messages, onDelta, request.Options, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<GenerationResult> GeneratePythonAsync(
@@ -424,11 +435,16 @@ public sealed class OpenAiCompatibleBackendMiddleware(
         CancellationToken cancellationToken)
     {
         using var session = modelRuntime.CreatePythonChatSession();
-        return ParseToolResult(await session.GenerateWithStatsAsync(request.Messages, onDelta, request.Options, cancellationToken).ConfigureAwait(false));
+        return await session.GenerateWithStatsAsync(request.Messages, onDelta, request.Options, cancellationToken).ConfigureAwait(false);
     }
 
     private static GenerationResult ParseToolResult(GenerationResult result)
     {
+        if (result.ToolCalls is { Count: > 0 })
+            return result.FinishReason == "tool_calls"
+                ? result
+                : result with { FinishReason = "tool_calls" };
+
         var parsed = OpenAiToolCallParser.Parse(result.Text);
         return parsed.ToolCalls.Count == 0
             ? result
@@ -439,8 +455,6 @@ public sealed class OpenAiCompatibleBackendMiddleware(
     {
         if (!messages.Any(message => message.Images is { Count: > 0 }))
             return;
-        if (status.Backend is not ("OpenVINO" or "Vulkan" or "VULKAN" or "CUDA" or "SYCL" or "CPU"))
-            throw new ArgumentException($"Image input is not supported by the '{status.Backend}' backend.", nameof(messages));
         if (!modelRuntime.SupportsImageInput(status.Backend!, status.ModelPath))
             throw new ArgumentException("The loaded model does not support image input.", nameof(messages));
     }

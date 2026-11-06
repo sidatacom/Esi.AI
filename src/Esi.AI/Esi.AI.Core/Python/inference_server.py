@@ -17,6 +17,13 @@ import traceback
 import uuid
 
 from esi_process_lifecycle import install_parent_lifetime_handlers
+from esi_multimodal_utils import (
+    build_multimodal_chat_messages,
+    close_images,
+    get_engine_model_config,
+    supports_image_input,
+)
+from esi_reasoning_utils import add_reasoning_effort_template_options
 
 import grpc
 
@@ -112,6 +119,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
     def __init__(self) -> None:
         self._engine = None
         self._model_id = ""
+        self._supports_image_input = False
         self._speculative_decoding_enabled = False
         self._load_lock = asyncio.Lock()
 
@@ -171,11 +179,14 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 if request.enable_bf16_mtp_draft:
                     os.environ["B70_MTP_BF16_DRAFT"] = "1"
                 self._engine = AsyncLLMEngine.from_engine_args(AsyncEngineArgs(**engine_options))
+                model_config = await get_engine_model_config(self._engine)
+                self._supports_image_input = supports_image_input(model_config)
                 self._model_id = request.model_path
                 self._speculative_decoding_enabled = bool(request.speculative_config_json)
                 return inference_pb2.ModelOperationResponse(
                     succeeded=True,
                     model_id=self._model_id,
+                    supports_image_input=self._supports_image_input,
                 )
             except ImportError as exception:
                 return inference_pb2.ModelOperationResponse(
@@ -199,20 +210,16 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
         if self._engine is None:
             yield inference_pb2.GenerateResponse(error="No vLLM model is loaded.")
             return
+        if not self._supports_image_input and any(message.images for message in request.messages):
+            yield inference_pb2.GenerateResponse(error="The loaded vLLM model does not support image input.")
+            return
 
         request_id = request.request_id or str(uuid.uuid4())
         decode_started = None
         previous_text = ""
+        images_to_close = []
         try:
-            tool_choice = self._tool_choice(request.tool_choice_json)
-            if request.tools and tool_choice != "none":
-                yield inference_pb2.GenerateResponse(
-                    error=(
-                        "Structured tool calls are not supported by this vLLM integration."
-                    )
-                )
-                return
-            prompt = await self._format_prompt(request)
+            prompt, images_to_close = await self._format_prompt(request)
             from vllm import SamplingParams
 
             sampling_params = SamplingParams(
@@ -264,51 +271,62 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
             yield inference_pb2.GenerateResponse(
                 error=f"vLLM generation failed: {exception}\n{traceback.format_exc()}"
             )
+        finally:
+            close_images(images_to_close)
 
-    async def _format_prompt(self, request) -> str:
+    async def _format_prompt(self, request):
         tokenizer = self._engine.get_tokenizer()
         if inspect.isawaitable(tokenizer):
             tokenizer = await tokenizer
-        chat_messages = self._chat_messages(request.messages)
+        chat_messages, image_inputs, images_to_close = build_multimodal_chat_messages(request.messages)
         tools = self._tool_definitions(request.tools)
         tool_choice = self._tool_choice(request.tool_choice_json)
         if tool_choice == "none":
             tools = []
-        if hasattr(tokenizer, "apply_chat_template"):
-            template_options = {
-                "tokenize": False,
-                "add_generation_prompt": True,
-            }
-            if tools:
-                template_options["tools"] = tools
-            if tool_choice is not None and tool_choice != "none":
-                template_options["tool_choice"] = tool_choice
-            return tokenizer.apply_chat_template(chat_messages, **template_options)
-        return "\n".join(f"{message['role']}: {message['content']}" for message in chat_messages) + "\nassistant:"
-
-    @staticmethod
-    def _chat_messages(messages):
-        result = []
-        for message in messages:
-            item = {"role": message.role, "content": message.content}
-            if message.tool_calls_json:
-                item["tool_calls"] = json.loads(message.tool_calls_json)
-            if message.tool_call_id:
-                item["tool_call_id"] = message.tool_call_id
-            result.append(item)
-        return result
+        completed = False
+        try:
+            if hasattr(tokenizer, "apply_chat_template"):
+                template_options = {
+                    "tokenize": False,
+                    "add_generation_prompt": True,
+                }
+                if tools:
+                    template_options["tools"] = tools
+                if tool_choice is not None and tool_choice != "none":
+                    template_options["tool_choice"] = tool_choice
+                add_reasoning_effort_template_options(
+                    template_options, tokenizer, request.reasoning_effort
+                )
+                prompt = tokenizer.apply_chat_template(chat_messages, **template_options)
+                if image_inputs:
+                    prompt = {
+                        "prompt": prompt,
+                        "multi_modal_data": {
+                            "image": image_inputs[0] if len(image_inputs) == 1 else image_inputs
+                        },
+                    }
+            else:
+                if image_inputs:
+                    raise ValueError("The loaded vLLM model has no chat template for image input.")
+                prompt = "\n".join(
+                    f"{message['role']}: {message['content']}" for message in chat_messages
+                ) + "\nassistant:"
+            completed = True
+            return prompt, images_to_close
+        finally:
+            if not completed:
+                close_images(images_to_close)
 
     @staticmethod
     def _tool_definitions(tools):
-        result = []
-        for tool in tools:
-            function = {
+        return [
+            {
                 "name": tool.name,
                 "description": tool.description,
                 "parameters": json.loads(tool.parameters_json or "{}"),
             }
-            result.append({"type": tool.type or "function", "function": function})
-        return result
+            for tool in tools
+        ]
 
     @staticmethod
     def _tool_choice(value):
@@ -323,6 +341,7 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
 
     async def _unload_model(self) -> None:
         self._speculative_decoding_enabled = False
+        self._supports_image_input = False
         if self._engine is not None:
             engine = self._engine
             self._engine = None
@@ -347,7 +366,7 @@ async def run(options: argparse.Namespace) -> None:
     stopped = asyncio.Event()
     install_parent_lifetime_handlers(stopped)
 
-    server = grpc.aio.server()
+    server = grpc.aio.server(options=[("grpc.max_receive_message_length", 64 * 1024 * 1024)])
     service = InferenceService()
     inference_pb2_grpc.add_InferenceServicer_to_server(service, server)
     bound_port = server.add_insecure_port(f"{options.host}:{options.grpc_port}")

@@ -148,6 +148,69 @@ public sealed class PythonInferenceGrpcTests
     }
 
     [TestMethod]
+    public void ToGrpcRequest_AssistantToolCall_SerializesOpenAiFieldNames()
+    {
+        var request = PythonInferenceGrpcMapper.ToGrpcRequest(
+            [
+                new ModelChatMessage(
+                    "assistant",
+                    string.Empty,
+                    ToolCalls:
+                    [
+                        new OpenAiToolCall(
+                            "call_1",
+                            "function",
+                            new OpenAiToolCallFunction("lookup", "{\"query\":\"weather\"}"))
+                    ])
+            ],
+            "local-model");
+
+        using var toolCalls = JsonDocument.Parse(request.Messages[0].ToolCallsJson);
+        var toolCall = toolCalls.RootElement[0];
+        Assert.AreEqual("call_1", toolCall.GetProperty("id").GetString());
+        Assert.AreEqual("function", toolCall.GetProperty("type").GetString());
+        Assert.AreEqual("lookup", toolCall.GetProperty("function").GetProperty("name").GetString());
+        Assert.AreEqual("{\"query\":\"weather\"}", toolCall.GetProperty("function").GetProperty("arguments").GetString());
+    }
+
+    [TestMethod]
+    public void ToGrpcRequest_ImageContent_PreservesImageBytesAndOrderedParts()
+    {
+        var imageData = new byte[] { 137, 80, 78, 71 };
+        var request = PythonInferenceGrpcMapper.ToGrpcRequest(
+            [
+                new ModelChatMessage(
+                    "user",
+                    "Describe this.",
+                    Images: [new Esi.AI.Models.ChatImage("image/png", imageData)],
+                    ContentParts:
+                    [
+                        new Esi.AI.Models.ChatMessageContentPart(Text: "Describe this: "),
+                        new Esi.AI.Models.ChatMessageContentPart(ImageIndex: 0)
+                    ])
+            ],
+            "local-model",
+            new ChatGenerationOptions());
+
+        var message = request.Messages.Single();
+        Assert.AreEqual("image/png", message.Images.Single().MediaType);
+        CollectionAssert.AreEqual(imageData, message.Images.Single().Data.ToByteArray());
+        Assert.AreEqual("Describe this: ", message.ContentParts[0].Text);
+        Assert.AreEqual((uint)0, message.ContentParts[1].ImageIndex);
+    }
+
+    [TestMethod]
+    public void ToGrpcRequest_MapsReasoningEffort()
+    {
+        var request = PythonInferenceGrpcMapper.ToGrpcRequest(
+            [new ModelChatMessage("user", "Hello.")],
+            "local-model",
+            new ChatGenerationOptions(ReasoningEffort: "none"));
+
+        Assert.AreEqual("none", request.ReasoningEffort);
+    }
+
+    [TestMethod]
     public async Task GenerateWithStatsAsync_FakeStream_ReturnsMappedTextAndStatistics()
     {
         GenerateRequest? capturedRequest = null;

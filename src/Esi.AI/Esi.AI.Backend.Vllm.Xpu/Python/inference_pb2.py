@@ -57,12 +57,26 @@ operation_response = file_descriptor.message_type.add(name="ModelOperationRespon
 _field(operation_response, "succeeded", 1, 8)
 _field(operation_response, "model_id", 2, 9)
 _field(operation_response, "error", 3, 9)
+_field(operation_response, "supports_image_input", 4, 8)
+
+chat_image = file_descriptor.message_type.add(name="ChatImage")
+_field(chat_image, "media_type", 1, 9)
+_field(chat_image, "data", 2, 12)
+
+content_part = file_descriptor.message_type.add(name="ChatMessageContentPart")
+content_part.oneof_decl.add(name="part")
+_field(content_part, "text", 1, 9)
+content_part.field[-1].oneof_index = 0
+_field(content_part, "image_index", 2, 13)
+content_part.field[-1].oneof_index = 0
 
 chat_message = file_descriptor.message_type.add(name="ChatMessage")
 _field(chat_message, "role", 1, 9)
 _field(chat_message, "content", 2, 9)
 _field(chat_message, "tool_calls_json", 3, 9)
 _field(chat_message, "tool_call_id", 4, 9)
+_field(chat_message, "images", 5, 11, 3, ".esi.ai.inference.ChatImage")
+_field(chat_message, "content_parts", 6, 11, 3, ".esi.ai.inference.ChatMessageContentPart")
 
 tool_definition = file_descriptor.message_type.add(name="ToolDefinition")
 _field(tool_definition, "type", 1, 9)
@@ -85,6 +99,7 @@ _field(generate_request, "stop_sequences", 11, 9, 3)
 _field(generate_request, "tools", 12, 11, 3, ".esi.ai.inference.ToolDefinition")
 _field(generate_request, "tool_choice_json", 13, 9)
 _field(generate_request, "structured_output_json_schema", 14, 9)
+_field(generate_request, "reasoning_effort", 15, 9)
 
 generate_response = file_descriptor.message_type.add(name="GenerateResponse")
 _field(generate_response, "delta", 1, 9)
@@ -114,6 +129,8 @@ ReadinessResponse = message_factory.GetMessageClass(DESCRIPTOR.message_types_by_
 LoadModelRequest = message_factory.GetMessageClass(DESCRIPTOR.message_types_by_name["LoadModelRequest"])
 UnloadModelRequest = message_factory.GetMessageClass(DESCRIPTOR.message_types_by_name["UnloadModelRequest"])
 ModelOperationResponse = message_factory.GetMessageClass(DESCRIPTOR.message_types_by_name["ModelOperationResponse"])
+ChatImage = message_factory.GetMessageClass(DESCRIPTOR.message_types_by_name["ChatImage"])
+ChatMessageContentPart = message_factory.GetMessageClass(DESCRIPTOR.message_types_by_name["ChatMessageContentPart"])
 ChatMessage = message_factory.GetMessageClass(DESCRIPTOR.message_types_by_name["ChatMessage"])
 ToolDefinition = message_factory.GetMessageClass(DESCRIPTOR.message_types_by_name["ToolDefinition"])
 GenerateRequest = message_factory.GetMessageClass(DESCRIPTOR.message_types_by_name["GenerateRequest"])

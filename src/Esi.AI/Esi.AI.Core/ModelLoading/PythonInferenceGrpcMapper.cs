@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Google.Protobuf;
 using Esi.AI.Core.Grpc;
 using Esi.AI.Models;
 using ModelChatMessage = Esi.AI.Models.ChatMessage;
@@ -58,7 +59,8 @@ internal static class PythonInferenceGrpcMapper
             MinP = generationOptions.MinP,
             RepetitionPenalty = generationOptions.RepetitionPenalty,
             Seed = generationOptions.Seed ?? 0,
-            StructuredOutputJsonSchema = generationOptions.StructuredOutputJsonSchema ?? string.Empty
+            StructuredOutputJsonSchema = generationOptions.StructuredOutputJsonSchema ?? string.Empty,
+            ReasoningEffort = generationOptions.ReasoningEffort ?? string.Empty
         };
         request.StopSequences.AddRange(generationOptions.StopSequences ?? []);
         if (generationOptions.Tools is { Count: > 0 })
@@ -73,13 +75,45 @@ internal static class PythonInferenceGrpcMapper
         }
         if (generationOptions.ToolChoice is JsonElement toolChoice && toolChoice.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null)
             request.ToolChoiceJson = toolChoice.GetRawText();
-        request.Messages.AddRange(messages.Select(message => new Esi.AI.Core.Grpc.ChatMessage
+        request.Messages.AddRange(messages.Select(message =>
         {
-            Role = message.Role,
-            Content = message.Content,
-            ToolCallsJson = message.ToolCalls is { Count: > 0 } ? JsonSerializer.Serialize(message.ToolCalls) : string.Empty,
-            ToolCallId = message.ToolCallId ?? string.Empty
+            var grpcMessage = new Esi.AI.Core.Grpc.ChatMessage
+            {
+                Role = message.Role,
+                Content = message.Content,
+                ToolCallsJson = message.ToolCalls is { Count: > 0 } ? JsonSerializer.Serialize(message.ToolCalls) : string.Empty,
+                ToolCallId = message.ToolCallId ?? string.Empty
+            };
+            AddMedia(grpcMessage.Images, grpcMessage.ContentParts, message);
+            return grpcMessage;
         }));
         return request;
+    }
+
+    private static void AddMedia(
+        Google.Protobuf.Collections.RepeatedField<Esi.AI.Core.Grpc.ChatImage> images,
+        Google.Protobuf.Collections.RepeatedField<Esi.AI.Core.Grpc.ChatMessageContentPart> contentParts,
+        ModelChatMessage message)
+    {
+        if (message.Images is not null)
+            images.AddRange(message.Images.Select(image => new Esi.AI.Core.Grpc.ChatImage
+            {
+                MediaType = image.MediaType,
+                Data = ByteString.CopyFrom(image.Data)
+            }));
+
+        if (message.ContentParts is null)
+            return;
+
+        foreach (var part in message.ContentParts)
+        {
+            if (part.Text is string text && part.ImageIndex is null)
+                contentParts.Add(new Esi.AI.Core.Grpc.ChatMessageContentPart { Text = text });
+            else if (part.ImageIndex is int imageIndex && part.Text is null &&
+                     imageIndex >= 0 && imageIndex < images.Count)
+                contentParts.Add(new Esi.AI.Core.Grpc.ChatMessageContentPart { ImageIndex = (uint)imageIndex });
+            else
+                throw new ArgumentException("Chat content parts must contain text or a valid image index.", nameof(message));
+        }
     }
 }

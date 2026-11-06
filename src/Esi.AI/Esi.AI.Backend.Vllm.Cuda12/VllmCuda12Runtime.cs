@@ -31,6 +31,7 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
     private string loadLog = string.Empty;
     private bool isLoading;
     private bool modelReady;
+    private bool supportsImageInput;
     private int disposed;
 
     /// <inheritdoc />
@@ -70,7 +71,15 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
     }
 
     /// <inheritdoc />
-    public bool SupportsImageInput(string? modelPath) => false;
+    public bool SupportsImageInput(string? requestedModelPath)
+    {
+        lock (sync)
+        {
+            return supportsImageInput &&
+                modelPath is not null &&
+                string.Equals(modelPath, requestedModelPath, StringComparison.OrdinalIgnoreCase);
+        }
+    }
 
     /// <inheritdoc />
     public async Task LoadAsync(BackendLoadRequest request, CancellationToken cancellationToken = default)
@@ -88,6 +97,7 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
                 isLoading = true;
                 modelPath = request.ModelPath;
                 modelReady = false;
+                supportsImageInput = false;
                 deviceRoutes = ResolveDevices(configuration);
                 maxModelLength = configuration.MaxModelLength;
                 loadLog = "Preparing vLLM CUDA 12 runtime...";
@@ -133,7 +143,9 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
                 newProcess.BeginErrorReadLine();
                 lock (sync)
                     process = newProcess;
-                var newChannel = GrpcChannel.ForAddress($"http://127.0.0.1:{configuration.Port}");
+                var newChannel = GrpcChannel.ForAddress(
+                    $"http://127.0.0.1:{configuration.Port}",
+                    new GrpcChannelOptions { MaxSendMessageSize = 64 * 1024 * 1024 });
                 var newClient = new GrpcProtocol.Inference.InferenceClient(newChannel);
                 lock (sync)
                 {
@@ -152,7 +164,10 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
                     throw new InvalidOperationException(response.Error);
 
                 lock (sync)
+                {
                     modelId = response.ModelId;
+                    supportsImageInput = response.SupportsImageInput;
+                }
                 await WaitUntilModelReadyAsync(newClient, newProcess, startupTimeout, startupCancellation.Token).ConfigureAwait(false);
             }
             catch (Exception exception)
@@ -380,6 +395,7 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
             modelReady = false;
             modelPath = null;
             modelId = null;
+            supportsImageInput = false;
             deviceRoutes = [];
             maxModelLength = 0;
             isLoading = false;

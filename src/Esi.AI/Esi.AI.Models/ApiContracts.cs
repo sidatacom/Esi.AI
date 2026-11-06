@@ -406,13 +406,13 @@ public sealed record OpenAiStreamOptions(
     [property: JsonPropertyName("include_usage")] bool IncludeUsage = false);
 
 public sealed record OpenAiToolCall(
-    string Id,
-    string Type,
-    OpenAiToolCallFunction Function);
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("type")] string Type,
+    [property: JsonPropertyName("function")] OpenAiToolCallFunction Function);
 
 public sealed record OpenAiToolCallFunction(
-    string Name,
-    string Arguments);
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("arguments")] string Arguments);
 
 public sealed record OpenAiModelListResponse(string Object, IReadOnlyList<OpenAiModel> Data);
 

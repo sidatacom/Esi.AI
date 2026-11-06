@@ -49,7 +49,8 @@ internal static class InferenceLogPayloadFormatter
             text = result.Text,
             toolCalls = result.ToolCalls,
             finishReason = result.FinishReason,
-            tokenCount = result.TokenCount
+            tokenCount = result.TokenCount,
+            tokensPerSecond = result.TokensPerSecond
         }, JsonOptions);
 
     private static object FormatMessage(ChatMessage message) =>

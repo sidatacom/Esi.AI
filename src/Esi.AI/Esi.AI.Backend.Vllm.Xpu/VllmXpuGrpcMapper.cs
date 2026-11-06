@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Esi.AI.Backend.Vllm.Xpu.Grpc;
 using Esi.AI.Models;
+using Google.Protobuf;
 using ModelChatMessage = Esi.AI.Models.ChatMessage;
 using GrpcLoadModelRequest = Esi.AI.Backend.Vllm.Xpu.Grpc.LoadModelRequest;
 
@@ -57,7 +58,8 @@ internal static class VllmXpuGrpcMapper
             MinP = options.MinP,
             RepetitionPenalty = options.RepetitionPenalty,
             Seed = options.Seed ?? 0,
-            StructuredOutputJsonSchema = options.StructuredOutputJsonSchema ?? string.Empty
+            StructuredOutputJsonSchema = options.StructuredOutputJsonSchema ?? string.Empty,
+            ReasoningEffort = options.ReasoningEffort ?? string.Empty
         };
         request.StopSequences.AddRange(options.StopSequences ?? []);
         if (options.Tools is { Count: > 0 })
@@ -72,12 +74,35 @@ internal static class VllmXpuGrpcMapper
         }
         if (options.ToolChoice is JsonElement toolChoice && toolChoice.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null)
             request.ToolChoiceJson = toolChoice.GetRawText();
-        request.Messages.AddRange(messages.Select(message => new Grpc.ChatMessage
+        request.Messages.AddRange(messages.Select(message =>
         {
-            Role = message.Role,
-            Content = message.Content,
-            ToolCallsJson = message.ToolCalls is { Count: > 0 } ? JsonSerializer.Serialize(message.ToolCalls) : string.Empty,
-            ToolCallId = message.ToolCallId ?? string.Empty
+            var grpcMessage = new Grpc.ChatMessage
+            {
+                Role = message.Role,
+                Content = message.Content,
+                ToolCallsJson = message.ToolCalls is { Count: > 0 } ? JsonSerializer.Serialize(message.ToolCalls) : string.Empty,
+                ToolCallId = message.ToolCallId ?? string.Empty
+            };
+            if (message.Images is not null)
+                grpcMessage.Images.AddRange(message.Images.Select(image => new Grpc.ChatImage
+                {
+                    MediaType = image.MediaType,
+                    Data = ByteString.CopyFrom(image.Data)
+                }));
+            if (message.ContentParts is not null)
+            {
+                foreach (var part in message.ContentParts)
+                {
+                    if (part.Text is string text && part.ImageIndex is null)
+                        grpcMessage.ContentParts.Add(new Grpc.ChatMessageContentPart { Text = text });
+                    else if (part.ImageIndex is int imageIndex && part.Text is null &&
+                             imageIndex >= 0 && imageIndex < grpcMessage.Images.Count)
+                        grpcMessage.ContentParts.Add(new Grpc.ChatMessageContentPart { ImageIndex = (uint)imageIndex });
+                    else
+                        throw new ArgumentException("Chat content parts must contain text or a valid image index.", nameof(messages));
+                }
+            }
+            return grpcMessage;
         }));
         return request;
     }

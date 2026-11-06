@@ -180,6 +180,7 @@ builder.Services.AddScoped<IModelDownloadEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IModelRuntimeEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IBackendRequirementEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IApplicationSettingsEvents, ServerModelDownloadEvents>();
+builder.Services.AddScoped<IVulkanLogEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<ITrainingRunEvents, ServerModelDownloadEvents>();
 builder.Services.AddScoped<IBenchmarkRunEvents, ServerModelDownloadEvents>();
 builder.Services.AddSingleton<ProviderTraceStore>();

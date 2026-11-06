@@ -352,6 +352,9 @@ namespace Esi.AI.Studio.Migrations
                     b.Property<double?>("DecodeDurationMs")
                         .HasColumnType("REAL");
 
+                    b.Property<double?>("GenerationTokensPerSecond")
+                        .HasColumnType("REAL");
+
                     b.Property<DateTimeOffset>("StartedAtUtc")
                         .HasColumnType("TEXT");
 

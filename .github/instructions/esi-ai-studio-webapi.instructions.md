@@ -85,7 +85,7 @@ GET http://127.0.0.1:7010/v1/application/models
 - Reject malformed Base64, missing `image_url.url`, non-image media types, empty image data, and images larger than 20 MiB.
 - Parse the request once into transport-neutral `ChatMessage`, `ChatImage`, and `ChatMessageContentPart` values.
 - Preserve the original structured OpenAI messages for OpenVINO history/template rendering. The normalized text projection is for backends that need plain text only.
-- Validate image capability after resolving the selected loaded model. Do not use a stored capability flag as a substitute for the runtime check.
+- For capability discovery, preserve stored `ImageInput` metadata for unloaded models on backends with image support. Once a model is loaded, advertise image input only when the runtime confirms it. Always validate image capability against the selected loaded model before processing an image request; metadata is not a substitute for this runtime check.
 
 ## Backend capability matrix
 
@@ -93,11 +93,11 @@ GET http://127.0.0.1:7010/v1/application/models
 |---|---:|---|
 | OpenVINO VLM | Supported when loaded as a VLM | Requires the vision model directory and a runtime compatible with the model. |
 | LLamaSharp CPU/Vulkan | Supported when MTMD vision is loaded | Requires a compatible `mmproj` sidecar and `MtmdWeights.SupportsVision`. |
-| vLLM | Not supported by this local bridge | Keep the current text-only Python/gRPC contract unchanged. |
+| vLLM | Supported when the loaded model exposes a vision configuration | The Python/gRPC bridge must transport ordered text/image parts, decode local image bytes, and pass images through vLLM `multi_modal_data`. |
 | SGLang | Not supported by this local bridge | Keep the current text-only Python/gRPC contract unchanged. |
 | dotLLM | Not supported | The in-process integration is text-only. |
 
-A backend that cannot process images must return `unsupported_request_error`; it must not silently discard image parts or claim `imageInput` capability.
+A backend that cannot process images must return `unsupported_request_error`; it must not silently discard image parts or claim `imageInput` capability. For unloaded models, stored capability metadata is a discovery hint only. The loaded runtime remains authoritative for actual image requests.
 
 ## Security and error handling
 
@@ -118,6 +118,6 @@ Use test names in the form `MethodName_Condition_ExpectedResult()` and cover:
 - non-loopback mutation rejection;
 - local Base64 image parsing and remote URL rejection;
 - image capability rejection for text-only backends;
-- successful semantic image requests for each backend that actually supports them.
+- successful semantic image requests for OpenVINO VLM, LLamaSharp MTMD vision, and vision-capable vLLM models.
 
 Do not start the chat image picker implementation until the OpenVINO and LLamaSharp WebAPI paths have passed their real image tests.

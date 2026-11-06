@@ -118,7 +118,7 @@ public sealed class PythonRuntimeAdapter(PythonInferenceServer server) : IBacken
 
     public ModelLoadStatus GetStatus() => server.GetStatus();
 
-    public bool SupportsImageInput(string? modelPath) => false;
+    public bool SupportsImageInput(string? modelPath) => server.SupportsImageInput(modelPath);
 
     public Task LoadAsync(PythonInferenceLoadRequest request, CancellationToken cancellationToken = default) => server.LoadAsync(request, cancellationToken);
 

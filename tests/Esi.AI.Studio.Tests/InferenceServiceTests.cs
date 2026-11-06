@@ -104,22 +104,93 @@ public sealed class InferenceServiceTests
         Assert.AreEqual(0, failureCoordinator.FailureCount);
     }
 
+    [TestMethod]
+    public async Task OpenAiMiddleware_WhenBackendRuntimeReturnsQwenXmlToolCall_ParsesItInSharedFlow()
+    {
+        const string modelPath = "/models/qwen3";
+        var tool = new OpenAiToolDefinition("function", new OpenAiToolFunction("lookup"));
+        var backendRuntime = new TestBackendRuntime(
+            "vllm.xpu",
+            family: ConfigurationBackend.Vllm,
+            route: "vLLM",
+            generationResult: new GenerationResult(
+                "<tool_call><function=lookup><parameter=query>weather</parameter></function></tool_call>",
+                3,
+                TimeSpan.Zero,
+                0));
+        using var modelRuntime = CreateModelRuntime(backendRuntime);
+        using var configuration = JsonDocument.Parse("{}");
+        await modelRuntime.LoadBackendAsync(new BackendLoadRequest(modelPath, backendRuntime.Descriptor.Id, configuration.RootElement));
+        using var scheduler = new InferenceScheduler();
+        var middleware = new OpenAiCompatibleBackendMiddleware(modelRuntime, scheduler);
+        var request = middleware.Prepare(
+            new OpenAiChatRequest("qwen3", [new OpenAiChatMessage("user", "Use lookup.")])
+            {
+                Tools = [tool]
+            },
+            modelRuntime.LoadedModel_Read());
+
+        var result = await middleware.GenerateAsync(request, null);
+
+        Assert.AreEqual(string.Empty, result.Text);
+        Assert.AreEqual("tool_calls", result.FinishReason);
+        Assert.AreEqual("lookup", result.ToolCalls?.Single().Function.Name);
+        Assert.AreEqual("{\"query\":\"weather\"}", result.ToolCalls?.Single().Function.Arguments);
+    }
+
+    [TestMethod]
+    public async Task OpenAiMiddleware_WhenBackendRuntimeReturnsStructuredToolCalls_PreservesThem()
+    {
+        const string modelPath = "/models/qwen3";
+        var toolCalls = new[]
+        {
+            new OpenAiToolCall("call_1", "function", new OpenAiToolCallFunction("lookup", "{\"query\":\"weather\"}"))
+        };
+        var backendRuntime = new TestBackendRuntime(
+            "vllm.xpu",
+            family: ConfigurationBackend.Vllm,
+            route: "vLLM",
+            generationResult: new GenerationResult("visible text", 3, TimeSpan.Zero, 0, ToolCalls: toolCalls));
+        using var modelRuntime = CreateModelRuntime(backendRuntime);
+        using var configuration = JsonDocument.Parse("{}");
+        await modelRuntime.LoadBackendAsync(new BackendLoadRequest(modelPath, backendRuntime.Descriptor.Id, configuration.RootElement));
+        using var scheduler = new InferenceScheduler();
+        var middleware = new OpenAiCompatibleBackendMiddleware(modelRuntime, scheduler);
+        var request = middleware.Prepare(
+            new OpenAiChatRequest("qwen3", [new OpenAiChatMessage("user", "Use lookup.")])
+            {
+                Tools = [new OpenAiToolDefinition("function", new OpenAiToolFunction("lookup"))]
+            },
+            modelRuntime.LoadedModel_Read());
+
+        var result = await middleware.GenerateAsync(request, null);
+
+        Assert.AreSame(toolCalls, result.ToolCalls);
+        Assert.AreEqual("visible text", result.Text);
+        Assert.AreEqual("tool_calls", result.FinishReason);
+    }
+
     private static ModelRuntime CreateModelRuntime(params TestBackendRuntime[] runtimes) => new(
         new LlamaModelLoader(),
         new OpenVinoModelLoader(),
         new PythonInferenceServer(),
         backendRuntimeResolver: new BackendRuntimeResolver(runtimes));
 
-    private sealed class TestBackendRuntime(string variantId, Exception? generationException = null) : IBackendRuntime
+    private sealed class TestBackendRuntime(
+        string variantId,
+        Exception? generationException = null,
+        ConfigurationBackend family = ConfigurationBackend.Llama,
+        string? route = null,
+        GenerationResult? generationResult = null) : IBackendRuntime
     {
         private string? modelPath;
 
         public BackendVariantDescriptor Descriptor { get; } = new(
             variantId,
-            ConfigurationBackend.Llama,
+            family,
             variantId,
             $"Test {variantId}",
-            "CUDA");
+            route ?? "CUDA");
 
         public OpenAiBackendChatRequest? LastRequest { get; private set; }
 
@@ -127,7 +198,7 @@ public sealed class InferenceServiceTests
         {
             var loadedModels = modelPath is null
                 ? Array.Empty<LoadedModelStatus>()
-                : [new LoadedModelStatus(modelPath, ConfigurationBackend.Llama, Descriptor.RuntimeName, 0, 0, 0, [], null, BackendVariantId: Descriptor.Id)];
+                : [new LoadedModelStatus(modelPath, Descriptor.Family, Descriptor.RuntimeName, 0, 0, 0, [], null, BackendVariantId: Descriptor.Id)];
             return new ModelLoadStatus(modelPath, Descriptor.Route, 0, 0, 0, 0, [], null, string.Empty, new Dictionary<string, float>(), loadedModels.Length > 0, loadedModels, Descriptor.Id);
         }
 
@@ -159,7 +230,7 @@ public sealed class InferenceServiceTests
             LastRequest = request;
             if (generationException is not null)
                 return Task.FromException<GenerationResult>(generationException);
-            return Task.FromResult(new GenerationResult($"{Descriptor.Id} response", 2, TimeSpan.Zero, 0));
+            return Task.FromResult(generationResult ?? new GenerationResult($"{Descriptor.Id} response", 2, TimeSpan.Zero, 0));
         }
 
         public void Dispose()

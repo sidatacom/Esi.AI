@@ -57,4 +57,7 @@ public sealed class InferenceLogEntity
 
     /// <summary>Gets or sets the generated-token decode duration in milliseconds.</summary>
     public double? DecodeDurationMs { get; set; }
+
+    /// <summary>Gets or sets the generated-token rate reported by the backend.</summary>
+    public double? GenerationTokensPerSecond { get; set; }
 }

@@ -34,6 +34,24 @@
           CopyToPublishDirectory="PreserveNewest"
           Pack="true"
           PackagePath="contentFiles/any/any/Python/esi_process_lifecycle.py" />
+    <None Include="../Esi.AI.Core/Python/esi_tool_call_utils.py"
+          Link="Python/esi_tool_call_utils.py"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Pack="true"
+          PackagePath="contentFiles/any/any/Python/esi_tool_call_utils.py" />
+    <None Include="../Esi.AI.Core/Python/esi_reasoning_utils.py"
+          Link="Python/esi_reasoning_utils.py"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Pack="true"
+          PackagePath="contentFiles/any/any/Python/esi_reasoning_utils.py" />
+    <None Include="../Esi.AI.Core/Python/esi_multimodal_utils.py"
+          Link="Python/esi_multimodal_utils.py"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest"
+          Pack="true"
+          PackagePath="contentFiles/any/any/Python/esi_multimodal_utils.py" />
   </ItemGroup>
 
   <ItemGroup>

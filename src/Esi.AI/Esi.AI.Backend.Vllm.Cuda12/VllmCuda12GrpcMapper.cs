@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Esi.AI.Models;
+using Google.Protobuf;
 using GrpcProtocol = Esi.AI.Core.Grpc;
 
 namespace Esi.AI.Backend.Vllm.Cuda12;
@@ -56,6 +57,7 @@ internal static class VllmCuda12GrpcMapper
             RepetitionPenalty = options.RepetitionPenalty,
             Seed = options.Seed ?? 0,
             StructuredOutputJsonSchema = options.StructuredOutputJsonSchema ?? string.Empty,
+            ReasoningEffort = options.ReasoningEffort ?? string.Empty,
         };
         grpcRequest.StopSequences.AddRange(options.StopSequences ?? []);
 
@@ -74,12 +76,35 @@ internal static class VllmCuda12GrpcMapper
         if (options.ToolChoice is JsonElement toolChoice && toolChoice.ValueKind is not JsonValueKind.Undefined and not JsonValueKind.Null)
             grpcRequest.ToolChoiceJson = toolChoice.GetRawText();
 
-        grpcRequest.Messages.AddRange(request.Messages.Select(message => new GrpcProtocol.ChatMessage
+        grpcRequest.Messages.AddRange(request.Messages.Select(message =>
         {
-            Role = message.Role,
-            Content = message.Content,
-            ToolCallsJson = message.ToolCalls is { Count: > 0 } ? JsonSerializer.Serialize(message.ToolCalls) : string.Empty,
-            ToolCallId = message.ToolCallId ?? string.Empty,
+            var grpcMessage = new GrpcProtocol.ChatMessage
+            {
+                Role = message.Role,
+                Content = message.Content,
+                ToolCallsJson = message.ToolCalls is { Count: > 0 } ? JsonSerializer.Serialize(message.ToolCalls) : string.Empty,
+                ToolCallId = message.ToolCallId ?? string.Empty,
+            };
+            if (message.Images is not null)
+                grpcMessage.Images.AddRange(message.Images.Select(image => new GrpcProtocol.ChatImage
+                {
+                    MediaType = image.MediaType,
+                    Data = ByteString.CopyFrom(image.Data)
+                }));
+            if (message.ContentParts is not null)
+            {
+                foreach (var part in message.ContentParts)
+                {
+                    if (part.Text is string text && part.ImageIndex is null)
+                        grpcMessage.ContentParts.Add(new GrpcProtocol.ChatMessageContentPart { Text = text });
+                    else if (part.ImageIndex is int imageIndex && part.Text is null &&
+                             imageIndex >= 0 && imageIndex < grpcMessage.Images.Count)
+                        grpcMessage.ContentParts.Add(new GrpcProtocol.ChatMessageContentPart { ImageIndex = (uint)imageIndex });
+                    else
+                        throw new ArgumentException("Chat content parts must contain text or a valid image index.", nameof(request));
+                }
+            }
+            return grpcMessage;
         }));
         return grpcRequest;
     }

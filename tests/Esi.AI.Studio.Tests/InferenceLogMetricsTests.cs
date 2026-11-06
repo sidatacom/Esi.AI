@@ -38,6 +38,17 @@ public sealed class InferenceLogMetricsTests
     }
 
     [TestMethod]
+    public void DecodeTokensPerSecond_PrefersBackendReportedGenerationRate()
+    {
+        var log = CreateLog(
+            outputTokenCount: 40,
+            decodeDurationMs: 2_000,
+            generationTokensPerSecond: 58.4);
+
+        Assert.AreEqual(58.4d, log.DecodeTokensPerSecond.GetValueOrDefault(), 0.001d);
+    }
+
+    [TestMethod]
     public void EndToEndTokensPerSecond_UsesInputAndOutputTokensOverRequestDuration()
     {
         var log = CreateLog(
@@ -69,7 +80,8 @@ public sealed class InferenceLogMetricsTests
         int? outputTokenCount = null,
         long? durationMilliseconds = null,
         double? prefillDurationMs = null,
-        double? decodeDurationMs = null) =>
+        double? decodeDurationMs = null,
+        double? generationTokensPerSecond = null) =>
         new(
             Guid.NewGuid(),
             "inference-test",
@@ -88,5 +100,6 @@ public sealed class InferenceLogMetricsTests
             DurationMilliseconds: durationMilliseconds,
             PromptTokenCount: promptTokenCount,
             PrefillDurationMs: prefillDurationMs,
-            DecodeDurationMs: decodeDurationMs);
+            DecodeDurationMs: decodeDurationMs,
+            GenerationTokensPerSecond: generationTokensPerSecond);
 }

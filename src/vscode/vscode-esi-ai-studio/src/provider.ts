@@ -2,7 +2,9 @@ import * as vscode from "vscode";
 import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { isModelAvailable } from "./modelAvailability.js";
 import { summarizeOpenAiRequest } from "./requestTrace.js";
+import { VisibleResponseTextFilter } from "./visibleResponseTextFilter.js";
 
 const apiKeySecret = "esiAiStudio.apiKey";
 const defaultTraceFilePath = join(tmpdir(), "esi-ai-studio-provider.jsonl");
@@ -16,6 +18,7 @@ interface OpenAiModel {
   name?: unknown;
   capabilities?: unknown;
   loaded?: unknown;
+  autoLaunch?: unknown;
 }
 
 interface OpenAiModelsResponse {
@@ -464,12 +467,9 @@ export class EsiAiStudioProvider
       const discoveredModels = await this.listModels(
         token ?? new vscode.CancellationTokenSource().token,
       );
-      const loadedModels = discoveredModels.filter(
-        (model) => model.loaded === true,
-      );
-      const models = (
-        loadedModels.length > 0 ? loadedModels : discoveredModels
-      ).map((model, index) => this.toModel(model, index, backendModelIds));
+      const models = discoveredModels
+        .filter(isModelAvailable)
+        .map((model, index) => this.toModel(model, index, backendModelIds));
       const changed =
         models.length !== this.models.length ||
         models.some((model, index) => !sameModel(model, this.models[index]));
@@ -1088,92 +1088,6 @@ function parseToolInput(value: string): object {
     return isRecord(parsed) ? parsed : {};
   } catch {
     return {};
-  }
-}
-
-class VisibleResponseTextFilter {
-  private static readonly markers = ["<think>", "</think>"];
-  private buffered = "";
-  private inThinkingBlock = false;
-
-  public push(value: string): string {
-    this.buffered += value;
-    let visible = "";
-
-    while (this.buffered.length > 0) {
-      if (this.inThinkingBlock) {
-        const closingIndex = this.buffered.indexOf("</think>");
-        if (closingIndex < 0) {
-          this.buffered = this.retainPossibleMarkerSuffix(
-            this.buffered,
-            "</think>",
-          );
-          break;
-        }
-
-        this.buffered = this.buffered.slice(closingIndex + "</think>".length);
-        this.inThinkingBlock = false;
-        continue;
-      }
-
-      const openingIndex = this.buffered.indexOf("<think>");
-      const closingIndex = this.buffered.indexOf("</think>");
-      const markerIndex = this.firstMarkerIndex(openingIndex, closingIndex);
-      if (markerIndex >= 0) {
-        visible += this.buffered.slice(0, markerIndex);
-        if (openingIndex >= 0 && openingIndex === markerIndex) {
-          this.buffered = this.buffered.slice(markerIndex + "<think>".length);
-          this.inThinkingBlock = true;
-        } else {
-          this.buffered = this.buffered.slice(markerIndex + "</think>".length);
-        }
-        continue;
-      }
-
-      const safeLength =
-        this.buffered.length -
-        Math.max(
-          ...VisibleResponseTextFilter.markers.map((marker) =>
-            this.possibleMarkerSuffixLength(this.buffered, marker),
-          ),
-        );
-      visible += this.buffered.slice(0, safeLength);
-      this.buffered = this.buffered.slice(safeLength);
-      break;
-    }
-
-    return visible;
-  }
-
-  public finish(): string {
-    const visible = this.inThinkingBlock ? "" : this.buffered;
-    this.buffered = "";
-    return visible;
-  }
-
-  private firstMarkerIndex(openingIndex: number, closingIndex: number): number {
-    if (openingIndex < 0) {
-      return closingIndex;
-    }
-    if (closingIndex < 0) {
-      return openingIndex;
-    }
-    return Math.min(openingIndex, closingIndex);
-  }
-
-  private retainPossibleMarkerSuffix(value: string, marker: string): string {
-    const suffixLength = this.possibleMarkerSuffixLength(value, marker);
-    return suffixLength > 0 ? value.slice(-suffixLength) : "";
-  }
-
-  private possibleMarkerSuffixLength(value: string, marker: string): number {
-    const maximumLength = Math.min(value.length, marker.length - 1);
-    for (let length = maximumLength; length > 0; length -= 1) {
-      if (value.endsWith(marker.slice(0, length))) {
-        return length;
-      }
-    }
-    return 0;
   }
 }
 

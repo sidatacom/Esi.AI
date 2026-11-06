@@ -209,6 +209,9 @@ public sealed class InferenceService(
                     TimeToFirstTokenMs = result.TimeToFirstTokenMs,
                     PrefillDurationMs = result.PrefillDurationMs,
                     DecodeDurationMs = result.DecodeDurationMs,
+                    GenerationTokensPerSecond = double.IsFinite(result.TokensPerSecond) && result.TokensPerSecond > 0
+                        ? result.TokensPerSecond
+                        : null,
                     FinishReason = result.FinishReason,
                     ResponsePayload = InferenceLogPayloadFormatter.FormatResponse(result),
                     CompletedAtUtc = DateTimeOffset.UtcNow,
