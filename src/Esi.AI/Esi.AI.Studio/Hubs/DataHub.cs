@@ -58,6 +58,9 @@ public sealed class DataHub(
     public Task InferenceLog_Delete(Guid id) =>
         dataService.InferenceLog_DeleteAsync(id, Context.ConnectionAborted);
 
+    public Task<int> InferenceLog_ClearCompleted() =>
+        dataService.InferenceLog_ClearCompletedAsync(Context.ConnectionAborted);
+
     public async Task ApplicationSettings_Update(ApplicationSettings settings)
     {
         var updated = await dataService.ApplicationSettings_UpdateAsync(settings, Context.ConnectionAborted);

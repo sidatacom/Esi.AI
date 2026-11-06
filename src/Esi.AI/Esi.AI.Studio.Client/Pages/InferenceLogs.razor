@@ -5,6 +5,7 @@
 @using Esi.AI.Models
 @inject IDataService DataService
 @inject IInferenceLogEvents InferenceLogEvents
+@inject IJSRuntime JS
 
 <PageTitle>Inference logs</PageTitle>
 
@@ -15,14 +16,24 @@
             <h1>Inference logs</h1>
             <p>Live request history with correlation IDs and expandable text payloads. Image data is omitted; the latest 500 entries are kept in the local Studio database.</p>
         </div>
-        <button type="button" class="inference-logs-button" @onclick="RefreshAsync" disabled="@isRefreshing">
-            @(isRefreshing ? "Refreshing ..." : "Refresh")
-        </button>
+        <div class="inference-logs-header-actions">
+            <button type="button" class="inference-logs-button" @onclick="ClearCompletedAsync" disabled="@(!HasCompletedLogs || isRefreshing || isClearing)">
+                @(isClearing ? "Deleting ..." : "Delete all completed")
+            </button>
+            <button type="button" class="inference-logs-button" @onclick="RefreshAsync" disabled="@(isRefreshing || isClearing)">
+                @(isRefreshing ? "Refreshing ..." : "Refresh")
+            </button>
+        </div>
     </header>
 
     @if (!string.IsNullOrWhiteSpace(errorMessage))
     {
         <div class="inference-logs-alert" role="alert">@errorMessage</div>
+    }
+
+    @if (!string.IsNullOrWhiteSpace(statusMessage))
+    {
+        <div class="inference-logs-success" role="status">@statusMessage</div>
     }
 
     @if (isRefreshing && logs.Count == 0)
@@ -110,7 +121,10 @@
 @code {
     private readonly List<InferenceLog> logs = [];
     private bool isRefreshing;
+    private bool isClearing;
     private string? errorMessage;
+    private string? statusMessage;
+    private bool HasCompletedLogs => logs.Any(log => log.Status != InferenceLogStatus.Running);
 
     protected override async Task OnInitializedAsync()
     {
@@ -125,6 +139,7 @@
     {
         isRefreshing = true;
         errorMessage = null;
+        statusMessage = null;
         try
         {
             await DataService.InferenceLog_ReadAsync();
@@ -142,6 +157,7 @@
     private async Task DeleteAsync(Guid id)
     {
         errorMessage = null;
+        statusMessage = null;
         try
         {
             await DataService.InferenceLog_DeleteAsync(id);
@@ -152,6 +168,33 @@
         }
 
         await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task ClearCompletedAsync()
+    {
+        errorMessage = null;
+        try
+        {
+            var confirmed = await JS.InvokeAsync<bool>(
+                "confirm",
+                "Delete all completed inference logs from the database? Running requests will be kept.");
+            if (!confirmed)
+                return;
+
+            isClearing = true;
+            statusMessage = null;
+            var deletedCount = await DataService.InferenceLog_ClearCompletedAsync();
+            statusMessage = $"{deletedCount:N0} completed inference log{(deletedCount == 1 ? string.Empty : "s")} deleted.";
+        }
+        catch (Exception exception)
+        {
+            errorMessage = exception.Message;
+        }
+        finally
+        {
+            isClearing = false;
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private Task HandleReadAsync(IReadOnlyList<InferenceLog> entries) => InvokeAsync(() =>

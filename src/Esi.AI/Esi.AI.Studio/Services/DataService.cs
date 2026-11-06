@@ -94,6 +94,9 @@ public sealed class DataService(
     public Task InferenceLog_DeleteAsync(Guid id, CancellationToken cancellationToken = default) =>
         GetInferenceLogService().InferenceLog_DeleteAsync(id, cancellationToken);
 
+    public Task<int> InferenceLog_ClearCompletedAsync(CancellationToken cancellationToken = default) =>
+        GetInferenceLogService().InferenceLog_ClearCompletedAsync(cancellationToken);
+
     #endregion
 
     #region LocalModels

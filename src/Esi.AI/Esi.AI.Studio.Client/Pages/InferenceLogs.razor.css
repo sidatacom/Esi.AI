@@ -17,6 +17,14 @@
     gap: .8rem;
 }
 
+.inference-logs-header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: .5rem;
+}
+
 .inference-logs-header {
     align-items: end;
 }
@@ -65,6 +73,7 @@
 }
 
 .inference-logs-alert,
+.inference-logs-success,
 .inference-logs-empty {
     padding: 1rem;
     border: 1px solid #d9d4ca;
@@ -76,6 +85,12 @@
     border-color: #d9a99e;
     border-left: 3px solid #8b3f2f;
     color: #8b3f2f;
+}
+
+.inference-logs-success {
+    border-color: #a6c7c7;
+    border-left: 3px solid #236b70;
+    color: #236b70;
 }
 
 .inference-log-list {
@@ -223,6 +238,11 @@
     .inference-logs-header,
     .inference-log-heading {
         align-items: stretch;
+        flex-direction: column;
+    }
+
+    .inference-logs-header-actions {
+        width: 100%;
         flex-direction: column;
     }
 

@@ -377,6 +377,12 @@ public sealed class SignalRDataService : IDataService, IModelDownloadEvents, IMo
         await connection.InvokeAsync("InferenceLog_Delete", id, cancellationToken);
     }
 
+    public async Task<int> InferenceLog_ClearCompletedAsync(CancellationToken cancellationToken = default)
+    {
+        await EnsureConnectedAsync(cancellationToken);
+        return await connection.InvokeAsync<int>("InferenceLog_ClearCompleted", cancellationToken);
+    }
+
     public async Task<IReadOnlyList<Model>> Model_ReadAsync(CancellationToken cancellationToken = default)
     {
         await EnsureConnectedAsync(cancellationToken);

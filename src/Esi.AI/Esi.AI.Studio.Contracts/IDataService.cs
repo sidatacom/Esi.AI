@@ -43,6 +43,11 @@ public interface IDataService
     /// <summary>Deletes a completed inference log entry.</summary>
     Task InferenceLog_DeleteAsync(Guid id, CancellationToken cancellationToken = default);
 
+    /// <summary>Deletes all completed inference log entries and preserves requests that are still running.</summary>
+    /// <param name="cancellationToken">A token that cancels deletion.</param>
+    /// <returns>The number of deleted entries.</returns>
+    Task<int> InferenceLog_ClearCompletedAsync(CancellationToken cancellationToken = default);
+
     Task ModelSettings_UpdateAsync(ModelSettings settings, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<Model>> Model_ReadAsync(CancellationToken cancellationToken = default);

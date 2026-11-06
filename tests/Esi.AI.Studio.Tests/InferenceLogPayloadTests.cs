@@ -125,6 +125,63 @@ public sealed class InferenceLogPayloadTests
         }
     }
 
+    [TestMethod]
+    public async Task InferenceLog_ClearCompletedAsync_DeletesCompletedLogsAndPreservesRunningLogs()
+    {
+        var directory = Directory.CreateTempSubdirectory("esi-inference-logs-").FullName;
+        try
+        {
+            var options = new DbContextOptionsBuilder<ApplicationDbContext>()
+                .UseSqlite($"Data Source={Path.Combine(directory, "inference-logs.db")}")
+                .Options;
+            var factory = new TestDbContextFactory(options);
+            await using (var db = await factory.CreateDbContextAsync())
+                await db.Database.EnsureCreatedAsync();
+
+            var publisher = new TestPublisher();
+            var service = new InferenceLogService(factory, publisher);
+            var running = await service.InferenceLog_CreateAsync(CreateRunningLog("running"));
+            var completedOne = await service.InferenceLog_CreateAsync(CreateRunningLog("completed-one"));
+            var completedTwo = await service.InferenceLog_CreateAsync(CreateRunningLog("completed-two"));
+            await service.InferenceLog_UpdateAsync(MarkCompleted(completedOne));
+            await service.InferenceLog_UpdateAsync(MarkCompleted(completedTwo));
+
+            var deletedCount = await service.InferenceLog_ClearCompletedAsync();
+            var remaining = await service.InferenceLog_ReadAsync();
+
+            Assert.AreEqual(2, deletedCount);
+            Assert.AreEqual(running.Id, remaining.Single().Id);
+            CollectionAssert.AreEquivalent(
+                new[] { completedOne.Id, completedTwo.Id },
+                publisher.Deleted.Select(log => log.Id).ToArray());
+        }
+        finally
+        {
+            Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static InferenceLog CreateRunningLog(string inferenceId) => new(
+        Guid.NewGuid(),
+        inferenceId,
+        DateTimeOffset.UtcNow,
+        "SignalR",
+        "OpenVINO",
+        "test-model",
+        null,
+        1,
+        0,
+        0,
+        false,
+        InferenceLogStatus.Running);
+
+    private static InferenceLog MarkCompleted(InferenceLog log) => log with
+    {
+        Status = InferenceLogStatus.Succeeded,
+        CompletedAtUtc = DateTimeOffset.UtcNow,
+        DurationMilliseconds = 1
+    };
+
     private sealed class TestDbContextFactory(DbContextOptions<ApplicationDbContext> options) : IDbContextFactory<ApplicationDbContext>
     {
         public ApplicationDbContext CreateDbContext() => new(options);
@@ -135,10 +192,16 @@ public sealed class InferenceLogPayloadTests
 
     private sealed class TestPublisher : IInferenceLogPublisher
     {
+        public List<InferenceLog> Deleted { get; } = [];
+
         public Task PublishCreateAsync(InferenceLog log, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
         public Task PublishUpdateAsync(InferenceLog log, CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-        public Task PublishDeleteAsync(InferenceLog log, CancellationToken cancellationToken = default) => Task.CompletedTask;
+        public Task PublishDeleteAsync(InferenceLog log, CancellationToken cancellationToken = default)
+        {
+            Deleted.Add(log);
+            return Task.CompletedTask;
+        }
     }
 }

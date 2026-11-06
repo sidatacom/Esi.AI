@@ -195,6 +195,41 @@ public sealed class InferenceLogService(
         await NotifyAsync(Deleted, deleted).ConfigureAwait(false);
     }
 
+    /// <summary>Deletes all completed inference logs and publishes each removal.</summary>
+    /// <param name="cancellationToken">A token that cancels deletion.</param>
+    /// <returns>The number of deleted entries.</returns>
+    public async Task<int> InferenceLog_ClearCompletedAsync(CancellationToken cancellationToken = default)
+    {
+        InferenceLog[] deleted;
+        await persistenceLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await using var db = await dbContextFactory.CreateDbContextAsync(cancellationToken).ConfigureAwait(false);
+            var entities = await db.InferenceLogs
+                .Where(item => item.Status != InferenceLogStatus.Running)
+                .ToArrayAsync(cancellationToken)
+                .ConfigureAwait(false);
+            deleted = entities.Select(ToContract).ToArray();
+            if (entities.Length > 0)
+            {
+                db.InferenceLogs.RemoveRange(entities);
+                await db.SaveChangesAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+        finally
+        {
+            persistenceLock.Release();
+        }
+
+        foreach (var log in deleted)
+        {
+            await publisher.PublishDeleteAsync(log, cancellationToken).ConfigureAwait(false);
+            await NotifyAsync(Deleted, log).ConfigureAwait(false);
+        }
+
+        return deleted.Length;
+    }
+
     /// <summary>Marks requests left running by a previous Studio process as interrupted.</summary>
     public async Task InferenceLog_MarkInterruptedAsync(CancellationToken cancellationToken = default)
     {
