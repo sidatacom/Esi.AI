@@ -2,7 +2,7 @@
   "name": "vscode-esi-ai-studio",
   "displayName": "Esi.AI Studio Models",
   "description": "Use models loaded by Esi.AI Studio as VS Code language models.",
-  "version": "0.1.38",
+  "version": "0.1.39",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
@@ -103,18 +103,6 @@
           "type": "string",
           "default": "",
           "description": "Path for the provider JSONL trace. Leave empty to use the operating system temporary directory."
-        },
-        "esiAiStudio.maxInputTokens": {
-          "type": "number",
-          "default": 32768,
-          "minimum": 1,
-          "description": "Input token limit advertised to VS Code for Esi.AI Studio models."
-        },
-        "esiAiStudio.maxOutputTokens": {
-          "type": "number",
-          "default": 32768,
-          "minimum": 1,
-          "description": "Output token limit advertised to VS Code for Esi.AI Studio models."
         },
         "esiAiStudio.reasoningEffort": {
           "type": "string",

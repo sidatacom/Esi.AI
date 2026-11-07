@@ -3,6 +3,7 @@ import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isModelAvailable } from "./modelAvailability.js";
+import { resolveModelTokenLimits } from "./modelTokenLimits.js";
 import { summarizeOpenAiRequest } from "./requestTrace.js";
 import {
   stripUsageFooter,
@@ -16,8 +17,6 @@ const apiKeySecret = "esiAiStudio.apiKey";
 const defaultTraceFilePath = join(tmpdir(), "esi-ai-studio-provider.jsonl");
 const loggingEnabledStateKey = "loggingEnabled";
 const loggingPathStateKey = "loggingPath";
-const defaultMaxInputTokens = 32768;
-const defaultMaxOutputTokens = 32768;
 
 interface OpenAiModel {
   id?: unknown;
@@ -25,6 +24,9 @@ interface OpenAiModel {
   capabilities?: unknown;
   loaded?: unknown;
   autoLaunch?: unknown;
+  context_length?: unknown;
+  max_input_tokens?: unknown;
+  max_output_tokens?: unknown;
 }
 
 interface OpenAiModelsResponse {
@@ -845,7 +847,7 @@ export class EsiAiStudioProvider
       suffix += 1;
     }
     backendModelIds.set(id, backendId);
-    const configuration = vscode.workspace.getConfiguration("esiAiStudio");
+    const tokenLimits = resolveModelTokenLimits(model);
     return {
       id,
       name:
@@ -856,14 +858,8 @@ export class EsiAiStudioProvider
       detail: "Esi.AI Studio",
       family: "esi-ai-studio",
       version: "1",
-      maxInputTokens: configuration.get<number>(
-        "maxInputTokens",
-        defaultMaxInputTokens,
-      ),
-      maxOutputTokens: configuration.get<number>(
-        "maxOutputTokens",
-        defaultMaxOutputTokens,
-      ),
+      maxInputTokens: tokenLimits.maxInputTokens,
+      maxOutputTokens: tokenLimits.maxOutputTokens,
       capabilities: toLanguageModelCapabilities(model.capabilities),
     };
   }

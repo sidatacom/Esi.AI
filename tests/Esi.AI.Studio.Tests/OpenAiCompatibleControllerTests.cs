@@ -214,6 +214,35 @@ public sealed class OpenAiCompatibleControllerTests
     }
 
     [TestMethod]
+    public void GetModelTokenLimits_VllmProfile_CapsInputToRemainingContext()
+    {
+        var configuration = new ModelConfiguration(
+            Guid.NewGuid(),
+            "Qwen vLLM",
+            null,
+            "/models/qwen",
+            false,
+            1,
+            BackendConfigurationJson.Serialize(
+                "vllm.cuda12",
+                new PythonInferenceLoadRequest(
+                    "/models/qwen",
+                    ConfigurationBackend.Vllm,
+                    MaxModelLength: 131_072,
+                    MaxInputTokens: 131_072,
+                    MaxOutputTokens: 65_536)),
+            default,
+            default,
+            ConfigurationBackend.Vllm,
+            BackendVariantId: "vllm.cuda12");
+
+        var tokenLimits = OpenAiCompatibleController.GetModelTokenLimits(configuration, null);
+
+        Assert.AreEqual((uint?)65_536, tokenLimits.MaxInputTokens);
+        Assert.AreEqual((uint?)65_536, tokenLimits.MaxOutputTokens);
+    }
+
+    [TestMethod]
     public void OpenAiModel_SerializesAllProviderCapabilities()
     {
         var model = new OpenAiModel(
@@ -224,7 +253,9 @@ public sealed class OpenAiCompatibleControllerTests
             "vision",
             new ModelCapabilities(ToolCalling: true, ImageInput: true, AgentMode: true, Thinking: true))
         {
-            ContextLength = 131_072
+            ContextLength = 131_072,
+            MaxInputTokens = 65_536,
+            MaxOutputTokens = 65_536
         };
 
         using var document = JsonDocument.Parse(JsonSerializer.Serialize(model, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
@@ -235,6 +266,8 @@ public sealed class OpenAiCompatibleControllerTests
         Assert.IsTrue(capabilities.GetProperty("agentMode").GetBoolean());
         Assert.IsTrue(capabilities.GetProperty("thinking").GetBoolean());
         Assert.AreEqual(131_072u, document.RootElement.GetProperty("context_length").GetUInt32());
+        Assert.AreEqual(65_536u, document.RootElement.GetProperty("max_input_tokens").GetUInt32());
+        Assert.AreEqual(65_536u, document.RootElement.GetProperty("max_output_tokens").GetUInt32());
     }
 
     [TestMethod]

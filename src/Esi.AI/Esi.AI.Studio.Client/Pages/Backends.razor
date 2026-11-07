@@ -731,6 +731,11 @@
             <div class="field-group"><label class="form-label" for="python-tp">Tensor parallel size</label><InputNumber id="python-tp" class="form-control" @bind-Value="pythonForm.TensorParallelSize" @bind-Value:after="SaveSettingsAsync" /></div>
             <div class="field-group"><label class="form-label" for="python-gpu-memory">GPU memory utilization (%)</label><InputNumber id="python-gpu-memory" class="form-control" @bind-Value="pythonForm.GpuMemoryUtilization" @bind-Value:after="SaveSettingsAsync" /></div>
         </div>
+        <div class="field-row">
+            <div class="field-group"><label class="form-label" for="python-max-input-tokens">Maximum input tokens</label><InputNumber id="python-max-input-tokens" class="form-control" @bind-Value="pythonForm.MaxInputTokens" @bind-Value:after="SaveSettingsAsync" /></div>
+            <div class="field-group"><label class="form-label" for="python-max-output-tokens">Maximum output tokens</label><InputNumber id="python-max-output-tokens" class="form-control" @bind-Value="pythonForm.MaxOutputTokens" @bind-Value:after="SaveSettingsAsync" /></div>
+        </div>
+        <p class="form-text">The effective input limit is capped to the remaining context after the output limit.</p>
         <label class="setting-toggle"><InputCheckbox @bind-Value="pythonForm.TrustRemoteCode" @bind-Value:after="SaveSettingsAsync" /> Trust remote code</label>
         @if (IsVllmBackendTab(activeBackend))
         {

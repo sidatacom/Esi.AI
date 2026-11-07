@@ -13,6 +13,10 @@ public sealed class PythonState : IBackendTabConfigurationData
     public IReadOnlyList<string> SelectedDevices => GetDevices();
     public int? GpuMemoryUtilization { get; set; } = 90;
     public int MaxModelLength { get; set; } = 2048;
+    /// <summary>Gets or sets the maximum input tokens advertised for this backend profile.</summary>
+    public int? MaxInputTokens { get; set; }
+    /// <summary>Gets or sets the maximum output tokens advertised for this backend profile.</summary>
+    public int? MaxOutputTokens { get; set; }
     public int TensorParallelSize { get; set; } = 1;
     public bool TrustRemoteCode { get; set; } = true;
     public string Quantization { get; set; } = string.Empty;
@@ -41,6 +45,8 @@ public sealed class PythonState : IBackendTabConfigurationData
         if (Devices.Count == 0 && !string.IsNullOrWhiteSpace(request.Device)) Devices.Add(request.Device.Trim());
         Device = Devices.FirstOrDefault() ?? string.Empty; GpuMemoryUtilization = request.GpuMemoryUtilization;
         MaxModelLength = (int)Math.Min(int.MaxValue, request.MaxModelLength); TensorParallelSize = request.TensorParallelSize; TrustRemoteCode = request.TrustRemoteCode;
+        MaxInputTokens = request.MaxInputTokens is > 0 ? (int)Math.Min(int.MaxValue, request.MaxInputTokens.Value) : null;
+        MaxOutputTokens = request.MaxOutputTokens is > 0 ? (int)Math.Min(int.MaxValue, request.MaxOutputTokens.Value) : null;
         Quantization = request.Quantization; DType = request.DType; KvCacheDType = request.KvCacheDType;
         MaxNumSeqs = request.MaxNumSeqs > 0 ? (int)Math.Min(int.MaxValue, request.MaxNumSeqs) : MaxNumSeqs;
         MaxNumBatchedTokens = request.MaxNumBatchedTokens > 0 ? (int)Math.Min(int.MaxValue, request.MaxNumBatchedTokens) : MaxNumBatchedTokens;
@@ -107,6 +113,8 @@ public sealed class PythonState : IBackendTabConfigurationData
             isXpu && EnableBf16MtpDraft);
         return request with
         {
+            MaxInputTokens = GetOptionalTokenLimit(MaxInputTokens, nameof(MaxInputTokens)),
+            MaxOutputTokens = GetOptionalTokenLimit(MaxOutputTokens, nameof(MaxOutputTokens)),
             XpuRuntimeSettings = isXpu
                 ? new VllmXpuRuntimeSettings(
                     OneApiDeviceSelector,
@@ -120,8 +128,18 @@ public sealed class PythonState : IBackendTabConfigurationData
         };
     }
 
-    public void Reset() { PythonExecutable = "python3"; Device = string.Empty; Devices.Clear(); GpuMemoryUtilization = 90; MaxModelLength = 2048; TensorParallelSize = 1; TrustRemoteCode = true; Quantization = string.Empty; DType = "float16"; KvCacheDType = "fp8"; MtpTokens = 0; MaxNumSeqs = 1; MaxNumBatchedTokens = 8192; EnablePrefixCaching = true; EnableXpuGraph = true; EnableBf16MtpDraft = true; OneApiDeviceSelector = "level_zero:gpu"; ZeFlatDeviceHierarchy = "COMPOSITE"; PyTorchAllocatorConfig = "expandable_segments:True"; CclZeIpcExchange = "sockets"; CclAtlTransport = "ofi"; FiProvider = "tcp"; WorkerMultiprocessMethod = "spawn"; }
+    public void Reset() { PythonExecutable = "python3"; Device = string.Empty; Devices.Clear(); GpuMemoryUtilization = 90; MaxModelLength = 2048; MaxInputTokens = null; MaxOutputTokens = null; TensorParallelSize = 1; TrustRemoteCode = true; Quantization = string.Empty; DType = "float16"; KvCacheDType = "fp8"; MtpTokens = 0; MaxNumSeqs = 1; MaxNumBatchedTokens = 8192; EnablePrefixCaching = true; EnableXpuGraph = true; EnableBf16MtpDraft = true; OneApiDeviceSelector = "level_zero:gpu"; ZeFlatDeviceHierarchy = "COMPOSITE"; PyTorchAllocatorConfig = "expandable_segments:True"; CclZeIpcExchange = "sockets"; CclAtlTransport = "ofi"; FiProvider = "tcp"; WorkerMultiprocessMethod = "spawn"; }
     private IReadOnlyList<string> GetDevices() => Devices.Where(device => !string.IsNullOrWhiteSpace(device)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
+    private static uint? GetOptionalTokenLimit(int? value, string parameterName)
+    {
+        if (value is null)
+            return null;
+        if (value <= 0)
+            throw new ArgumentOutOfRangeException(parameterName, "A configured token limit must be greater than zero.");
+
+        return (uint)value.Value;
+    }
 
     private static int GetMtpTokenCount(string speculativeConfigJson)
     {

@@ -335,6 +335,25 @@ public sealed class BackendCatalogIntegrationTests
     }
 
     [TestMethod]
+    public void PythonState_Load_WhenTokenLimitsConfigured_RestoresAndPreservesThem()
+    {
+        var state = new PythonState();
+        var request = new PythonInferenceLoadRequest(
+            "model",
+            ConfigurationBackend.Vllm,
+            MaxModelLength: 262_144,
+            MaxInputTokens: 131_072,
+            MaxOutputTokens: 65_536);
+
+        state.Load(request, "vllm.xpu");
+
+        Assert.AreEqual(131_072, state.MaxInputTokens);
+        Assert.AreEqual(65_536, state.MaxOutputTokens);
+        Assert.AreEqual((uint?)131_072, state.ToRequest(ConfigurationBackend.Vllm, "vllm.xpu").MaxInputTokens);
+        Assert.AreEqual((uint?)65_536, state.ToRequest(ConfigurationBackend.Vllm, "vllm.xpu").MaxOutputTokens);
+    }
+
+    [TestMethod]
     public void PythonState_Load_WhenXpuProfileHasExplicitCudaRoute_UsesXpuDefault()
     {
         var state = new PythonState();

@@ -439,6 +439,16 @@ public sealed record OpenAiModel(
     [JsonPropertyName("context_length")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public uint? ContextLength { get; init; }
+
+    /// <summary>Gets the effective maximum input token count advertised to API clients.</summary>
+    [JsonPropertyName("max_input_tokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public uint? MaxInputTokens { get; init; }
+
+    /// <summary>Gets the configured maximum output token count advertised to API clients.</summary>
+    [JsonPropertyName("max_output_tokens")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public uint? MaxOutputTokens { get; init; }
 }
 
 public sealed record OpenAiChatCompletionResponse(
@@ -636,6 +646,9 @@ public sealed record VllmXpuRuntimeSettings(
     string FiProvider = "tcp",
     string WorkerMultiprocessMethod = "spawn");
 
+/// <summary>Stores local Python inference settings and optional provider token budgets.</summary>
+/// <param name="MaxInputTokens">The configured input token cap; null uses a context-aware default.</param>
+/// <param name="MaxOutputTokens">The configured output token cap; null uses a context-aware default.</param>
 public sealed record PythonInferenceLoadRequest(
     string ModelPath,
     ConfigurationBackend Backend,
@@ -662,7 +675,9 @@ public sealed record PythonInferenceLoadRequest(
     bool EnablePrefixCaching = false,
     bool EnableXpuGraph = false,
     bool EnableBf16MtpDraft = false,
-    VllmXpuRuntimeSettings? XpuRuntimeSettings = null);
+    VllmXpuRuntimeSettings? XpuRuntimeSettings = null,
+    uint? MaxInputTokens = null,
+    uint? MaxOutputTokens = null);
 
 /// <summary>Identifies one loaded model and its backend for an application API unload operation.</summary>
 public sealed record ApplicationModelUnloadRequest(

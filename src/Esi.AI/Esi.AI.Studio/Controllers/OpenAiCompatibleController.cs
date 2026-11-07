@@ -53,6 +53,8 @@ public sealed class OpenAiCompatibleController(
                     (string.IsNullOrWhiteSpace(configuration.BackendVariantId) ||
                      string.Equals(model.BackendVariantId, configuration.BackendVariantId, StringComparison.OrdinalIgnoreCase)));
                 var capabilities = localModel?.Capabilities ?? new ModelCapabilities();
+                var contextLength = GetModelContextLength(configuration, loadedModel?.ContextSize);
+                var tokenLimits = GetModelTokenLimits(configuration, loadedModel?.ContextSize);
                 capabilities = capabilities with
                 {
                     ToolCalling = true,
@@ -74,7 +76,9 @@ public sealed class OpenAiCompatibleController(
                     configuration.Backend,
                     configuration.AutoLaunch)
                 {
-                    ContextLength = GetModelContextLength(configuration, loadedModel?.ContextSize)
+                    ContextLength = contextLength,
+                    MaxInputTokens = tokenLimits.MaxInputTokens,
+                    MaxOutputTokens = tokenLimits.MaxOutputTokens
                 };
             }).ToArray();
 
@@ -108,18 +112,34 @@ public sealed class OpenAiCompatibleController(
         }
         var apiModels = dataService is null
             ? (await localModelCatalog.ScanLocalModelsAsync(cancellationToken).ConfigureAwait(false))
-                .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, GetCapabilities(model.Path, null), IsLoaded(model.Path))
+                .Select(model =>
                 {
-                    ContextLength = GetRuntimeContextLength(model.Path)
+                    var contextLength = GetRuntimeContextLength(model.Path);
+                    var tokenLimits = GetEffectiveTokenLimits(contextLength, null, null);
+                    return new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, GetCapabilities(model.Path, null), IsLoaded(model.Path))
+                    {
+                        ContextLength = contextLength,
+                        MaxInputTokens = tokenLimits.MaxInputTokens,
+                        MaxOutputTokens = tokenLimits.MaxOutputTokens
+                    };
                 })
                 .ToList()
             : (await dataService.LocalModel_ReadAsync(cancellationToken).ConfigureAwait(false))
-                .Select(model => new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, GetCapabilities(model.Path, model.Capabilities), IsLoaded(model.Path))
+                .Select(model =>
                 {
-                    ContextLength = GetRuntimeContextLength(model.Path)
+                    var contextLength = GetRuntimeContextLength(model.Path);
+                    var tokenLimits = GetEffectiveTokenLimits(contextLength, null, null);
+                    return new OpenAiModel(model.Path, "model", created, "esi-ai", model.Name, GetCapabilities(model.Path, model.Capabilities), IsLoaded(model.Path))
+                    {
+                        ContextLength = contextLength,
+                        MaxInputTokens = tokenLimits.MaxInputTokens,
+                        MaxOutputTokens = tokenLimits.MaxOutputTokens
+                    };
                 })
                 .ToList();
         foreach (var loadedModel in loadedModels.Where(loadedModel => apiModels.All(model => !string.Equals(model.Id, loadedModel.ModelPath, StringComparison.OrdinalIgnoreCase))))
+        {
+            var tokenLimits = GetEffectiveTokenLimits(loadedModel.ContextSize, null, null);
             apiModels.Add(new OpenAiModel(
                 loadedModel.ModelPath,
                 "model",
@@ -129,10 +149,64 @@ public sealed class OpenAiCompatibleController(
                 new ModelCapabilities(ToolCalling: true, ImageInput: modelRuntime.SupportsImageInput(loadedModel.Runtime, loadedModel.ModelPath)),
                 Loaded: true)
             {
-                ContextLength = loadedModel.ContextSize is > 0 ? loadedModel.ContextSize : null
+                ContextLength = loadedModel.ContextSize is > 0 ? loadedModel.ContextSize : null,
+                MaxInputTokens = tokenLimits.MaxInputTokens,
+                MaxOutputTokens = tokenLimits.MaxOutputTokens
             });
+        }
 
         return Ok(new OpenAiModelListResponse("list", apiModels));
+    }
+
+    internal static (uint? MaxInputTokens, uint? MaxOutputTokens) GetModelTokenLimits(
+        ModelConfiguration configuration,
+        uint? runtimeContextLength)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var contextLength = GetModelContextLength(configuration, runtimeContextLength);
+        return GetEffectiveTokenLimits(
+            contextLength,
+            GetConfiguredTokenLimit(configuration, isInput: true),
+            GetConfiguredTokenLimit(configuration, isInput: false));
+    }
+
+    private static uint? GetConfiguredTokenLimit(ModelConfiguration configuration, bool isInput)
+    {
+        if (configuration.Backend is not (ConfigurationBackend.Vllm or ConfigurationBackend.Sglang))
+            return null;
+
+        var request = BackendConfigurationJson.Deserialize<PythonInferenceLoadRequest>(
+            configuration.ConfigurationJson,
+            configuration.BackendVariantId);
+        return isInput ? request.MaxInputTokens : request.MaxOutputTokens;
+    }
+
+    private static (uint? MaxInputTokens, uint? MaxOutputTokens) GetEffectiveTokenLimits(
+        uint? contextLength,
+        uint? configuredMaxInputTokens,
+        uint? configuredMaxOutputTokens)
+    {
+        const uint defaultMaxInputTokens = 32_768;
+        const uint defaultMaxOutputTokens = 32_768;
+
+        if (contextLength is not > 0)
+            return (
+                configuredMaxInputTokens is > 0 ? configuredMaxInputTokens : defaultMaxInputTokens,
+                configuredMaxOutputTokens is > 0 ? configuredMaxOutputTokens : defaultMaxOutputTokens);
+
+        var totalContext = contextLength.Value;
+        var outputLimit = configuredMaxOutputTokens is > 0
+            ? configuredMaxOutputTokens.Value
+            : Math.Min(defaultMaxOutputTokens, Math.Max(1, totalContext / 2));
+        var effectiveMaxOutputTokens = Math.Min(outputLimit, Math.Max(1, totalContext - 1));
+        var remainingContext = Math.Max(1, totalContext - effectiveMaxOutputTokens);
+        var inputLimit = configuredMaxInputTokens is > 0
+            ? configuredMaxInputTokens.Value
+            : Math.Min(defaultMaxInputTokens, remainingContext);
+        var effectiveMaxInputTokens = Math.Min(inputLimit, remainingContext);
+
+        return (effectiveMaxInputTokens, effectiveMaxOutputTokens);
     }
 
     internal static uint? GetModelContextLength(ModelConfiguration configuration, uint? runtimeContextLength)
