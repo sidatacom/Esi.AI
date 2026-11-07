@@ -235,6 +235,20 @@ public sealed class PythonInferenceGrpcTests
     }
 
     [TestMethod]
+    public async Task GenerateWithStatsAsync_MissingBackendDecodeRate_DoesNotUseRequestWallTime()
+    {
+        using var session = new PythonInferenceChatSession(
+            (_, _) => StreamWithoutDecodeRateAsync(),
+            () => "vLLM",
+            () => "Qwen/test");
+
+        var result = await session.GenerateWithStatsAsync([
+            new ModelChatMessage("user", "Hello")]);
+
+        Assert.AreEqual(0d, result.TokensPerSecond);
+    }
+
+    [TestMethod]
     public async Task GenerateWithStatsAsync_FakeErrorResponse_ThrowsInformativeException()
     {
         using var session = new PythonInferenceChatSession(
@@ -296,6 +310,13 @@ public sealed class PythonInferenceGrpcTests
     {
         await Task.Yield();
         yield return new GenerateResponse { Error = "backend unavailable" };
+    }
+
+    private static async IAsyncEnumerable<GenerateResponse> StreamWithoutDecodeRateAsync()
+    {
+        await Task.Yield();
+        yield return new GenerateResponse { Delta = "Hello", GeneratedTokens = 16 };
+        yield return new GenerateResponse { Finished = true, GeneratedTokens = 16 };
     }
 
     private static async IAsyncEnumerable<GenerateResponse> StructuredToolResponseAsync()

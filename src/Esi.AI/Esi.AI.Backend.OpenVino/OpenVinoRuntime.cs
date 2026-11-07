@@ -303,9 +303,9 @@ public sealed class OpenVinoRuntime : IBackendRuntime
                     message.ToolCalls,
                     message.ToolCallId)).ToArray();
             var chatSession = llmPipeline is not null
-                ? new OpenVinoChatSession(llmPipeline)
+                ? new ChatSession(llmPipeline)
                 : vlmPipeline is not null
-                    ? new OpenVinoChatSession(vlmPipeline)
+                    ? new ChatSession(vlmPipeline)
                     : throw new InvalidOperationException("Load an OpenVINO model before starting a chat.");
             var tools = request.Tools ?? request.Options.Tools;
             var options = new OpenVinoGenerationOptions(

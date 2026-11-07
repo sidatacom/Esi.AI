@@ -4,6 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isModelAvailable } from "./modelAvailability.js";
 import { summarizeOpenAiRequest } from "./requestTrace.js";
+import {
+  stripUsageFooter,
+  stripUsageFooterFromContent,
+  UsageFooterTextFilter,
+} from "./usageFooterTextFilter.js";
+import type { EsiAiStudioUsage } from "./usageView.js";
 import { VisibleResponseTextFilter } from "./visibleResponseTextFilter.js";
 
 const apiKeySecret = "esiAiStudio.apiKey";
@@ -118,11 +124,17 @@ export class EsiAiStudioProvider
   private refreshPromise?: Promise<number>;
   private retryTimer?: ReturnType<typeof setInterval>;
   private traceSequence = 0;
+  private readonly onUsage: (usage: EsiAiStudioUsage) => void;
 
   public readonly onDidChangeLanguageModelChatInformation =
     this.changeEmitter.event;
 
-  public constructor(private readonly context: vscode.ExtensionContext) {}
+  public constructor(
+    private readonly context: vscode.ExtensionContext,
+    onUsage: (usage: EsiAiStudioUsage) => void,
+  ) {
+    this.onUsage = onUsage;
+  }
 
   public provideLanguageModelChatInformation(
     _options: vscode.PrepareLanguageModelChatModelOptions,
@@ -217,8 +229,10 @@ export class EsiAiStudioProvider
       stream: true,
     };
     let requestId = ++this.traceSequence;
+    let requestStartedAt = Date.now();
     let response: Response;
     try {
+      requestStartedAt = Date.now();
       response = await this.request(
         "/chat/completions",
         requestBody,
@@ -237,6 +251,7 @@ export class EsiAiStudioProvider
       }
 
       requestId = ++this.traceSequence;
+      requestStartedAt = Date.now();
       response = await this.request(
         "/chat/completions",
         { ...requestBody, model: activeModelId },
@@ -275,7 +290,9 @@ export class EsiAiStudioProvider
       const content = completionMessage?.content;
       if (typeof content === "string" && content.length > 0) {
         const textFilter = new VisibleResponseTextFilter();
-        const visibleContent = textFilter.push(content) + textFilter.finish();
+        const visibleContent = stripUsageFooter(
+          textFilter.push(content) + textFilter.finish(),
+        );
         if (visibleContent.length > 0) {
           progress.report(new vscode.LanguageModelTextPart(visibleContent));
         }
@@ -284,12 +301,19 @@ export class EsiAiStudioProvider
         completion.choices?.[0]?.message?.tool_calls,
         progress,
       );
-      this.reportUsage(completion.usage, progress);
+      this.publishUsage(
+        completion.usage,
+        requestModel,
+        requestId,
+        inferenceId,
+        requestStartedAt,
+      );
       return;
     }
 
     const toolCalls = new Map<number, Partial<OpenAiToolCall>>();
     const textFilter = new VisibleResponseTextFilter();
+    const usageFooterFilter = new UsageFooterTextFilter();
     let usage: OpenAiUsage | undefined;
     let loggedSseChunks = 0;
     try {
@@ -298,12 +322,20 @@ export class EsiAiStudioProvider
           this.traceSse(requestId, inferenceId, loggedSseChunks++, {
             eventType: "done",
           });
-          const finalText = textFilter.finish();
+          const finalText =
+            usageFooterFilter.push(textFilter.finish()) +
+            usageFooterFilter.finish();
           if (finalText.length > 0) {
             progress.report(new vscode.LanguageModelTextPart(finalText));
           }
           this.reportToolCalls([...toolCalls.values()], progress);
-          this.reportUsage(usage, progress);
+          this.publishUsage(
+            usage,
+            requestModel,
+            requestId,
+            inferenceId,
+            requestStartedAt,
+          );
           return;
         }
 
@@ -330,7 +362,9 @@ export class EsiAiStudioProvider
         usage = chunk.usage ?? usage;
         const content = delta?.content;
         if (typeof content === "string" && content.length > 0) {
-          const visibleContent = textFilter.push(content);
+          const visibleContent = usageFooterFilter.push(
+            textFilter.push(content),
+          );
           if (visibleContent.length > 0) {
             progress.report(new vscode.LanguageModelTextPart(visibleContent));
           }
@@ -390,36 +424,50 @@ export class EsiAiStudioProvider
     throw new Error("Esi.AI Studio SSE stream ended before the [DONE] marker.");
   }
 
-  private reportUsage(
+  private publishUsage(
     usage: OpenAiUsage | undefined,
-    progress: vscode.Progress<vscode.LanguageModelResponsePart>,
+    model: EsiModel,
+    requestId: number,
+    inferenceId: string | undefined,
+    requestStartedAt: number,
   ): void {
     const promptTokens = toFiniteNumber(usage?.prompt_tokens);
     const completionTokens = toFiniteNumber(usage?.completion_tokens);
-    const totalTokens = toFiniteNumber(usage?.total_tokens);
-    const tokensPerSecond = toFiniteNumber(usage?.tokens_per_second);
+    const reportedTotalTokens = toFiniteNumber(usage?.total_tokens);
+    const totalTokens =
+      reportedTotalTokens ??
+      (promptTokens !== undefined && completionTokens !== undefined
+        ? promptTokens + completionTokens
+        : undefined);
+    const reportedDecodeTokensPerSecond = toFiniteNumber(
+      usage?.tokens_per_second,
+    );
+    const decodeTokensPerSecond =
+      reportedDecodeTokensPerSecond !== undefined &&
+      reportedDecodeTokensPerSecond > 0
+        ? reportedDecodeTokensPerSecond
+        : undefined;
     if (
       promptTokens === undefined &&
       completionTokens === undefined &&
       totalTokens === undefined &&
-      tokensPerSecond === undefined
+      decodeTokensPerSecond === undefined
     ) {
       return;
     }
 
-    const promptText =
-      promptTokens === undefined ? "n/a" : String(Math.round(promptTokens));
-    const tokenText =
-      completionTokens === undefined
-        ? "n/a"
-        : String(Math.round(completionTokens));
-    const throughputText =
-      tokensPerSecond === undefined ? "n/a" : tokensPerSecond.toFixed(1);
-    progress.report(
-      new vscode.LanguageModelTextPart(
-        `\n\n---\n*Esi.AI Studio: ${promptText} prompt + ${tokenText} completion Tokens | ${throughputText} Tok/s*`,
-      ),
-    );
+    this.onUsage({
+      modelId: model.id,
+      modelName: model.name,
+      completedAt: Date.now(),
+      durationMs: Math.max(0, Date.now() - requestStartedAt),
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      decodeTokensPerSecond,
+      requestId,
+      inferenceId,
+    });
   }
 
   public provideTokenCount(
@@ -852,16 +900,19 @@ export class EsiAiStudioProvider
     const contentParts = message.content.filter(
       (part) => !(part instanceof vscode.LanguageModelToolCallPart),
     );
+    const role =
+      message.role === vscode.LanguageModelChatMessageRole.Assistant ||
+      toolCalls.length > 0
+        ? "assistant"
+        : "user";
+    const content =
+      contentParts.length > 0
+        ? this.toOpenAiContent(contentParts, supportsImages)
+        : null;
     return {
-      role:
-        message.role === vscode.LanguageModelChatMessageRole.Assistant ||
-        toolCalls.length > 0
-          ? "assistant"
-          : "user",
+      role,
       content:
-        contentParts.length > 0
-          ? this.toOpenAiContent(contentParts, supportsImages)
-          : null,
+        role === "assistant" ? stripUsageFooterFromContent(content) : content,
       tool_calls: toolCalls.length > 0 ? toolCalls : undefined,
     };
   }

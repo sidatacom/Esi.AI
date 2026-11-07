@@ -2,7 +2,7 @@
   "name": "vscode-esi-ai-studio",
   "displayName": "Esi.AI Studio Models",
   "description": "Use models loaded by Esi.AI Studio as VS Code language models.",
-  "version": "0.1.34",
+  "version": "0.1.38",
   "publisher": "sidatacom",
   "license": "MIT",
   "author": "sidatacom",
@@ -48,6 +48,10 @@
           "type": "webview",
           "id": "esiAiStudio.configuration",
           "name": "Provider"
+        },
+        {
+          "id": "esiAiStudio.usage",
+          "name": "Usage"
         }
       ]
     },
@@ -63,6 +67,10 @@
       {
         "command": "esiAiStudio.inspectModels",
         "title": "Esi AI Studio: Inspect Registered Models"
+      },
+      {
+        "command": "esiAiStudio.showUsage",
+        "title": "Esi AI Studio: Show Usage"
       }
     ],
     "languageModelChatProviders": [

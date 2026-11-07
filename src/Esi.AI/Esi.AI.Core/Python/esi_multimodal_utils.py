@@ -3,10 +3,36 @@
 from __future__ import annotations
 
 import inspect
+import math
 from io import BytesIO
 
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
+
+
+def output_tokens_per_second(metrics) -> float:
+    """Return vLLM's per-request decode rate, excluding prompt prefill."""
+    if metrics is None:
+        return 0.0
+
+    try:
+        token_count = int(_get_value(metrics, "num_generation_tokens"))
+        first_token_ts = float(_get_value(metrics, "first_token_ts"))
+        last_token_ts = float(_get_value(metrics, "last_token_ts"))
+    except (OverflowError, TypeError, ValueError):
+        return 0.0
+
+    decode_duration = last_token_ts - first_token_ts
+    if (
+        token_count <= 1
+        or not math.isfinite(first_token_ts)
+        or not math.isfinite(last_token_ts)
+        or decode_duration <= 0
+    ):
+        return 0.0
+
+    tokens_per_second = (token_count - 1) / decode_duration
+    return tokens_per_second if math.isfinite(tokens_per_second) else 0.0
 
 
 async def get_engine_model_config(engine):

@@ -534,8 +534,6 @@ public sealed class PythonInferenceChatSession : IDisposable
         started.Stop();
         if (string.IsNullOrWhiteSpace(text.ToString()) && toolCalls is not { Count: > 0 })
             throw new InvalidOperationException($"{backendName()} returned an empty answer.");
-        if (tokensPerSecond <= 0 && started.Elapsed.TotalSeconds > 0)
-            tokensPerSecond = tokenCount / started.Elapsed.TotalSeconds;
         return new GenerationResult(
             text.ToString(),
             tokenCount,

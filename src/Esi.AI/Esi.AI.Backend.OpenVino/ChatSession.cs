@@ -6,18 +6,18 @@ using OpenVinoSharp.GenAI;
 
 namespace Esi.AI.Backend.OpenVino;
 
-internal sealed class OpenVinoChatSession
+internal sealed class ChatSession
 {
     private static readonly JsonSerializerOptions ChatJsonOptions = new(JsonSerializerDefaults.Web);
     private readonly LLMPipeline? llmPipeline;
     private readonly VLMPipeline? vlmPipeline;
 
-    public OpenVinoChatSession(LLMPipeline pipeline)
+    public ChatSession(LLMPipeline pipeline)
     {
         llmPipeline = pipeline;
     }
 
-    public OpenVinoChatSession(VLMPipeline pipeline)
+    public ChatSession(VLMPipeline pipeline)
     {
         vlmPipeline = pipeline;
     }
@@ -152,17 +152,28 @@ internal sealed class OpenVinoChatSession
         using (metrics)
         {
             var parsed = OpenVinoToolCallParser.Parse(text);
+            var tokenCount = checked((int)metrics.NumGenerationTokens);
+            var decodeDurationMs = metrics.GenerateDuration.Mean;
             return new OpenVinoGenerationResult(
                 parsed.Text,
-                checked((int)metrics.NumGenerationTokens),
-                metrics.Throughput.Mean,
+                tokenCount,
+                CalculateGenerationTokensPerSecond(tokenCount, decodeDurationMs),
                 checked((int)metrics.NumInputTokens),
                 metrics.TimeToFirstToken.Mean,
-                metrics.GenerateDuration.Mean,
+                decodeDurationMs,
                 metrics.InferenceDuration.Mean,
                 parsed.ToolCalls,
                 parsed.ToolCalls.Count > 0 ? "tool_calls" : "stop");
         }
+    }
+
+    internal static double CalculateGenerationTokensPerSecond(int tokenCount, double decodeDurationMs)
+    {
+        if (tokenCount <= 0 || !double.IsFinite(decodeDurationMs) || decodeDurationMs <= 0)
+            return 0;
+
+        var tokensPerSecond = tokenCount * 1_000d / decodeDurationMs;
+        return double.IsFinite(tokensPerSecond) ? tokensPerSecond : 0;
     }
 
     private GenerationConfig GetGenerationConfig(OpenVinoGenerationOptions options)

@@ -290,8 +290,6 @@ public sealed class VllmCuda12Runtime : IBackendRuntime
         var resultText = text.ToString();
         if (string.IsNullOrWhiteSpace(resultText) && toolCalls is not { Count: > 0 })
             throw new InvalidOperationException("vLLM returned an empty answer.");
-        if (tokensPerSecond <= 0 && started.Elapsed.TotalSeconds > 0)
-            tokensPerSecond = tokenCount / started.Elapsed.TotalSeconds;
         return new GenerationResult(
             resultText,
             tokenCount,

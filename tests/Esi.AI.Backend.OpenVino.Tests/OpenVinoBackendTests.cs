@@ -14,6 +14,24 @@ namespace Esi.AI.Backend.OpenVino.Tests;
 public sealed class OpenVinoBackendTests
 {
     [TestMethod]
+    public void CalculateGenerationTokensPerSecond_WhenDecodeDurationIsKnown_UsesGeneratedTokenCount()
+    {
+        var tokensPerSecond = ChatSession.CalculateGenerationTokensPerSecond(12, 200);
+
+        Assert.AreEqual(60d, tokensPerSecond, 0.001d);
+    }
+
+    [TestMethod]
+    public void CalculateGenerationTokensPerSecond_WhenDecodeDurationIsInvalid_ReturnsZero()
+    {
+        var zeroDurationRate = ChatSession.CalculateGenerationTokensPerSecond(12, 0);
+        var invalidDurationRate = ChatSession.CalculateGenerationTokensPerSecond(12, double.NaN);
+
+        Assert.AreEqual(0d, zeroDurationRate);
+        Assert.AreEqual(0d, invalidDurationRate);
+    }
+
+    [TestMethod]
     public void Descriptor_WhenModuleIsCreated_UsesStableOpenVinoIdentity()
     {
         var descriptor = new OpenVinoBackendModule().Descriptor;
@@ -195,7 +213,7 @@ public sealed class OpenVinoBackendTests
 
         OpenVinoRuntime.InitializeRuntime();
         using var pipeline = new LLMPipeline(modelPath, device);
-        var session = new OpenVinoChatSession(pipeline);
+        var session = new ChatSession(pipeline);
         var result = session.Generate(
             [new OpenAiChatMessage("user", "Reply with exactly: OPENVINO_OK")],
             null,
@@ -223,7 +241,7 @@ public sealed class OpenVinoBackendTests
 
         OpenVinoRuntime.InitializeRuntime();
         using var pipeline = new LLMPipeline(modelPath, device);
-        var session = new OpenVinoChatSession(pipeline);
+        var session = new ChatSession(pipeline);
         var streamedText = new List<string>();
         var result = session.Generate(
             [new OpenAiChatMessage("user", "Reply with exactly: OPENVINO_OK")],
@@ -283,7 +301,7 @@ public sealed class OpenVinoBackendTests
                     new OpenAiToolCallFunction("lookup", "{\"query\":\"weather\"}"))
             ]);
 
-        using var document = JsonDocument.Parse(OpenVinoChatSession.SerializeChatMessageForHistory(message));
+        using var document = JsonDocument.Parse(ChatSession.SerializeChatMessageForHistory(message));
         var arguments = document.RootElement.GetProperty("tool_calls")[0].GetProperty("function").GetProperty("arguments");
 
         Assert.AreEqual(JsonValueKind.Object, arguments.ValueKind);
@@ -299,7 +317,7 @@ public sealed class OpenVinoBackendTests
         using var content = JsonDocument.Parse("[{\"type\":\"text\",\"text\":\"Describe\"},{\"type\":\"image_url\",\"image_url\":{\"url\":\"data:image/png;base64,AA==\"}}]");
         var message = new OpenAiChatMessage("user", content.RootElement.Clone());
 
-        using var history = OpenVinoChatSession.CreateChatHistory([message], null, null);
+        using var history = ChatSession.CreateChatHistory([message], null, null);
         using var historyMessages = history.GetMessages();
         using var document = JsonDocument.Parse(historyMessages.ToJsonString());
         var parts = document.RootElement[0].GetProperty("content");
@@ -311,7 +329,7 @@ public sealed class OpenVinoBackendTests
     [TestMethod]
     public void CreateChatTemplateContext_WhenReasoningEffortIsOmitted_ReturnsNull()
     {
-        Assert.IsNull(OpenVinoChatSession.CreateChatTemplateContext(null));
+        Assert.IsNull(ChatSession.CreateChatTemplateContext(null));
     }
 
     [TestMethod]

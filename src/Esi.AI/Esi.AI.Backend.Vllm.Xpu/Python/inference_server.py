@@ -20,6 +20,7 @@ from esi_multimodal_utils import (
     build_multimodal_chat_messages,
     close_images,
     get_engine_model_config,
+    output_tokens_per_second,
     supports_image_input,
 )
 from esi_reasoning_utils import add_reasoning_effort_template_options
@@ -179,7 +180,6 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
             yield inference_pb2.GenerateResponse(error="The loaded vLLM XPU model does not support image input.")
             return
         request_id = request.request_id or str(uuid.uuid4())
-        decode_started = None
         previous_text = ""
         images_to_close = []
         try:
@@ -207,8 +207,6 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                 if context.cancelled():
                     await self._abort(request_id)
                     return
-                if decode_started is None:
-                    decode_started = time.monotonic()
                 result = output.outputs[0]
                 current_text = result.text
                 delta = current_text[len(previous_text):]
@@ -220,12 +218,13 @@ class InferenceService(inference_pb2_grpc.InferenceServicer):
                         prompt_tokens=len(output.prompt_token_ids),
                     )
                 if output.finished:
-                    elapsed = time.monotonic() - (decode_started or time.monotonic())
                     yield inference_pb2.GenerateResponse(
                         finished=True,
                         generated_tokens=len(result.token_ids),
                         prompt_tokens=len(output.prompt_token_ids),
-                        tokens_per_second=len(result.token_ids) / elapsed if elapsed > 0 else 0,
+                        tokens_per_second=output_tokens_per_second(
+                            getattr(output, "metrics", None)
+                        ),
                     )
                     return
         except asyncio.CancelledError:
