@@ -11,7 +11,8 @@ namespace Esi.AI.Studio.Hubs;
 public sealed class DataHub(
     DataService dataService,
     IBackendDiagnosticsService backendDiagnostics,
-    IModelDirectoryCatalog modelDirectories) : Hub
+    IModelDirectoryCatalog modelDirectories,
+    IAudioChatService audioChatService) : Hub
 {
     public const string LocalTrainingClientsGroup = "local-training-clients";
 
@@ -25,6 +26,18 @@ public sealed class DataHub(
         }
 
         await Clients.Caller.SendAsync("LoadedModel_Read", await dataService.LoadedModel_ReadAsync(Context.ConnectionAborted), Context.ConnectionAborted);
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        try
+        {
+            await audioChatService.DisconnectAsync(Context.ConnectionId);
+        }
+        finally
+        {
+            await base.OnDisconnectedAsync(exception);
+        }
     }
 
     public Task<IReadOnlyList<ModelSettings>> ModelSettings_Read() => dataService.ModelSettings_ReadAsync(Context.ConnectionAborted);
@@ -298,6 +311,21 @@ public sealed class DataHub(
 
     public IAsyncEnumerable<ChatStreamUpdate> Chat_UpdateStream(Guid id, ChatExchangeRequest request) =>
         dataService.Chat_UpdateStreamAsync(id, request, Context.ConnectionAborted);
+
+    public Task<AudioChatRuntimeReadiness> AudioChat_Readiness() =>
+        Task.FromResult(audioChatService.Readiness());
+
+    public Task<AudioChatSessionInfo> AudioChat_Start(AudioChatStartRequest request) =>
+        audioChatService.StartAsync(Context.ConnectionId, request, Context.ConnectionAborted);
+
+    public Task<AudioChatChunkReceipt> AudioChat_AudioChunk(AudioChatAudioChunkRequest request) =>
+        audioChatService.WriteAudioAsync(Context.ConnectionId, request, Context.ConnectionAborted);
+
+    public Task<bool> AudioChat_PlaybackCompleted(Guid sessionId, Guid turnId) =>
+        audioChatService.PlaybackCompletedAsync(Context.ConnectionId, sessionId, turnId);
+
+    public Task AudioChat_Stop(Guid sessionId) =>
+        audioChatService.StopAsync(Context.ConnectionId, sessionId, Context.ConnectionAborted);
 
     public Task<TrainingRunStatus> TrainingRun_Create(CreateTrainingRunRequest request)
     {

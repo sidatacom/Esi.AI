@@ -171,6 +171,25 @@ builder.Services.AddSingleton<ModelRuntime>(services =>
 builder.Services.AddSingleton<IModelRuntimeShutdown>(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddHostedService(services => services.GetRequiredService<ModelRuntime>());
 builder.Services.AddSingleton<IInferenceFailureCoordinator, InferenceFailureCoordinator>();
+builder.Services.Configure<AudioChatOptions>(builder.Configuration.GetSection(AudioChatOptions.SectionName));
+builder.Services.AddSingleton<IAudioTranscriber>(services =>
+    new WhisperCppTranscriber(
+        services.GetRequiredService<IOptions<AudioChatOptions>>(),
+        services.GetRequiredService<IHostEnvironment>(),
+        services.GetRequiredService<ILogger<WhisperCppTranscriber>>()));
+builder.Services.AddSingleton<IAudioSpeechSynthesizer>(services =>
+    new PiperTtsSynthesizer(
+        services.GetRequiredService<IOptions<AudioChatOptions>>(),
+        services.GetRequiredService<IHostEnvironment>(),
+        services.GetRequiredService<ILogger<PiperTtsSynthesizer>>()));
+builder.Services.AddSingleton<IAudioChatService>(services =>
+    new AudioChatService(
+        services.GetRequiredService<IOptions<AudioChatOptions>>(),
+        services.GetRequiredService<IAudioTranscriber>(),
+        services.GetRequiredService<IAudioSpeechSynthesizer>(),
+        services.GetRequiredService<IServiceScopeFactory>(),
+        services.GetRequiredService<IHubContext<DataHub>>(),
+        services.GetRequiredService<ILogger<AudioChatService>>()));
 builder.Services.AddSingleton<ApplicationSettingsService>();
 builder.Services.AddSingleton<InferenceTimeoutPolicy>();
 builder.Services.AddSingleton<OptimajetFlowRuntime>();
