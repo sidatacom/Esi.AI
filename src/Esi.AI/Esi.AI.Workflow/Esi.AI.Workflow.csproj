@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Razor">
+﻿<Project Sdk="Microsoft.NET.Sdk.Razor">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -15,6 +15,7 @@
     <PackageReference Include="Elsa.Studio.Workflows.Designer" Version="3.9.0" />
     <PackageReference Include="Elsa.Studio.Workflows" Version="3.9.0" />
     <PackageReference Include="Microsoft.AspNetCore.SignalR.Common" Version="10.0.14" />
+    <PackageReference Include="Microsoft.AspNetCore.WebUtilities" Version="10.0.15" />
   </ItemGroup>
 
 </Project>
