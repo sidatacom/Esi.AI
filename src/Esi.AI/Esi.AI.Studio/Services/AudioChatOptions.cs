@@ -9,6 +9,9 @@ public sealed class AudioChatOptions
     public string WhisperModelPath { get; set; } = string.Empty;
     public string PiperExecutablePath { get; set; } = "piper";
     public string PiperModelPath { get; set; } = string.Empty;
+    public string VisemeAnalyzerExecutablePath { get; set; } = "rhubarb";
+    public int VisemeAnalyzerTimeoutSeconds { get; set; } = 30;
+    public int VisemeAnalyzerThreadCount { get; set; } = 1;
     public int SampleRate { get; set; } = 16000;
     public int VoiceThresholdRms { get; set; } = 550;
     public int EndOfSpeechSilenceMilliseconds { get; set; } = 700;

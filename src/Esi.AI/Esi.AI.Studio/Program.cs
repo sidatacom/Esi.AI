@@ -182,11 +182,17 @@ builder.Services.AddSingleton<IAudioSpeechSynthesizer>(services =>
         services.GetRequiredService<IOptions<AudioChatOptions>>(),
         services.GetRequiredService<IHostEnvironment>(),
         services.GetRequiredService<ILogger<PiperTtsSynthesizer>>()));
+builder.Services.AddSingleton<IAudioVisemeAnalyzer>(services =>
+    new RhubarbLipSyncVisemeAnalyzer(
+        services.GetRequiredService<IOptions<AudioChatOptions>>(),
+        services.GetRequiredService<IHostEnvironment>(),
+        services.GetRequiredService<ILogger<RhubarbLipSyncVisemeAnalyzer>>()));
 builder.Services.AddSingleton<IAudioChatService>(services =>
     new AudioChatService(
         services.GetRequiredService<IOptions<AudioChatOptions>>(),
         services.GetRequiredService<IAudioTranscriber>(),
         services.GetRequiredService<IAudioSpeechSynthesizer>(),
+        services.GetRequiredService<IAudioVisemeAnalyzer>(),
         services.GetRequiredService<IServiceScopeFactory>(),
         services.GetRequiredService<IHubContext<DataHub>>(),
         services.GetRequiredService<ILogger<AudioChatService>>()));

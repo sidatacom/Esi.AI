@@ -32,7 +32,9 @@ public sealed record AudioChatRuntimeReadiness(
     string? PiperIssue,
     string? ConfigurationIssue,
     int SampleRate,
-    int MaximumChunkBytes);
+    int MaximumChunkBytes,
+    bool VisemeAnalyzerReady = false,
+    string? VisemeAnalyzerIssue = null);
 
 /// <summary>Reports whether a microphone chunk was queued for processing.</summary>
 public sealed record AudioChatChunkReceipt(bool Accepted, string? Reason = null);
@@ -46,13 +48,56 @@ public sealed record AudioChatTranscriptUpdate(Guid SessionId, Guid TurnId, stri
 /// <summary>Contains an incremental assistant-text update for one speech turn.</summary>
 public sealed record AudioChatTextUpdate(Guid SessionId, Guid TurnId, string Delta);
 
-/// <summary>Contains one synthesized WAV chunk for terminal playback.</summary>
+/// <summary>Contains one synthesized WAV chunk and optional playback-relative viseme cues.</summary>
+/// <param name="SessionId">The active audio-chat session.</param>
+/// <param name="TurnId">The assistant turn that produced the audio.</param>
+/// <param name="Sequence">The zero-based order of this chunk within the turn.</param>
+/// <param name="ContentType">The audio media type.</param>
+/// <param name="Data">The synthesized WAV bytes.</param>
+/// <param name="AudioDurationMilliseconds">The WAV duration rounded up to milliseconds.</param>
+/// <param name="VisemeCues">Cue intervals relative to this WAV chunk, or null when unavailable.</param>
 public sealed record AudioChatAudioChunk(
     Guid SessionId,
     Guid TurnId,
     int Sequence,
     string ContentType,
-    byte[] Data);
+    byte[] Data,
+    int AudioDurationMilliseconds = 0,
+    IReadOnlyList<AudioChatVisemeCue>? VisemeCues = null);
+
+/// <summary>One normalized mouth-shape interval on an audio-chunk-relative timeline.</summary>
+/// <param name="OffsetMilliseconds">The interval start from the associated WAV chunk's beginning.</param>
+/// <param name="DurationMilliseconds">The interval length in milliseconds.</param>
+/// <param name="VisemeId">A stable renderer-independent mouth-shape identifier.</param>
+/// <param name="Weight">The normalized target weight from 0 to 1.</param>
+public sealed record AudioChatVisemeCue(
+    int OffsetMilliseconds,
+    int DurationMilliseconds,
+    string VisemeId,
+    float Weight);
+
+/// <summary>Stable normalized mouth-shape identifiers used by AudioChat viseme cues.</summary>
+public static class AudioChatVisemeIds
+{
+    /// <summary>Relaxed mouth during silence.</summary>
+    public const string Neutral = "neutral";
+    /// <summary>Closed lips for bilabial sounds.</summary>
+    public const string Closed = "closed";
+    /// <summary>Slightly open mouth with clenched teeth.</summary>
+    public const string TeethClosed = "teethClosed";
+    /// <summary>Open mouth for mid-open vowels.</summary>
+    public const string Open = "open";
+    /// <summary>Wide-open mouth.</summary>
+    public const string WideOpen = "wideOpen";
+    /// <summary>Slightly rounded mouth.</summary>
+    public const string Rounded = "rounded";
+    /// <summary>Puckered lips.</summary>
+    public const string Pursed = "pursed";
+    /// <summary>Upper teeth touch the lower lip.</summary>
+    public const string TeethOnLowerLip = "teethOnLowerLip";
+    /// <summary>Tongue raised behind the upper teeth.</summary>
+    public const string TongueRaised = "tongueRaised";
+}
 
 /// <summary>Signals that the assistant response and its audio have completed.</summary>
 public sealed record AudioChatTurnCompleted(Guid SessionId, Guid TurnId, PersistedChat Chat);

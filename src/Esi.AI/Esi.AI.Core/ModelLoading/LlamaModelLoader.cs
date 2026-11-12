@@ -249,7 +249,7 @@ public sealed class LlamaModelLoader : IDisposable
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
         activeLoadCancellation?.Cancel();
-        await loadLock.WaitAsync(cancellationToken);
+        await loadLock.WaitAsync(CancellationToken.None);
         try
         {
             DisposeChatSessions();

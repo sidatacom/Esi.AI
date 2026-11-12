@@ -24,6 +24,7 @@ internal sealed class AudioChatService(
     IOptions<AudioChatOptions> options,
     IAudioTranscriber transcriber,
     IAudioSpeechSynthesizer speechSynthesizer,
+    IAudioVisemeAnalyzer visemeAnalyzer,
     IServiceScopeFactory scopeFactory,
     IHubContext<DataHub> hubContext,
     ILogger<AudioChatService> logger) : IAudioChatService
@@ -35,6 +36,7 @@ internal sealed class AudioChatService(
         var settings = options.Value;
         var whisper = transcriber.GetStatus();
         var piper = speechSynthesizer.GetStatus();
+        var visemes = visemeAnalyzer.GetStatus();
         var settingsIssue = settings.SampleRate == 16000 &&
             settings.MaximumChunkBytes > 0 &&
             settings.MaximumChunkBytes % sizeof(short) == 0 &&
@@ -56,7 +58,9 @@ internal sealed class AudioChatService(
             piper.Issue,
             settingsIssue,
             settings.SampleRate,
-            settings.MaximumChunkBytes);
+            settings.MaximumChunkBytes,
+            visemes.IsReady,
+            visemes.Issue);
     }
 
     public async Task<AudioChatSessionInfo> StartAsync(
@@ -90,7 +94,8 @@ internal sealed class AudioChatService(
             connectionId,
             request,
             options.Value,
-            cancellationToken);
+            cancellationToken,
+            readiness.VisemeAnalyzerReady);
         if (!sessions.TryAdd(connectionId, session))
         {
             session.Dispose();
@@ -320,10 +325,28 @@ internal sealed class AudioChatService(
 
         await SendStateAsync(session, "speaking", cancellationToken).ConfigureAwait(false);
         var audio = await speechSynthesizer.SynthesizeAsync(text, cancellationToken).ConfigureAwait(false);
+        var audioDurationMilliseconds = WaveAudioMetadata.GetDurationMilliseconds(audio);
+        IReadOnlyList<AudioChatVisemeCue>? visemeCues = null;
+        if (session.VisemeAnalysisEnabled)
+        {
+            var analysis = await visemeAnalyzer.AnalyzeAsync(audio, cancellationToken).ConfigureAwait(false);
+            if (analysis.AudioDurationMilliseconds != audioDurationMilliseconds)
+                throw new AudioRuntimeException("Viseme analysis duration did not match the synthesized WAV chunk.");
+
+            visemeCues = analysis.Cues;
+        }
+
         await hubContext.Clients.Client(session.ConnectionId)
             .SendAsync(
                 "AudioChat_AudioChunk",
-                new AudioChatAudioChunk(session.Id, turnId, sequence, "audio/wav", audio),
+                new AudioChatAudioChunk(
+                    session.Id,
+                    turnId,
+                    sequence,
+                    "audio/wav",
+                    audio,
+                    audioDurationMilliseconds,
+                    visemeCues),
                 cancellationToken)
             .ConfigureAwait(false);
     }
@@ -384,11 +407,13 @@ internal sealed class AudioChatService(
             string connectionId,
             AudioChatStartRequest request,
             AudioChatOptions options,
-            CancellationToken connectionAborted)
+            CancellationToken connectionAborted,
+            bool visemeAnalysisEnabled)
         {
             ConnectionId = connectionId;
             Request = request;
             Id = Guid.NewGuid();
+            VisemeAnalysisEnabled = visemeAnalysisEnabled;
             Cancellation = CancellationTokenSource.CreateLinkedTokenSource(connectionAborted);
             Audio = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(options.BufferedChunkCapacity)
             {
@@ -402,6 +427,7 @@ internal sealed class AudioChatService(
         public string ConnectionId { get; }
         public AudioChatStartRequest Request { get; }
         public Guid Id { get; }
+        public bool VisemeAnalysisEnabled { get; }
         public CancellationTokenSource Cancellation { get; }
         public Channel<byte[]> Audio { get; }
         public AudioVoiceActivityDetector VoiceActivityDetector { get; }
