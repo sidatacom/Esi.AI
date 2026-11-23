@@ -172,9 +172,31 @@ describe("EsiMCP tool catalog", () => {
       "terminal.list",
       "terminal.close",
       "terminal.input",
+      "terminal.currentDate",
     ]);
     const runCommand = payload.commands.find((command) => command.command === "terminal.run");
     expect(runCommand?.argumentsSchema.required).toEqual(["command"]);
     expect(runCommand?.argumentsSchema.properties).toHaveProperty("waitForCompletion");
+  });
+
+  it("returns the current local and UTC date through terminal.currentDate", async () => {
+    const handler = createMcpRequestHandler({} as SessionManager, {} as DebugManager);
+
+    const result = await handler("tools/call", {
+      name: "vscode_terminal_execute_command",
+      arguments: { commandId: "terminal.currentDate", arguments: {} },
+    }) as { content: Array<{ text: string }> };
+
+    const payload = JSON.parse(result.content[0].text) as {
+      isoUtc: string;
+      localDate: string;
+      localTime: string;
+      timeZone: string;
+    };
+
+    expect(payload.isoUtc).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    expect(payload.localDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(payload.localTime).toMatch(/^\d{2}:\d{2}:\d{2}$/);
+    expect(payload.timeZone).toBeTruthy();
   });
 });

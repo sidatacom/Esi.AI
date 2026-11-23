@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.0.21] - 2026-11-23
+
+### Added
+- Add `terminal.currentDate` to return the current local date, local time, UTC timestamp, timezone, and Unix milliseconds.
+
 ## [2.0.20] - 2026-10-10
 
 ### Changed

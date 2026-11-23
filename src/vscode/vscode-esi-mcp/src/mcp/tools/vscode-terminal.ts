@@ -1,7 +1,7 @@
 import type { ZodType } from "zod";
 import type { SessionManager } from "../../terminal/session-manager.js";
 import type { McpToolResponse } from "../../types/index.js";
-import { terminalCreateSchema, terminalExecuteSchema, terminalListSchema, terminalReadOutputSchema, terminalCloseSchema, terminalRunSchema, terminalSendInputSchema, toJsonSchema, vscodeCommandSchema, debugEmptySchema } from "./schemas.js";
+import { terminalCreateSchema, terminalExecuteSchema, terminalListSchema, terminalReadOutputSchema, terminalCloseSchema, terminalRunSchema, terminalSendInputSchema, terminalCurrentDateSchema, toJsonSchema, vscodeCommandSchema, debugEmptySchema } from "./schemas.js";
 import { handleTerminalCreate } from "./terminal-create.js";
 import { handleTerminalExecute } from "./terminal-execute.js";
 import { handleTerminalList } from "./terminal-list.js";
@@ -9,6 +9,7 @@ import { handleTerminalReadOutput } from "./terminal-read-output.js";
 import { handleTerminalClose } from "./terminal-close.js";
 import { handleTerminalRun } from "./terminal-run.js";
 import { handleTerminalSendInput } from "./terminal-send-input.js";
+import { handleTerminalCurrentDate } from "./terminal-current-date.js";
 
 type TerminalCommandDefinition = {
   command: string;
@@ -35,6 +36,7 @@ const TERMINAL_COMMANDS: TerminalCommandDefinition[] = [
   { command: "terminal.list", title: "List Terminals", description: "List active terminal sessions", schema: terminalListSchema, handler: handleTerminalList },
   { command: "terminal.close", title: "Close Terminal", description: "Close a terminal session", schema: terminalCloseSchema, handler: handleTerminalClose },
   { command: "terminal.input", title: "Send Terminal Input", description: "Send input to a terminal session", schema: terminalSendInputSchema, handler: handleTerminalSendInput },
+  { command: "terminal.currentDate", title: "Current Date", description: "Return the current local date, local time, UTC timestamp, and timezone", schema: terminalCurrentDateSchema, handler: handleTerminalCurrentDate },
 ];
 
 async function listCommands(): Promise<McpToolResponse> {

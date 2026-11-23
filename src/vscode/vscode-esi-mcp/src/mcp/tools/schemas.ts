@@ -115,6 +115,8 @@ export const terminalSendInputSchema = z.object({
     .describe("Whether to press Enter after the input (default: true)"),
 });
 
+export const terminalCurrentDateSchema = z.object({}).strict();
+
 const debugScopeSchema = z.enum(["local", "global", "all"]).default("local");
 const variableNameSchema = z.string().min(1).max(128).refine((name) => !name.includes("*") && name.toLowerCase() !== "all", { message: "Wildcard and all-variable requests are not allowed" });
 export const debugEmptySchema = z.object({}).strict();
