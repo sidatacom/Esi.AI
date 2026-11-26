@@ -1,10 +1,5 @@
 {
 	"servers": {
-		"Microsoft.FluentUI.AspNetCore.McpServer": {
-			"type": "stdio",
-			"command": "dnx",
-			"args": ["Microsoft.FluentUI.AspNetCore.McpServer@5.0.0-rc.5-26219.1", "--yes"]
-		}
 	},
 	"inputs": []
 }

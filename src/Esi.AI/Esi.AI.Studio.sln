@@ -15,8 +15,6 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Models", "Esi.AI.Mod
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Studio.Contracts", "Esi.AI.Studio.Contracts\Esi.AI.Studio.Contracts.csproj", "{27CC2BC8-B782-4EE7-A482-5D300CD3866C}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Probe", "..\..\..\..\..\..\tmp\esi-ai-hot-reload-probe-20260926\Probe.csproj", "{C5C54785-F31C-40AE-943E-404FFC660542}"
-EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Microsoft.FluentUI.AspNetCore.Components", "..\..\origins\sidatacom\fluentui-blazor\src\Core\Microsoft.FluentUI.AspNetCore.Components.csproj", "{47EC9664-B0FD-4561-A13B-2FACF12EE77D}"
 EndProject
 Project("{54A90642-561A-4BB1-A94E-469ADEE60C69}") = "Microsoft.FluentUI.AspNetCore.Components.Scripts", "..\..\origins\sidatacom\fluentui-blazor\src\Core.Scripts\Microsoft.FluentUI.AspNetCore.Components.Scripts.esproj", "{724E9404-3EBB-44DE-9929-D276DDF7C2A8}"
@@ -45,7 +43,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.OpenVino", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.Backend.Vllm.Xpu", "Esi.AI.Backend.Vllm.Xpu\Esi.AI.Backend.Vllm.Xpu.csproj", "{5EF03801-95F5-454B-987A-A198C79ED0F7}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OptimaJet.Workflow.SQLite", "..\..\origins\optimajet\WorkflowEngine.NET\Providers\OptimaJet.Workflow.SQLite\Source\OptimaJet.Workflow.SQLite.csproj", "{43645BE3-E425-4B40-9513-ACD65A2A5651}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OptimaJet.Workflow.SQLite", "..\..\origins\sidatacom\WorkflowEngine.NET\Providers\OptimaJet.Workflow.SQLite\Source\OptimaJet.Workflow.SQLite.csproj", "{43645BE3-E425-4B40-9513-ACD65A2A5651}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Esi.AI.PyTorch", "Esi.AI.PyTorch\Esi.AI.PyTorch.csproj", "{50B5943C-93F3-48C9-8D99-9CB4037C48EA}"
 EndProject
@@ -135,18 +133,6 @@ Global
 		{27CC2BC8-B782-4EE7-A482-5D300CD3866C}.Release|x64.Build.0 = Release|Any CPU
 		{27CC2BC8-B782-4EE7-A482-5D300CD3866C}.Release|x86.ActiveCfg = Release|Any CPU
 		{27CC2BC8-B782-4EE7-A482-5D300CD3866C}.Release|x86.Build.0 = Release|Any CPU
-		{C5C54785-F31C-40AE-943E-404FFC660542}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{C5C54785-F31C-40AE-943E-404FFC660542}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{C5C54785-F31C-40AE-943E-404FFC660542}.Debug|x64.ActiveCfg = Debug|Any CPU
-		{C5C54785-F31C-40AE-943E-404FFC660542}.Debug|x64.Build.0 = Debug|Any CPU
-		{C5C54785-F31C-40AE-943E-404FFC660542}.Debug|x86.ActiveCfg = Debug|Any CPU
-		{C5C54785-F31C-40AE-943E-404FFC660542}.Debug|x86.Build.0 = Debug|Any CPU
-		{C5C54785-F31C-40AE-943E-404FFC660542}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{C5C54785-F31C-40AE-943E-404FFC660542}.Release|Any CPU.Build.0 = Release|Any CPU
-		{C5C54785-F31C-40AE-943E-404FFC660542}.Release|x64.ActiveCfg = Release|Any CPU
-		{C5C54785-F31C-40AE-943E-404FFC660542}.Release|x64.Build.0 = Release|Any CPU
-		{C5C54785-F31C-40AE-943E-404FFC660542}.Release|x86.ActiveCfg = Release|Any CPU
-		{C5C54785-F31C-40AE-943E-404FFC660542}.Release|x86.Build.0 = Release|Any CPU
 		{47EC9664-B0FD-4561-A13B-2FACF12EE77D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{47EC9664-B0FD-4561-A13B-2FACF12EE77D}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{47EC9664-B0FD-4561-A13B-2FACF12EE77D}.Debug|x64.ActiveCfg = Debug|Any CPU

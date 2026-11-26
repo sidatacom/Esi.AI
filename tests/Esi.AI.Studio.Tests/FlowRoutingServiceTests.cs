@@ -234,7 +234,7 @@ public sealed class FlowRoutingServiceTests
                 "Chat request router",
                 1,
                 true,
-                "{\"nodes\":[{\"name\":\"Backend route\",\"detail\":\"OmniRoute upstream\",\"kind\":\"backend\"}]}",
+                "{\"nodes\":[{\"name\":\"Backend route\",\"detail\":\"External upstream\",\"kind\":\"backend\"}]}",
                 now,
                 now);
             await dataService.FlowDefinition_CreateAsync(definition);

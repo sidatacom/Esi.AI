@@ -1,7 +1,7 @@
 {
 	"folders": [
 		{
-			"path": "/home/llm/Git/Esi.AI"
+			"path": "."
 		}
 	],
 	"settings": {
@@ -12,7 +12,7 @@
 		"github.copilot.chat.virtualTools.threshold": 32,
 		"dotnet.preferVisualStudioCodeFileSystemWatcher": true,
 		"dotnet.defaultSolution": "src/Esi.AI/Esi.AI.Studio.sln",
-		"workbench.colorTheme": "Default High Contrast Light",
+		"workbench.colorTheme": "Dark+",
 		"chat.agent.maxRequests": 5000,
 		"github.copilot.chat.askAgent.model": "GPT-6 Luna (copilot)",
 		"github.copilot.chat.exploreAgent.model": "GPT-6 Luna (copilot)",
@@ -21,6 +21,7 @@
 		"chat.defaultModel": "GPT-6 Luna (copilot)",
 		"chat.planAgent.defaultModel": "GPT-6 Luna (copilot)",
 		"inlineChat.defaultModel": "GPT-6 Luna (copilot)",
-		"workbench.preferredLightColorTheme": "Default High Contrast Light"
+		"workbench.preferredLightColorTheme": "Default High Contrast Light",
+		"chat.editing.autoAcceptDelay": 90
 	}
 }
