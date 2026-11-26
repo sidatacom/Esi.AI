@@ -1,29 +1,17 @@
 [submodule "origins/localai"]
 	path = origins/localai
 	url = https://github.com/mudler/LocalAI.git
-
 [submodule "origins/sidatacom/LLamaSharp"]
 	path = origins/sidatacom/LLamaSharp
 	url = https://github.com/sidatacom/LLamaSharp.git
-
 [submodule "origins/sidatacom/OpenVINO-CSharp-API"]
 	path = origins/sidatacom/OpenVINO-CSharp-API
 	url = https://github.com/sidatacom/OpenVINO-CSharp-API.git
 	branch = csharp3.3
-
 [submodule "origins/sidatacom/dotLLM"]
 	path = origins/sidatacom/dotLLM
 	url = https://github.com/sidatacom/dotLLM.git
 	branch = main
-[submodule "origins/sidatacom/elsa-studio"]
-	path = origins/sidatacom/elsa-studio
-	url = https://github.com/elsa-workflows/elsa-studio.git
-[submodule "origins/sidatacom/elsa-core"]
-	path = origins/sidatacom/elsa-core
-	url = https://github.com/elsa-workflows/elsa-core.git
-[submodule "src/vscode/vscode-esi-ai-studio/origins/omniroute"]
-	path = src/vscode/vscode-esi-ai-studio/origins/omniroute
-	url = https://github.com/cheaper-inference/OmniRoute.git
 [submodule "origins/sidatacom/fluentui-blazor"]
 	path = origins/sidatacom/fluentui-blazor
 	url = https://github.com/sidatacom/fluentui-blazor.git
